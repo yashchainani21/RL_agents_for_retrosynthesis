@@ -4,7 +4,7 @@ import uuid
 
 class MCTSNode:
     """
-    A singe node in the MCTS search tree.
+    A single node in the MCTS search tree.
     """
     def __init__(self, state, parent = None):
         self.id = uuid.uuid4() # give this node unique ID for easier debugging/ visualization
@@ -19,7 +19,7 @@ class MCTSNode:
         self.total_value = 0.0 # sum of rewards from all rollouts
 
         # populated when this node is expanded for the first time
-        # typically, a set/ list of possible "next actions" (modules with acyl-CoA units) that haven't been tried
+        # typically, a set of possible "next actions" (modules with acyl-CoA units) that haven't been tried
         self.untried_actions = None
 
     def is_fully_expanded(self):
@@ -41,7 +41,7 @@ class MCTSNode:
         self.children.append((child_node, action))
         return child_node
 
-    def update_child(self, reward):
+    def backprop_update(self, reward):
         """
         Update this node's statistics after a rollout/ simulation step:
             - visits += 1
@@ -61,3 +61,8 @@ class MCTSNode:
 
     def __repr__(self):
         return f"MCTSNode(id={self.id}, visits={self.visits}, value={self.q_value:.3f})"
+
+class PKSState:
+    def __init__(self, cluster: bcs.Cluster, PKS_product: Chem.rdchem.Mol):
+        self.cluster = cluster
+        self.PKS_product = PKS_product
