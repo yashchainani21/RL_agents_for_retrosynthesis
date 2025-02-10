@@ -1,5 +1,6 @@
 import bcs
 from rdkit import Chem
+from typing import Optional
 import uuid
 
 class MCTSNode:
@@ -63,6 +64,9 @@ class MCTSNode:
         return f"MCTSNode(id={self.id}, visits={self.visits}, value={self.q_value:.3f})"
 
 class PKSState:
-    def __init__(self, cluster: bcs.Cluster, PKS_product: Chem.rdchem.Mol):
+    def __init__(self,
+                 cluster: bcs.Cluster,
+                 PKS_product: Optional[Chem.rdchem.Mol]):
+
         self.cluster = cluster
         self.PKS_product = PKS_product
