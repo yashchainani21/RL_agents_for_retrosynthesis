@@ -1,8 +1,7 @@
-from typing import List, Dict, Optional, Tuple
+from typing import List, Optional, Tuple
 import bcs
 from rdkit import Chem
 from rdkit import RDLogger
-import uuid
 
 # disable RDKit warnings
 logger = RDLogger.logger()
@@ -14,7 +13,9 @@ class Node:
     """
     def __init__(self,
                  PKS_product: Optional[Chem.rdchem.Mol] = None,
-                 PKS_design: Optional[bcs.Cluster] = None,
+                 PKS_design: Optional[Tuple[bcs.Cluster,
+                                            float,
+                                            Chem.rdchem.Mol]] = None,
                  parent: any = None,
                  depth: int = 0):
 
@@ -23,7 +24,6 @@ class Node:
         self.parent = parent
         self.children = []
         self.depth = depth
-        self.uuid = str(uuid.uuid4()) # give this node a unique identifier for debugging purposes
 
         # track the number of visits to and the cumulative value of this node
         self.visits = 0
@@ -38,8 +38,8 @@ class Node:
         if child not in self.children:
             if child.parent is None:
                 child.parent = self
-        self.children.append(child)
-        child.depth = self.depth + 1
+            self.children.append(child)
+            child.depth = self.depth + 1
 
     def update(self, reward: float) -> None:
         """
@@ -52,4 +52,8 @@ class Node:
         """
         Provides a string representation of this node for debugging and logging purposes.
         """
-        return f"Node {self.uuid} with PKS design {self.PKS_design} and PKS product {Chem.MolToSmiles(self.PKS_product)}"
+        if self.PKS_product is not None:
+            return f"Node at depth {self.depth} with PKS design: {self.PKS_design[0].modules} and PKS product: {Chem.MolToSmiles(self.PKS_product)}"
+
+        if self.PKS_product is None:
+            return f"Node at depth {self.depth} with PKS design: {self.PKS_design} and PKS product: None"

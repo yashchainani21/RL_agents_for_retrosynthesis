@@ -1,0 +1,10 @@
+Metadata-Version: 2.2
+Name: RetroTide_agent
+Version: 0.1
+Summary: RetroTide agent
+Author: Yash Chainani
+Author-email: yashchainani2026@u.northwestern.edu
+License-File: LICENSE
+Dynamic: author
+Dynamic: author-email
+Dynamic: summary
