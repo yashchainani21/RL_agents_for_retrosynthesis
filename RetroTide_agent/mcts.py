@@ -29,6 +29,8 @@ class MCTS:
         bag_of_graphs: List[Chem.Mol] = self.create_bag_of_graphs_from_target()
         self.bag_of_graphs: List[Chem.Mol] = bag_of_graphs
 
+        self.successful_nodes: List[Node] = []
+
     @staticmethod
     def run_pks_release_reaction(pks_release_mechanism: str,
                                  bound_product_mol: Chem.Mol) -> Chem.Mol:
@@ -114,8 +116,8 @@ class MCTS:
 
         for submol in self.bag_of_graphs:
             if self.are_isomorphic(mol1 = submol,
-                                mol2 = PKS_product,
-                                consider_stereo = consider_stereo):
+                                   mol2 = PKS_product,
+                                   consider_stereo = consider_stereo):
 
                 return True # returns True only if a match is found
 
@@ -204,6 +206,7 @@ class MCTS:
                     if child.visits == 0:
                         if self.calculate_subgraph_value(child) == 1:
                             selection_score = math.inf # force selection if subgraph of the target
+
                         elif self.calculate_subgraph_value(child) == 0:
                             selection_score = (-1)*math.inf # prevent selection if not subgraph of the target
 
@@ -274,6 +277,7 @@ class MCTS:
                                                     maxDesignsPerRound = 15,
                                                     similarity ='mcs_without_stereo')
 
+        additional_reward_if_target_met = 0
         best_score = simulated_designs[-1][0][1]
         best_molecule = simulated_designs[-1][0][2]
 
@@ -282,6 +286,7 @@ class MCTS:
 
         if self.are_isomorphic(carboxylated_PKS_product, self.target_molecule):
             print("TARGET REACHED IN SIMULATION THROUGH THIOLYSIS!")
+            additional_reward_if_target_met += 5
 
         try:
             cyclized_PKS_product = self.run_pks_release_reaction(pks_release_mechanism = "cyclization",
@@ -293,8 +298,9 @@ class MCTS:
         if cyclized_PKS_product:
             if self.are_isomorphic(cyclized_PKS_product, self.target_molecule):
                 print("TARGET REACHED IN SIMULATION THROUGH CYCLIZATION!")
+                additional_reward_if_target_met += 5
 
-        return best_score
+        return best_score + additional_reward_if_target_met
 
     @staticmethod
     def backpropagate(node: Node,
