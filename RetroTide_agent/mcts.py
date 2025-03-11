@@ -207,6 +207,31 @@ class MCTS:
                         if self.calculate_subgraph_value(child) == 1:
                             selection_score = math.inf # force selection if subgraph of the target
 
+                            # since this child node is subgraph of the target, check if the target is reached
+                            thiolysis_product = self.run_pks_release_reaction(pks_release_mechanism = "thiolysis",
+                                                                              bound_product_mol = child.PKS_product,)
+
+                            if self.are_isomorphic(mol1 = thiolysis_product,
+                                                   mol2 = self.target_molecule):
+
+                                print("TARGET REACHED IN SELECTION THROUGH THIOLYSIS!")
+                                self.successful_nodes.append(child)
+
+                            # repeat the same with a cyclization termination reaction to see if target is reached
+                            try:
+                                cyclization_product = self.run_pks_release_reaction(pks_release_mechanism = "cyclization",
+                                                                                    bound_product_mol = child.PKS_product,)
+                            except Exception as e:
+                                print(e)
+                                cyclization_product = None
+
+                            if cyclization_product:
+                                if self.are_isomorphic(mol1 = cyclization_product,
+                                                       mol2 = self.target_molecule):
+
+                                    print("TARGET REACHED IN SIMULATION THROUGH CYCLIZATION!")
+                                    self.successful_nodes.append(child)
+
                         elif self.calculate_subgraph_value(child) == 0:
                             selection_score = (-1)*math.inf # prevent selection if not subgraph of the target
 
