@@ -2,7 +2,7 @@ import math
 import numpy as np
 from rdkit import Chem
 from rdkit.Chem import AllChem, rdmolops
-from typing import Optional, Tuple, List
+from typing import Optional, List, Tuple
 from retrotide import retrotide, structureDB
 from RetroTide_agent.node import Node
 
@@ -11,17 +11,23 @@ class MCTS:
                  root: Node,
                  target_molecule: Chem.Mol,
                  max_depth: int = 10,
+                 total_iterations: int = 15000,
                  maxPKSDesignsRetroTide: int = 25,
                  selection_policy: Optional[str] = 'UCB1'):
 
-        self.root = root
-        self.target_molecule = target_molecule
-        self.max_depth = max_depth
-        self.maxPKSDesigns = maxPKSDesignsRetroTide
-        self.selection_policy = selection_policy
+        self.root: Node = root
+        self.nodes: List[Node] = [] # store all nodes for visualization
+        self.edges: List[Tuple[int, int]] = [] # store all edges for parent-child relationships
+        self.target_molecule: Chem.Mol = target_molecule
+        self.max_depth: int = max_depth
+        self.total_iterations: int = total_iterations
+        self.maxPKSDesigns: int = maxPKSDesignsRetroTide
+        self.selection_policy: str = selection_policy
 
-        bag_of_graphs = self.create_bag_of_graphs_from_target()
-        self.bag_of_graphs = bag_of_graphs
+        self.nodes.append(root) # store the root node
+
+        bag_of_graphs: List[Chem.Mol] = self.create_bag_of_graphs_from_target()
+        self.bag_of_graphs: List[Chem.Mol] = bag_of_graphs
 
     @staticmethod
     def run_pks_release_reaction(pks_release_mechanism: str,
@@ -115,8 +121,8 @@ class MCTS:
 
         return False # returns False is no match
 
-    def calculate_reward(self,
-                         node: Node) -> int:
+    def calculate_subgraph_value(self,
+                         node: Node) -> Optional[int]:
 
         PKS_product = node.PKS_product
 
@@ -145,20 +151,20 @@ class MCTS:
 
             # then, check to see if this fully carboxylated product is in our bag of graphs
             if self.is_PKS_product_in_bag_of_graphs(fully_carboxylated_product,
-                                                    consider_stereo=False):
+                                                    consider_stereo = False):
                 fully_carboxylated_reward += 1
 
         except:
             pass
 
         try:
-            # finally, try releasing the PKS product at this node via a cycliation reaction
+            # finally, try releasing the PKS product at this node via a cyclization reaction
             fully_cyclized_product = self.run_pks_release_reaction(pks_release_mechanism="cyclization",
                                                                    bound_product_mol = PKS_product)
 
             # then, check to see if this fully cyclized product is in our bag of graphs
             if self.is_PKS_product_in_bag_of_graphs(fully_cyclized_product,
-                                                    consider_stereo=False):
+                                                    consider_stereo = False):
                 fully_cyclized_reward += 1
 
         except:
@@ -174,7 +180,7 @@ class MCTS:
         return final_reward
 
     def select(self,
-               node: Node) -> Node:
+               node: Node) -> Optional[Node]:
         """
         Selection step starts with the root node & the synthesis tree is then traversed until a leaf node is reached.
         This leaf node would have untried actions and therefore, would not have been expanded upon.
@@ -184,14 +190,41 @@ class MCTS:
         while node.children: # continue until a leaf node is reached
 
             if self.selection_policy == 'UCB1':
-                log_parent_visits = math.log(max(node.visits, 1))  # Avoid log(0) by ensuring a minimum of 1 visit
-                node = max(node.children,
-                           key=lambda child: self.calculate_reward(child) if child.visits == 0 else
-                           (child.value / child.visits + math.sqrt(2 * log_parent_visits / child.visits)))
 
-            if self.selection_policy == 'explore_least_visited':
-                # prioritize nodes with the fewest visits
-                node = min(node.children, key=lambda x: (x.visits, -x.value))
+                # Avoid log(0) by ensuring a minimum of 1 visit
+                log_parent_visits = math.log(max(node.visits, 1))
+
+                best_node = None
+                selection_score = (-1)*math.inf
+                best_ucb1_score = (-1)*math.inf
+
+                for child in node.children:
+
+                    # if a child node has NOT been visited,
+                    if child.visits == 0:
+                        if self.calculate_subgraph_value(child) == 1:
+                            selection_score = math.inf # force selection if subgraph of the target
+                        elif self.calculate_subgraph_value(child) == 0:
+                            selection_score = (-1)*math.inf # prevent selection if not subgraph of the target
+
+                    # if a child node HAS been visited,
+                    else: # apply UCB1 formula
+                        selection_score = (child.value / child.visits + math.sqrt(2 * log_parent_visits / child.visits))
+
+                    # keep track of child node's selection score
+                    child.selection_score = selection_score
+
+                    # also track best-scoring child
+                    if selection_score > best_ucb1_score:
+                        best_ucb1_score = selection_score
+                        best_node = child
+
+                # If no valid child was found, terminate search
+                if best_node is None:
+                    print("🚨 Terminating MCTS: No valid child node found (no subgraph match).")
+                    return None  # Indicate termination
+
+                node = best_node
 
         return node
 
@@ -208,7 +241,7 @@ class MCTS:
         else:
             new_designs = retrotide.designPKS_onestep(targetMol = self.target_molecule,
                                                       previousDesigns = [node.PKS_design], # pass this in as list for RetroTide
-                                                      maxDesignsPerRound=self.maxPKSDesigns,
+                                                      maxDesignsPerRound = self.maxPKSDesigns,
                                                       similarity = 'mcs_without_stereo')
 
         # create a new child node from each PKS design
@@ -222,17 +255,51 @@ class MCTS:
             # formally add this new node as a child to the current node
             node.add_child(new_node)
 
+            self.nodes.append(new_node) # store the new node
+            self.edges.append((node.node_id, new_node.node_id)) # store edge between parent and new child
+
     def simulate_and_get_reward(self,
                                 node: Node) -> int:
 
         # calculate reward based on bag of graphs analysis, thereby skipping expensive simulations
-         reward = self.calculate_reward(node)
+        # we use only the top 25 designs for fast simulation
+        if node.PKS_design is None:
+            simulated_designs = retrotide.designPKS(targetMol = self.target_molecule,
+                                                previousDesigns = None,
+                                                maxDesignsPerRound = 15,
+                                                similarity = 'mcs_without_stereo')
+        else:
+            simulated_designs = retrotide.designPKS(targetMol = self.target_molecule,
+                                                    previousDesigns = [[node.PKS_design]],
+                                                    maxDesignsPerRound = 15,
+                                                    similarity ='mcs_without_stereo')
 
-         return reward
+        best_score = simulated_designs[-1][0][1]
+        best_molecule = simulated_designs[-1][0][2]
 
-    def backpropagate(self,
-                      node: Node,
+        carboxylated_PKS_product = self.run_pks_release_reaction(pks_release_mechanism = "thiolysis",
+                                                                 bound_product_mol = best_molecule)
+
+        if self.are_isomorphic(carboxylated_PKS_product, self.target_molecule):
+            print("TARGET REACHED IN SIMULATION THROUGH THIOLYSIS!")
+
+        try:
+            cyclized_PKS_product = self.run_pks_release_reaction(pks_release_mechanism = "cyclization",
+                                                                 bound_product_mol = best_molecule)
+        except Exception as e:
+            print(f"Error in performing cyclization reaction: {e} ")
+            cyclized_PKS_product = None
+
+        if cyclized_PKS_product:
+            if self.are_isomorphic(cyclized_PKS_product, self.target_molecule):
+                print("TARGET REACHED IN SIMULATION THROUGH CYCLIZATION!")
+
+        return best_score
+
+    @staticmethod
+    def backpropagate(node: Node,
                       reward: int) -> None:
+
         # Propagate the simulation result (reward) back up the tree.
         while node is not None:
             node.visits += 1  # increment visit count
@@ -248,11 +315,17 @@ class MCTS:
         - The number of iterations is exhausted
         """
 
-        for i in range(self.max_depth):
+        for i in range(self.total_iterations):
 
             # Step 1: Selection - Start at root and follow UCB until a leaf is found
             leaf = self.select(self.root)
-            print(f"[Iteration {i + 1}] Selected leaf node at depth {leaf.depth}")
+            if leaf is None:
+                print("[MCTS Termination] No valid nodes to select. Stopping search.")
+                print(f"Total nodes stored: {len(self.nodes)}")
+                print(f"Total edges stored: {len(self.edges)}")
+                return
+
+            print(f"\nSelected leaf node at depth {leaf.depth}\n")
 
             # Check stopping condition
             if leaf.depth >= self.max_depth:
@@ -262,15 +335,16 @@ class MCTS:
             # Step 2: Expansion - Expand only if unexpanded
             if not leaf.children:  # Expand only if this node has not been expanded before
                 self.expand(leaf)
-                print(f"[Iteration {i + 1}] Expanded leaf node: {len(leaf.children)} new children")
+                print(f"Expanded leaf node: {len(leaf.children)} new children")
 
             # Step 3: Simulation - Evaluate leaf node and get reward
             reward = self.simulate_and_get_reward(leaf)
-            print(f"[Iteration {i + 1}] Simulation reward = {reward}")
+            print(f"Simulation reward = {reward:.2f}")
 
             # Step 4: Backpropagation - Propagate reward up the tree
             self.backpropagate(node=leaf, reward=reward)
-            print(f"[Iteration {i + 1}] Backpropagation complete.")
+            print(f"Backpropagation complete.")
 
         print("[MCTS Completed] All iterations exhausted.")
-
+        print(f"Total nodes stored: {len(self.nodes)}")
+        print(f"Total edges stored: {len(self.edges)}")
