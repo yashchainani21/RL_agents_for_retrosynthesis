@@ -109,6 +109,26 @@ class MCTS:
             except:
                 pass
 
+        # next, if we have a cyclic polyketide target, we can run a ring opening reaction to collect more fragments
+        ring_opening_rxn_pattern = '[C:1](=[O:2])[*:4][C:5][C:6]>>([C:1](=[O:2])[O:3].[O,N:4][C:5][C:6])'
+        ring_opening_rxn = AllChem.ReactionFromSmarts(ring_opening_rxn_pattern)
+        ring_opened_target = ring_opening_rxn.RunReactants((self.target_molecule,))[0][0]
+
+        # run the subgraph collection algorithm again on the ring opened target
+        dist_matrix = rdmolops.GetDistanceMatrix(ring_opened_target)
+        dist_array = np.array(dist_matrix)
+        longest_distance = dist_array.max()
+
+        all_submols = []
+        for i in range(1, int(longest_distance + 1)):
+            try:
+                submols = self.getSubmolRadN(mol = ring_opened_target,
+                                             radius = i)
+                all_submols.extend(submols)
+            except:
+                pass
+
+
         return all_submols
 
     def is_PKS_product_in_bag_of_graphs(self,
@@ -135,7 +155,7 @@ class MCTS:
 
         try:
             # first, try fully reducing the PKS product at this node
-            fully_reduced_product = self.run_pks_release_reaction(pks_release_mechanism="reduction",
+            fully_reduced_product = self.run_pks_release_reaction(pks_release_mechanism = "reduction",
                                                                   bound_product_mol = PKS_product)
 
             # then, check to see if this fully reduced product is in our bag of graphs
@@ -149,7 +169,7 @@ class MCTS:
 
         try:
             # now, try releasing the PKS product at this node via a condensation reaction
-            fully_carboxylated_product = self.run_pks_release_reaction(pks_release_mechanism="thiolysis",
+            fully_carboxylated_product = self.run_pks_release_reaction(pks_release_mechanism = "thiolysis",
                                                                        bound_product_mol = PKS_product)
 
             # then, check to see if this fully carboxylated product is in our bag of graphs
@@ -162,7 +182,7 @@ class MCTS:
 
         try:
             # finally, try releasing the PKS product at this node via a cyclization reaction
-            fully_cyclized_product = self.run_pks_release_reaction(pks_release_mechanism="cyclization",
+            fully_cyclized_product = self.run_pks_release_reaction(pks_release_mechanism = "cyclization",
                                                                    bound_product_mol = PKS_product)
 
             # then, check to see if this fully cyclized product is in our bag of graphs
@@ -230,7 +250,7 @@ class MCTS:
                                 if self.are_isomorphic(mol1 = cyclization_product,
                                                        mol2 = self.target_molecule):
 
-                                    print("TARGET REACHED IN SIMULATION THROUGH CYCLIZATION!")
+                                    print("TARGET REACHED IN SELECTION THROUGH CYCLIZATION!")
                                     self.successful_nodes.add(child)
 
                         elif self.calculate_subgraph_value(child) == 0:
@@ -304,6 +324,7 @@ class MCTS:
                                                     similarity ='mcs_without_stereo')
 
         additional_reward_if_target_met = 0
+        best_design = simulated_designs[-1][0][0]
         best_score = simulated_designs[-1][0][1]
         best_molecule = simulated_designs[-1][0][2]
 
@@ -312,7 +333,7 @@ class MCTS:
 
         if self.are_isomorphic(carboxylated_PKS_product, self.target_molecule):
             print("TARGET REACHED IN SIMULATION THROUGH THIOLYSIS!")
-            additional_reward_if_target_met += 5
+            additional_reward_if_target_met += 0
 
         try:
             cyclized_PKS_product = self.run_pks_release_reaction(pks_release_mechanism = "cyclization",
@@ -324,7 +345,8 @@ class MCTS:
         if cyclized_PKS_product:
             if self.are_isomorphic(cyclized_PKS_product, self.target_molecule):
                 print("TARGET REACHED IN SIMULATION THROUGH CYCLIZATION!")
-                additional_reward_if_target_met += 5
+                print(best_design)
+                additional_reward_if_target_met += 0
 
         return best_score + additional_reward_if_target_met
 
