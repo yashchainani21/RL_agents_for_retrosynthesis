@@ -2,7 +2,7 @@ import math
 import numpy as np
 from rdkit import Chem
 from rdkit.Chem import AllChem, rdmolops
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Set
 from retrotide import retrotide, structureDB
 from RetroTide_agent.node import Node
 
@@ -29,7 +29,8 @@ class MCTS:
         bag_of_graphs: List[Chem.Mol] = self.create_bag_of_graphs_from_target()
         self.bag_of_graphs: List[Chem.Mol] = bag_of_graphs
 
-        self.successful_nodes: List[Node] = []
+        # initialize a set to store unique nodes that are successful and already produce the target
+        self.successful_nodes: Set[Node] = set()
 
     @staticmethod
     def run_pks_release_reaction(pks_release_mechanism: str,
@@ -215,7 +216,7 @@ class MCTS:
                                                    mol2 = self.target_molecule):
 
                                 print("TARGET REACHED IN SELECTION THROUGH THIOLYSIS!")
-                                self.successful_nodes.append(child)
+                                self.successful_nodes.add(child)
 
                             # repeat the same with a cyclization termination reaction to see if target is reached
                             try:
@@ -230,7 +231,7 @@ class MCTS:
                                                        mol2 = self.target_molecule):
 
                                     print("TARGET REACHED IN SIMULATION THROUGH CYCLIZATION!")
-                                    self.successful_nodes.append(child)
+                                    self.successful_nodes.add(child)
 
                         elif self.calculate_subgraph_value(child) == 0:
                             selection_score = (-1)*math.inf # prevent selection if not subgraph of the target
