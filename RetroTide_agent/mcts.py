@@ -56,7 +56,7 @@ class MCTS:
 
             # if the bound substrate cannot be cyclized, then return None
             except:
-                raise ValueError("\nUnable to perform cyclization reaction")
+                pass
 
         if pks_release_mechanism == 'reduction':
             Chem.SanitizeMol(bound_product_mol)  # run detachment reaction to cyclize bound substrate
@@ -109,25 +109,31 @@ class MCTS:
             except:
                 pass
 
-        # next, if we have a cyclic polyketide target, we can run a ring opening reaction to collect more fragments
-        ring_opening_rxn_pattern = '[C:1](=[O:2])[*:4][C:5][C:6]>>([C:1](=[O:2])[O:3].[O,N:4][C:5][C:6])'
-        ring_opening_rxn = AllChem.ReactionFromSmarts(ring_opening_rxn_pattern)
-        ring_opened_target = ring_opening_rxn.RunReactants((self.target_molecule,))[0][0]
+        # next, check if the input target is a cyclic ester (lactone)
+        lactone_group = Chem.MolFromSmarts('[C;R](=O)[O;R]')
+        if self.target_molecule.HasSubstructMatch(lactone_group):
 
-        # run the subgraph collection algorithm again on the ring opened target
-        dist_matrix = rdmolops.GetDistanceMatrix(ring_opened_target)
-        dist_array = np.array(dist_matrix)
-        longest_distance = dist_array.max()
+            # if it is, then we run a ring opening reaction to simulate the action of a cyclic TE acting in reverse
+            ring_opening_rxn_pattern = '[C:1](=[O:2])[*:4][C:5][C:6]>>([C:1](=[O:2])[O:3].[O,N:4][C:5][C:6])'
+            ring_opening_rxn = AllChem.ReactionFromSmarts(ring_opening_rxn_pattern)
+            ring_opened_target = ring_opening_rxn.RunReactants((self.target_molecule,))[0][0]
 
-        all_submols = []
-        for i in range(1, int(longest_distance + 1)):
-            try:
-                submols = self.getSubmolRadN(mol = ring_opened_target,
-                                             radius = i)
-                all_submols.extend(submols)
-            except:
-                pass
+            # then, run the subgraph collection algorithm again on the ring opened target
+            dist_matrix = rdmolops.GetDistanceMatrix(ring_opened_target)
+            dist_array = np.array(dist_matrix)
+            longest_distance = dist_array.max()
 
+            for i in range(1, int(longest_distance + 1)):
+                try:
+                    submols = self.getSubmolRadN(mol = ring_opened_target,
+                                                 radius = i)
+                    all_submols.extend(submols)
+                except:
+                    pass
+
+        # do nothing if the input target is not a cyclic ester
+        else:
+            pass
 
         return all_submols
 
@@ -164,7 +170,6 @@ class MCTS:
                 fully_reduced_reward += 1
 
         except Exception as e:
-            print(e)
             pass
 
         try:
@@ -243,7 +248,6 @@ class MCTS:
                                 cyclization_product = self.run_pks_release_reaction(pks_release_mechanism = "cyclization",
                                                                                     bound_product_mol = child.PKS_product,)
                             except Exception as e:
-                                print(e)
                                 cyclization_product = None
 
                             if cyclization_product:
