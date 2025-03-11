@@ -20,7 +20,7 @@ class Node:
                  depth: int = 0):
 
         self.PKS_product: Chem.Mol = PKS_product
-        self.PKS_design = PKS_design
+        self.PKS_design: Optional[Tuple[bcs.Cluster, float, Chem.rdchem.Mol]] = PKS_design
         self.parent: Optional["Node"] = parent
         self.children: List["Node"] = []
         self.depth: int = depth
