@@ -3,6 +3,7 @@ import numpy as np
 from rdkit import Chem
 from rdkit.Chem import AllChem, rdmolops
 from typing import Optional, List, Tuple, Set
+import bcs
 from retrotide import retrotide, structureDB
 from RetroTide_agent.node import Node
 
@@ -31,6 +32,9 @@ class MCTS:
 
         # initialize a set to store unique nodes that are successful and already produce the target
         self.successful_nodes: Set[Node] = set()
+
+        # initialize another set to store successful PKS designs reached during simulation
+        self.successful_simulated_designs: List[Tuple[bcs.Cluster, float, Chem.rdchem.Mol]] = []
 
     @staticmethod
     def run_pks_release_reaction(pks_release_mechanism: str,
@@ -338,6 +342,7 @@ class MCTS:
         if self.are_isomorphic(carboxylated_PKS_product, self.target_molecule):
             print("TARGET REACHED IN SIMULATION THROUGH THIOLYSIS!")
             additional_reward_if_target_met += 0
+            self.successful_simulated_designs.append(best_design.modules) # store successful simulation
 
         try:
             cyclized_PKS_product = self.run_pks_release_reaction(pks_release_mechanism = "cyclization",
@@ -349,8 +354,8 @@ class MCTS:
         if cyclized_PKS_product:
             if self.are_isomorphic(cyclized_PKS_product, self.target_molecule):
                 print("TARGET REACHED IN SIMULATION THROUGH CYCLIZATION!")
-                print(best_design)
                 additional_reward_if_target_met += 0
+                self.successful_simulated_designs.append(best_design.modules) # store successful simulation
 
         return best_score + additional_reward_if_target_met
 
