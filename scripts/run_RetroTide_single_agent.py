@@ -1,8 +1,3 @@
-from bokeh.plotting import figure, show
-from bokeh.models import GraphRenderer, StaticLayoutProvider, Circle, MultiLine, HoverTool, ColorBar, LinearColorMapper
-from bokeh.transform import linear_cmap
-from bokeh.palettes import Viridis256
-import networkx as nx
 from bokeh.io import output_notebook
 output_notebook()
 
@@ -17,11 +12,19 @@ root = Node(PKS_product = None,
 
 mcts = MCTS(root = root,
             target_molecule = Chem.MolFromSmiles("CCCCCC(=O)O"), # OC(CC(O)CC(O)=O)/C=C/C1=CC=CC=C1 # CCCCCC(=O)O # O=C1C=CCC(CO)O1
-            max_depth = 3,
+            max_depth = 5,
             total_iterations = 15000,
             maxPKSDesignsRetroTide = 3000,
             selection_policy = "UCB1")
 
 mcts.run()
 
+print('\nFollowing are the successful nodes that were actually reached by the RetroTide MCTS agent:\n')
+for node in mcts.successful_nodes:
+    print(node)
+    print('')
 
+print('\nFollowing are the successful PKS designs that were reached in simulation:\n')
+for design in mcts.successful_simulated_designs:
+    print(design)
+    print('')
