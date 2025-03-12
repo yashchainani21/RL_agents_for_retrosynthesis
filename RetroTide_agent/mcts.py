@@ -398,6 +398,7 @@ class MCTS:
             # Step 2: Expansion - Expand only if unexpanded
             if not leaf.children:  # Expand only if this node has not been expanded before
                 self.expand(leaf)
+                leaf.expand = True # update expand attribute to True for this slected leaf node
                 print(f"Expanded leaf node: {len(leaf.children)} new children")
 
             # Step 3: Simulation - Evaluate leaf node and get reward

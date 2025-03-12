@@ -27,7 +27,7 @@ class Node:
         self.visits: int = 0 # track the number of visits to this node
         self.value: float = 0.0 # track the cumulative value of this node
         self.selection_score: Optional[float] = None
-        self.expand: bool = False
+        self.expand: bool = False # track if node is expanded in selection step (set to False by default)
 
         # assign unique ID
         self.node_id = Node.node_counter
