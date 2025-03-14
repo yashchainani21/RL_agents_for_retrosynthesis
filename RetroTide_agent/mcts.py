@@ -412,12 +412,16 @@ class MCTS:
             print(f"Backpropagation complete.")
 
             if self.save_logs:
-                for node in self.nodes:
-                    print(node.id)
-                    print(node.selection_score)
-                    print(node.expand)
-                    print(node.PKS_product)
-                    exit()
+                logs_filename = f'logs_iteration_{i}.txt'
+                with open(logs_filename, 'w') as f:
+                    for node in self.nodes:
+                        f.write(f'Node ID: {node.node_id}, '
+                                f'Selection score: {node.selection_score},'
+                                f'Expand: {node.expand}, '
+                                f'PKS_product: {node.PKS_product}, '
+                                f'value: {node.value}')
+
+            exit()
 
         print("[MCTS Completed] All iterations exhausted.")
         print(f"Total nodes stored: {len(self.nodes)}")
