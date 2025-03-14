@@ -234,10 +234,12 @@ class MCTS:
 
                 for child in node.children:
 
-                    # if a child node has NOT been visited,
+                    # if a child node has NOT been visited ...,
                     if child.visits == 0:
+
+                        # ... and this child node happens to be a subgraph of the target
                         if self.calculate_subgraph_value(child) == 1:
-                            selection_score = math.inf # force selection if subgraph of the target
+                            selection_score = math.inf # then force selection if subgraph of the target
 
                             # since this child node is subgraph of the target, check if the target is reached
                             thiolysis_product = self.run_pks_release_reaction(pks_release_mechanism = "thiolysis",
@@ -263,6 +265,7 @@ class MCTS:
                                     print("TARGET REACHED IN SELECTION THROUGH CYCLIZATION!")
                                     self.successful_nodes.add(child)
 
+                        # ... but this child node is not a subgraph of the target
                         elif self.calculate_subgraph_value(child) == 0:
                             selection_score = (-1)*math.inf # prevent selection if not subgraph of the target
 
@@ -418,12 +421,12 @@ class MCTS:
                         if node.selection_score != (-1)*math.inf:
                             f.write(f'Node ID: {node.node_id}, '
                                     f'Depth: {node.depth}, '
-                                    f'Visits: {node.visits},'
+                                    f'Visits: {node.visits}, '
                                     f'Selection score: {node.selection_score}, '
                                     f'Expand: {node.expand}, '
                                     f'value: {node.value}\n')
 
-            if i == 4:
+            if i == 8:
                 exit()
 
         print("[MCTS Completed] All iterations exhausted.")
