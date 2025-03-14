@@ -418,11 +418,12 @@ class MCTS:
                         if node.selection_score != (-1)*math.inf:
                             f.write(f'Node ID: {node.node_id}, '
                                     f'Depth: {node.depth}, '
+                                    f'Visits: {node.visits},'
                                     f'Selection score: {node.selection_score}, '
                                     f'Expand: {node.expand}, '
                                     f'value: {node.value}\n')
 
-            if i == 2:
+            if i == 4:
                 exit()
 
         print("[MCTS Completed] All iterations exhausted.")
