@@ -415,13 +415,15 @@ class MCTS:
                 logs_filename = f'logs_iteration_{i}.txt'
                 with open(logs_filename, 'w') as f:
                     for node in self.nodes:
-                        f.write(f'Node ID: {node.node_id}, '
-                                f'Selection score: {node.selection_score},'
-                                f'Expand: {node.expand}, '
-                                f'PKS_product: {node.PKS_product}, '
-                                f'value: {node.value}')
+                        if node.selection_score != (-1)*math.inf:
+                            f.write(f'Node ID: {node.node_id}, '
+                                    f'Depth: {node.depth}, '
+                                    f'Selection score: {node.selection_score}, '
+                                    f'Expand: {node.expand}, '
+                                    f'value: {node.value}\n')
 
-            exit()
+            if i == 2:
+                exit()
 
         print("[MCTS Completed] All iterations exhausted.")
         print(f"Total nodes stored: {len(self.nodes)}")
