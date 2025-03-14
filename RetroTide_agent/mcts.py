@@ -411,7 +411,13 @@ class MCTS:
             self.backpropagate(node=leaf, reward=reward)
             print(f"Backpropagation complete.")
 
-            print(self.nodes)
+            if self.save_logs:
+                for node in self.nodes:
+                    print(node.id)
+                    print(node.selection_score)
+                    print(node.expand)
+                    print(node.PKS_product)
+                    exit()
 
         print("[MCTS Completed] All iterations exhausted.")
         print(f"Total nodes stored: {len(self.nodes)}")
