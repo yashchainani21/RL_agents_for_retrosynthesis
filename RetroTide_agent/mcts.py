@@ -14,7 +14,8 @@ class MCTS:
                  max_depth: int = 10,
                  total_iterations: int = 15000,
                  maxPKSDesignsRetroTide: int = 25,
-                 selection_policy: Optional[str] = 'UCB1'):
+                 selection_policy: Optional[str] = 'UCB1',
+                 save_logs: bool = False):
 
         self.root: Node = root
         self.nodes: List[Node] = [] # store all nodes for visualization
@@ -24,6 +25,7 @@ class MCTS:
         self.total_iterations: int = total_iterations
         self.maxPKSDesigns: int = maxPKSDesignsRetroTide
         self.selection_policy: str = selection_policy
+        self.save_logs: bool = save_logs
 
         self.nodes.append(root) # store the root node
 
@@ -408,6 +410,8 @@ class MCTS:
             # Step 4: Backpropagation - Propagate reward up the tree
             self.backpropagate(node=leaf, reward=reward)
             print(f"Backpropagation complete.")
+
+            print(self.nodes)
 
         print("[MCTS Completed] All iterations exhausted.")
         print(f"Total nodes stored: {len(self.nodes)}")
