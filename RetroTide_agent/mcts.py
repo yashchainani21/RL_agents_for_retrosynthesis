@@ -267,7 +267,9 @@ class MCTS:
 
                         # ... but this child node is not a subgraph of the target
                         elif self.calculate_subgraph_value(child) == 0:
-                            selection_score = (-1)*math.inf # prevent selection if not subgraph of the target
+
+                            # then prevent selection if not subgraph of the target
+                            selection_score = (-1)*math.inf
 
                     # if a child node HAS been visited,
                     else: # apply UCB1 formula
@@ -424,7 +426,8 @@ class MCTS:
                                     f'Visits: {node.visits}, '
                                     f'Selection score: {node.selection_score}, '
                                     f'Expand: {node.expand}, '
-                                    f'value: {node.value}\n')
+                                    f'value: {node.value}, '
+                                    f'product: {Chem.MolToSmiles(node.PKS_product)}')
 
             if i == 8:
                 exit()
