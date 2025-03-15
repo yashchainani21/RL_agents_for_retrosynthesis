@@ -11,6 +11,7 @@ class MCTS:
     def __init__(self,
                  root: Node,
                  target_molecule: Chem.Mol,
+                 target_name: str,
                  max_depth: int = 10,
                  total_iterations: int = 15000,
                  maxPKSDesignsRetroTide: int = 25,
@@ -21,6 +22,7 @@ class MCTS:
         self.nodes: List[Node] = [] # store all nodes for visualization
         self.edges: List[Tuple[int, int]] = [] # store all edges for parent-child relationships
         self.target_molecule: Chem.Mol = target_molecule
+        self.target_name: str = target_name
         self.max_depth: int = max_depth
         self.total_iterations: int = total_iterations
         self.maxPKSDesigns: int = maxPKSDesignsRetroTide
@@ -348,7 +350,7 @@ class MCTS:
 
         if self.are_isomorphic(carboxylated_PKS_product, self.target_molecule):
             print("TARGET REACHED IN SIMULATION THROUGH THIOLYSIS!")
-            additional_reward_if_target_met += 5
+            additional_reward_if_target_met += 0
             self.successful_simulated_designs.append(best_design.modules) # store successful simulation
 
         try:
@@ -361,7 +363,7 @@ class MCTS:
         if cyclized_PKS_product:
             if self.are_isomorphic(cyclized_PKS_product, self.target_molecule):
                 print("TARGET REACHED IN SIMULATION THROUGH CYCLIZATION!")
-                additional_reward_if_target_met += 5
+                additional_reward_if_target_met += 0
                 self.successful_simulated_designs.append(best_design.modules) # store successful simulation
 
         return best_score + additional_reward_if_target_met
@@ -433,9 +435,6 @@ class MCTS:
                                     f'Expand: {node.expand}, '
                                     f'value: {node.value}, '
                                     f'product: {PKS_product}\n')
-
-            if i == 15:
-                exit()
 
         print("[MCTS Completed] All iterations exhausted.")
         print(f"Total nodes stored: {len(self.nodes)}")
