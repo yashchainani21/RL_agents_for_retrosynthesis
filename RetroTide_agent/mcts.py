@@ -452,3 +452,6 @@ class MCTS:
                         f'PKS Product: {Chem.MolToSmiles(node.PKS_product)}\n')
 
             # store the successful designs that were reached in the simulation
+            f.write('\nFollowing are the successful PKS designs that were reached in simulation:\n')
+            for design in self.successful_simulated_designs:
+                f.write(str(design))
