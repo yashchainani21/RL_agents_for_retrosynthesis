@@ -441,3 +441,14 @@ class MCTS:
         print(f"Total edges stored: {len(self.edges)}")
 
     def save_results(self):
+        with open(f'./{self.target_name}_results.txt', 'w') as f:
+
+            # store successful nodes with PKS designs that actually reached the target product
+            f.write('\nFollowing are the successful nodes that were actually reached by the RetroTide MCTS agent:\n')
+            for node in self.successful_nodes:
+                f.write(f'Node ID: {node.node_id}, '
+                        f'Depth: {node.depth}, '
+                        f'PKS Design: {node.PKS_design}, PKS'
+                        f'PKS Product: {Chem.MolToSmiles(node.PKS_product)}\n')
+
+            # store the successful designs that were reached in the simulation
