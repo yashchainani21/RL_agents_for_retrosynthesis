@@ -448,7 +448,7 @@ class MCTS:
             for node in self.successful_nodes:
                 f.write(f'Node ID: {node.node_id}, '
                         f'Depth: {node.depth}, '
-                        f'PKS Design: {node.PKS_design}, PKS'
+                        f'PKS Design: {node.PKS_design[0].modules}, '
                         f'PKS Product: {Chem.MolToSmiles(node.PKS_product)}\n')
 
             # store the successful designs that were reached in the simulation
