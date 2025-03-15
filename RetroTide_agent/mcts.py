@@ -439,3 +439,5 @@ class MCTS:
         print("[MCTS Completed] All iterations exhausted.")
         print(f"Total nodes stored: {len(self.nodes)}")
         print(f"Total edges stored: {len(self.edges)}")
+
+    def save_results(self):
