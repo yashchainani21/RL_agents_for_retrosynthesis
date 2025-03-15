@@ -348,7 +348,7 @@ class MCTS:
 
         if self.are_isomorphic(carboxylated_PKS_product, self.target_molecule):
             print("TARGET REACHED IN SIMULATION THROUGH THIOLYSIS!")
-            additional_reward_if_target_met += 0
+            additional_reward_if_target_met += 5
             self.successful_simulated_designs.append(best_design.modules) # store successful simulation
 
         try:
@@ -361,7 +361,7 @@ class MCTS:
         if cyclized_PKS_product:
             if self.are_isomorphic(cyclized_PKS_product, self.target_molecule):
                 print("TARGET REACHED IN SIMULATION THROUGH CYCLIZATION!")
-                additional_reward_if_target_met += 0
+                additional_reward_if_target_met += 5
                 self.successful_simulated_designs.append(best_design.modules) # store successful simulation
 
         return best_score + additional_reward_if_target_met
@@ -420,6 +420,11 @@ class MCTS:
                 logs_filename = f'logs_iteration_{i}.txt'
                 with open(logs_filename, 'w') as f:
                     for node in self.nodes:
+                        try:
+                            PKS_product = Chem.MolToSmiles(node.PKS_product)
+                        except:
+                            PKS_product = None # if root node and no PKS product is present yet
+
                         if node.selection_score != (-1)*math.inf:
                             f.write(f'Node ID: {node.node_id}, '
                                     f'Depth: {node.depth}, '
@@ -427,9 +432,9 @@ class MCTS:
                                     f'Selection score: {node.selection_score}, '
                                     f'Expand: {node.expand}, '
                                     f'value: {node.value}, '
-                                    f'product: {Chem.MolToSmiles(node.PKS_product)}')
+                                    f'product: {PKS_product}\n')
 
-            if i == 8:
+            if i == 15:
                 exit()
 
         print("[MCTS Completed] All iterations exhausted.")
