@@ -11,11 +11,13 @@ root = Node(PKS_product = None,
             depth = 0)
 
 mcts = MCTS(root = root,
-            target_molecule = Chem.MolFromSmiles("CCCCCC(=O)O"), # OC(CC(O)CC(O)=O)/C=C/C1=CC=CC=C1 # CCCCCC(=O)O # O=C1C=CCC(CO)O1
+            target_molecule = Chem.MolFromSmiles("CCCCCCCCCC(=O)O"), # OC(CC(O)CC(O)=O)/C=C/C1=CC=CC=C1 # CCCCCC(=O)O # O=C1C=CCC(CO)O1
+            target_name = 'test_molecule',
             max_depth = 5,
             total_iterations = 15000,
             maxPKSDesignsRetroTide = 3000,
-            selection_policy = "UCB1")
+            selection_policy = "UCB1",
+            save_logs = True)
 
 mcts.run()
 
