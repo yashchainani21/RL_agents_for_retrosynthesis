@@ -3,9 +3,13 @@ from retrotide import retrotide, structureDB
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
-def _pks_release_reaction(pks_release_mechanism: str, bound_product_mol: Chem.Mol) -> Chem.Mol:
+def _pks_release_reaction(pks_release_mechanism: str,
+                          bound_product_mol: Chem.Mol) -> Chem.Mol:
     """
-    Run a PKS offloading reaction to release a PKS product bound to its synthase via either a thiolysis or cyclization reaction
+    Run an offloading reaction to release a bound PKS product.
+    Two types of offloading reactions are currently supported: thiolysis and cyclization.
+    A thiolysis offloading reaction will result in the formation of a carboxylic acid.
+    Meanwhile, a cyclization offloading reaction results in the formation of a lactone ring.
     """
 
     if pks_release_mechanism == 'thiolysis':
@@ -26,3 +30,8 @@ def _pks_release_reaction(pks_release_mechanism: str, bound_product_mol: Chem.Mo
         # if the bound substrate cannot be cyclized, then return None
         except:
             raise ValueError("\nUnable to perform cyclization reaction")
+
+starters_codes_list = list(bcs.starters.keys())
+extender_codes_list = list(bcs.extenders.keys())
+
+print(extender_codes_list)
