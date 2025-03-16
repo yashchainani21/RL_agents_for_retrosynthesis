@@ -2,6 +2,7 @@ import bcs
 from retrotide import retrotide, structureDB
 from rdkit import Chem
 from rdkit.Chem import AllChem
+from collections import OrderedDict
 
 def _pks_release_reaction(pks_release_mechanism: str,
                           bound_product_mol: Chem.Mol) -> Chem.Mol:
@@ -31,7 +32,18 @@ def _pks_release_reaction(pks_release_mechanism: str,
         except:
             raise ValueError("\nUnable to perform cyclization reaction")
 
-starters_codes_list = list(bcs.starters.keys())
-extender_codes_list = list(bcs.extenders.keys())
+all_starters_list = list(bcs.starters.keys())
+all_extenders_list = list(bcs.extenders.keys())
 
-print(extender_codes_list)
+# iterate through all starter units
+for starter in all_starters_list:
+
+    # initialize a loading module with each PKS starter
+    loading_AT_domain = bcs.AT(active = True,
+                               substrate = starter)
+
+    loading_domains_dict = OrderedDict({bcs.AT: loading_AT_domain})
+    loading_mod = bcs.Module(domains = loading_domains_dict,
+                             loading = True)
+
+    print(loading_mod)
