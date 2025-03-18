@@ -11,15 +11,15 @@ root = Node(PKS_product = None,
             depth = 0)
 
 mcts = MCTS(root = root,
-            target_molecule = Chem.MolFromSmiles("CCCCCCCCCC(=O)O"), # OC(CC(O)CC(O)=O)/C=C/C1=CC=CC=C1 # CCCCCC(=O)O # O=C1C=CCC(CO)O1
-            target_name = 'test_molecule',
+            target_molecule = Chem.MolFromSmiles("O=C1C=CCC(CO)O1"), # OC(CC(O)CC(O)=O)/C=C/C1=CC=CC=C1 # CCCCCC(=O)O # O=C1C=CCC(CO)O1
             max_depth = 5,
             total_iterations = 15000,
             maxPKSDesignsRetroTide = 3000,
             selection_policy = "UCB1",
-            save_logs = True)
+            save_logs = False)
 
 mcts.run()
+mcts.save_results()
 
 print('\nFollowing are the successful nodes that were actually reached by the RetroTide MCTS agent:\n')
 for node in mcts.successful_nodes:
