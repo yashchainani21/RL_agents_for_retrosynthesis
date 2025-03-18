@@ -7,22 +7,20 @@ This was done to as large of a PKS chemical space as possible.
 Note that in this script, only bound products are generated.
 The unbound products are only produced in the next script.
 """
+import pickle
 import bcs
-from retrotide import retrotide, structureDB
+from retrotide import structureDB
 from rdkit import Chem
 from collections import OrderedDict
 
 all_starters_list = list(bcs.starters.keys())
-all_extenders_list = list(bcs.extenders.keys())
+num_extension_modules = 1
 
 # initialize an empty dictionary to store all bcs-type PKS designs as keys and PKS products as values
 all_PKS_designs_and_products_dict = {}
 
 # iterate through all starter units
 for starter in all_starters_list:
-
-    # initialize a list to store all bcs.Module objects
-    all_bcs_modules_list = []
 
     # initialize a PKS loading module for the current PKS starter
     loading_AT_domain = bcs.AT(active = True,
@@ -31,67 +29,18 @@ for starter in all_starters_list:
     loading_module = bcs.Module(domains = OrderedDict({bcs.AT: loading_AT_domain}),
                                 loading = True)
 
-    all_bcs_modules_list.append(loading_module)
-
     # convert this loading module into a bcs cluster object and obtain the corresponding product
-    bound_LM_product = bcs.Cluster(modules = all_bcs_modules_list).computeProduct(structureDB)
+    modules_list = [loading_module]
+    LM_cluster = bcs.Cluster(modules = modules_list)
+    bound_LM_product = Chem.MolToSmiles(LM_cluster.computeProduct(structureDB))
 
-    # release the bound loading module product with a thiolysis reaction and store the released acid product
-    unbound_LM_acid_product = run_pks_release_reaction(pks_release_mechanism = 'thiolysis',
-                                                       bound_product_mol = bound_LM_product)
+    for i in range(0, num_extension_modules):
+        for key in structureDB.keys():
+            extension_modules = key
+            modules_list.append(extension_modules)
+            cluster = bcs.Cluster(modules = modules_list)
+            bound_PKS_product = Chem.MolToSmiles(cluster.computeProduct(structureDB))
 
-    unbound_LM_acid_product = Chem.MolToSmiles(unbound_LM_acid_product)
-
-    all_PKS_designs_and_products_dict.update({loading_module: unbound_LM_acid_product})
-
-    # now try releasing the bound loading module product with a cyclization reaction
-    try:
-        unbound_LM_cyclic_product = run_pks_release_reaction(pks_release_mechanism = 'cyclization',
-                                                             bound_product_mol = bound_LM_product)
-
-        unbound_LM_cyclic_product = Chem.MolToSmiles(unbound_LM_cyclic_product)
-
-        # if cyclization is possible, store the resulting lactone
-        all_PKS_designs_and_products_dict.update({loading_module: unbound_LM_cyclic_product})
-
-    # but do nothing if cyclization is not possible
-    except Exception as e:
-        print("unable to perform cyclization reaction", flush = True)
-        pass
-
-    # then, iterate through each extender unit for each extension module
-    for extender in all_extenders_list:
-
-        # initialize the extension AT domain
-        extension_AT_domain = bcs.AT(active = True, substrate = extender)
-
-        # with this extension AT, build the simplest PKS involving only the KS, AT, & ACP domains
-        KS_AT_ACP_domains_dict = OrderedDict({bcs.AT: extension_AT_domain})
-        KS_AT_ACP_extension_module = bcs.Module(domains = KS_AT_ACP_domains_dict,
-                                                loading = False)
-
-        all_bcs_modules_list.append(KS_AT_ACP_extension_module)
-
-        KS_AT_ACP_module = bcs.Cluster(modules = all_bcs_modules_list)
-        KS_AT_ACP_product = KS_AT_ACP_module.computeProduct(structureDB)
-
-        # then, create an empty list to store all KR domain types to use with this extender unit
-        KR_domain_types_available = []
-
-        all_KR_domain_types = ['A1', 'A2', 'A', 'B1', 'B2', 'B', 'C1', 'C2']
-        KR_domain_types_for_malonyl_CoA = ['A','B']
-        KR_domain_types_for_methylmalonyl_CoA = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
-
-        if extender == 'Malonyl-CoA':
-            KR_domain_types_available += KR_domain_types_for_malonyl_CoA
-
-        if extender == 'Methylmalonyl-CoA':
-            KR_domain_types_available += KR_domain_types_for_methylmalonyl_CoA
-
-        else:
-            KR_domain_types_available += all_KR_domain_types
-
-        for KR_domain_type in KR_domain_types_available:
-            KR_domain = bcs.Module(domains = OrderedDict({bcs.AT: extension_AT_domain,
-                                                          bcs.KR: bcs.KR(active = True,
-                                                                         type = KR_domain_type)}))
+# pickle the generated data
+with open('../data/raw/PKS_designs_and_products.pkl',"wb") as f:
+    pickle.dump(all_PKS_designs_and_products_dict, f)
