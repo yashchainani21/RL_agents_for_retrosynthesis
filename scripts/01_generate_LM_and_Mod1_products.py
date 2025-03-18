@@ -35,18 +35,17 @@ def _pks_release_reaction(pks_release_mechanism: str,
 all_starters_list = list(bcs.starters.keys())
 all_extenders_list = list(bcs.extenders.keys())
 
-# initialize a list to store all bcs.Module objects
-all_bcs_modules_list = []
-
 # iterate through all starter units
 for starter in all_starters_list:
 
-    # initialize a loading module with each PKS starter
+    # initialize a list to store all bcs.Module objects
+    all_bcs_modules_list = []
+
+    # initialize a PKS loading module for the current PKS starter
     loading_AT_domain = bcs.AT(active = True,
                                substrate = starter)
 
-    loading_domains_dict = OrderedDict({bcs.AT: loading_AT_domain})
-    loading_module = bcs.Module(domains = loading_domains_dict,
+    loading_module = bcs.Module(domains = OrderedDict({bcs.AT: loading_AT_domain}),
                                 loading = True)
 
     all_bcs_modules_list.append(loading_module)
@@ -65,6 +64,7 @@ for starter in all_starters_list:
         all_bcs_modules_list.append(KS_AT_ACP_extension_module)
 
         KS_AT_ACP_module = bcs.Cluster(modules = all_bcs_modules_list)
+        KS_AT_ACP_product = KS_AT_ACP_module.computeProduct(structureDB)
 
         # then, create an empty list to store all KR domain types to use with this extender unit
         KR_domain_types_available = []
@@ -73,10 +73,10 @@ for starter in all_starters_list:
         KR_domain_types_for_malonyl_CoA = ['A','B']
         KR_domain_types_for_methylmalonyl_CoA = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
 
-        if extender == 'mal':
+        if extender == 'Malonyl-CoA':
             KR_domain_types_available += KR_domain_types_for_malonyl_CoA
 
-        if extender == 'mmal':
+        if extender == 'Methylmalonyl-CoA':
             KR_domain_types_available += KR_domain_types_for_methylmalonyl_CoA
 
         else:
@@ -86,4 +86,3 @@ for starter in all_starters_list:
             KR_domain = bcs.Module(domains = OrderedDict({bcs.AT: extension_AT_domain,
                                                           bcs.KR: bcs.KR(active = True,
                                                                          type = KR_domain_type)}))
-
