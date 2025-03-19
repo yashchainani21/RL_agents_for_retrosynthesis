@@ -7,7 +7,7 @@ from collections import OrderedDict
 
 # Get list of all starter units
 all_starters_list = list(bcs.starters.keys())
-num_processes = 5
+num_processes = multiprocessing.cpu_count()
 
 def generate_pks_designs(starter):
     """
@@ -52,7 +52,6 @@ def generate_pks_designs(starter):
 
     return all_PKS_designs_and_products_dict
 
-
 if __name__ == "__main__":
     # Use multiprocessing to distribute computation across multiple cores
     with multiprocessing.Pool(processes = num_processes) as pool:
@@ -64,7 +63,7 @@ if __name__ == "__main__":
         all_PKS_designs_and_products_dict.update(result)
 
     # Pickle the generated data
-    with open('../data/raw/PKS_designs_and_products_LM.pkl', "wb") as f:
+    with open('../data/raw/PKS_designs_and_products_Mod2.pkl', "wb") as f:
         pickle.dump(all_PKS_designs_and_products_dict, f)
 
     print(f"Generated {len(all_PKS_designs_and_products_dict)} PKS designs and saved to file.")
