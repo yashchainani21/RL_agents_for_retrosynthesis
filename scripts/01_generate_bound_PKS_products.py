@@ -9,14 +9,14 @@ from collections import OrderedDict
 all_starters_list = list(bcs.starters.keys())
 num_processes = multiprocessing.cpu_count()
 
-max_num_of_modules = "LM"
+max_num_of_modules = "M1"
 
 def generate_pks_designs(starter: str):
     """
     Function to generate all PKS designs for a given starter unit.
     Returns a dictionary with PKS designs as keys and bound products as values.
     """
-    max_module = "LM"
+    max_module = "M1"
     all_PKS_designs_and_products_dict = {}
 
     # Initialize the loading module
@@ -42,6 +42,10 @@ def generate_pks_designs(starter: str):
         cluster_1 = bcs.Cluster(modules=extension_modules_list_1)
         bound_PKS_product_1 = Chem.MolToSmiles(cluster_1.computeProduct(structureDB))
         all_PKS_designs_and_products_dict[tuple(extension_modules_list_1)] = bound_PKS_product_1
+
+        # stop here if generating PKS designs only up until the first extension module
+        if max_module == "M1":
+            return all_PKS_designs_and_products_dict
 
         for key2 in structureDB.keys():
             extension_module_2 = key2
@@ -69,10 +73,7 @@ if __name__ == "__main__":
     for result in results:
         all_PKS_designs_and_products_dict.update(result)
 
-    output_filepath = None
-
-    if max_num_of_modules == "LM":
-        output_filepath = f'../data/raw/PKS_designs_and_products_{max_num_of_modules}.pkl'
+    output_filepath = f'../data/raw/PKS_designs_and_products_{max_num_of_modules}.pkl'
 
     with open(output_filepath, "wb") as f:
         pickle.dump(all_PKS_designs_and_products_dict, f)
