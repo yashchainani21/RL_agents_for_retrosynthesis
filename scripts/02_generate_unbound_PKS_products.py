@@ -30,11 +30,11 @@ def run_pks_release_reaction(pks_release_mechanism: str,
         except:
             raise ValueError("\nUnable to perform cyclization reaction")
 
-module = "LM" # pick from "LM", "Mod1", "Mod2", or "Mod3"
+max_module = "LM" # pick from "LM", "Mod1", "Mod2", or "Mod3"
 
-input_filepath = f'../data/raw/PKS_designs_and_products_{module}.pkl'
-output_dict_filepath = f'../data/interim/PKS_designs_and_unbound_products_{module}.pkl'
-output_unique_PKS_products_no_stereo_filepath = f'../data/interim/unique_PKS_products_no_stereo_{module}.txt'
+input_filepath = f'../data/raw/PKS_designs_and_products_{max_module}.pkl'
+output_dict_filepath = f'../data/interim/PKS_designs_and_unbound_products_{max_module}.pkl'
+output_unique_PKS_products_no_stereo_filepath = f'../data/interim/unique_PKS_products_no_stereo_{max_module}.txt'
 
 with open(input_filepath, "rb") as f:
     PKS_designs_and_products_dict = pickle.load(f)
