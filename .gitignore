@@ -1,3 +1,4 @@
 *.pyc
 *.html
 *.txt
+notebooks/.ipynb_checkpoints/
