@@ -1,5 +1,5 @@
 *.pyc
 *.html
-*.txt
+scripts/*.txt
 notebooks/.ipynb_checkpoints/
 .DS_store
