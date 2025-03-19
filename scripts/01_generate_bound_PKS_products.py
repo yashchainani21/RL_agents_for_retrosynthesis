@@ -9,15 +9,18 @@ from collections import OrderedDict
 all_starters_list = list(bcs.starters.keys())
 num_processes = multiprocessing.cpu_count()
 
-def generate_pks_designs(starter):
+max_num_of_modules = "LM"
+
+def generate_pks_designs(starter: str):
     """
     Function to generate all PKS designs for a given starter unit.
     Returns a dictionary with PKS designs as keys and bound products as values.
     """
+    max_module = "LM"
     all_PKS_designs_and_products_dict = {}
 
     # Initialize the loading module
-    loading_AT_domain = bcs.AT(active=True, substrate=starter)
+    loading_AT_domain = bcs.AT(active = True, substrate = starter)
     loading_module = bcs.Module(domains=OrderedDict({bcs.AT: loading_AT_domain}), loading=True)
 
     # Convert this loading module into a bcs cluster object and obtain the corresponding product
@@ -27,6 +30,10 @@ def generate_pks_designs(starter):
 
     # Store the loading module design
     all_PKS_designs_and_products_dict[tuple(loading_modules_list)] = bound_LM_product
+
+    # stop here if generating PKS designs only up until the loading module
+    if max_module == "LM":
+        return all_PKS_designs_and_products_dict
 
     # Iterate through extension module combinations (up to 3)
     for key1 in structureDB.keys():
@@ -62,8 +69,12 @@ if __name__ == "__main__":
     for result in results:
         all_PKS_designs_and_products_dict.update(result)
 
-    # Pickle the generated data
-    with open('../data/raw/PKS_designs_and_products_Mod2.pkl', "wb") as f:
+    output_filepath = None
+
+    if max_num_of_modules == "LM":
+        output_filepath = f'../data/raw/PKS_designs_and_products_{max_num_of_modules}.pkl'
+
+    with open(output_filepath, "wb") as f:
         pickle.dump(all_PKS_designs_and_products_dict, f)
 
     print(f"Generated {len(all_PKS_designs_and_products_dict)} PKS designs and saved to file.")
