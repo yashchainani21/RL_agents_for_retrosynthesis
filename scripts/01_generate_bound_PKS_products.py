@@ -13,10 +13,10 @@ max_num_of_modules = "M1"
 
 def generate_pks_designs(starter: str):
     """
-    Function to generate all PKS designs for a given starter unit.
+    Generates all PKS designs for a given starter unit.
     Returns a dictionary with PKS designs as keys and bound products as values.
     """
-    max_module = "M1"
+    max_module = "M2"
     all_PKS_designs_and_products_dict = {}
 
     # Initialize the loading module
@@ -45,21 +45,27 @@ def generate_pks_designs(starter: str):
 
         # stop here if generating PKS designs only up until the first extension module
         if max_module == "M1":
-            return all_PKS_designs_and_products_dict
+            pass
+        else:
 
-        for key2 in structureDB.keys():
-            extension_module_2 = key2
-            extension_modules_list_2 = [loading_module, extension_module_1, extension_module_2]
-            cluster_2 = bcs.Cluster(modules=extension_modules_list_2)
-            bound_PKS_product_2 = Chem.MolToSmiles(cluster_2.computeProduct(structureDB))
-            all_PKS_designs_and_products_dict[tuple(extension_modules_list_2)] = bound_PKS_product_2
+            for key2 in structureDB.keys():
+                extension_module_2 = key2
+                extension_modules_list_2 = [loading_module, extension_module_1, extension_module_2]
+                cluster_2 = bcs.Cluster(modules=extension_modules_list_2)
+                bound_PKS_product_2 = Chem.MolToSmiles(cluster_2.computeProduct(structureDB))
+                all_PKS_designs_and_products_dict[tuple(extension_modules_list_2)] = bound_PKS_product_2
 
-            for key3 in structureDB.keys():
-                extension_module_3 = key3
-                extension_modules_list_3 = [loading_module, extension_module_1, extension_module_2, extension_module_3]
-                cluster_3 = bcs.Cluster(modules=extension_modules_list_3)
-                bound_PKS_product_3 = Chem.MolToSmiles(cluster_3.computeProduct(structureDB))
-                all_PKS_designs_and_products_dict[tuple(extension_modules_list_3)] = bound_PKS_product_3
+                # stop here if generating PKS designs only up until the second extension module
+                if max_module == "M2":
+                    pass
+                else:
+
+                    for key3 in structureDB.keys():
+                        extension_module_3 = key3
+                        extension_modules_list_3 = [loading_module, extension_module_1, extension_module_2, extension_module_3]
+                        cluster_3 = bcs.Cluster(modules=extension_modules_list_3)
+                        bound_PKS_product_3 = Chem.MolToSmiles(cluster_3.computeProduct(structureDB))
+                        all_PKS_designs_and_products_dict[tuple(extension_modules_list_3)] = bound_PKS_product_3
 
     return all_PKS_designs_and_products_dict
 
@@ -78,4 +84,4 @@ if __name__ == "__main__":
     with open(output_filepath, "wb") as f:
         pickle.dump(all_PKS_designs_and_products_dict, f)
 
-    print(f"Generated {len(all_PKS_designs_and_products_dict)} PKS designs and saved to file.")
+    print(f"\nGenerated {len(all_PKS_designs_and_products_dict)} PKS designs and saved to file.")
