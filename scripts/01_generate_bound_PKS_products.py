@@ -9,7 +9,7 @@ from collections import OrderedDict
 all_starters_list = list(bcs.starters.keys())
 num_processes = multiprocessing.cpu_count()
 
-max_num_of_modules = "M1"
+max_num_of_modules = "M2"
 
 def generate_pks_designs(starter: str):
     """
@@ -70,11 +70,11 @@ def generate_pks_designs(starter: str):
     return all_PKS_designs_and_products_dict
 
 if __name__ == "__main__":
-    # Use multiprocessing to distribute computation across multiple cores
+    # use multiprocessing to distribute computation across multiple cores
     with multiprocessing.Pool(processes = num_processes) as pool:
         results = pool.map(generate_pks_designs, all_starters_list)
 
-    # Merge all results into a single dictionary
+    # merge all results into a single dictionary
     all_PKS_designs_and_products_dict = {}
     for result in results:
         all_PKS_designs_and_products_dict.update(result)
