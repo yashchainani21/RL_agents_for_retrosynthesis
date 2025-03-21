@@ -9,14 +9,14 @@ from collections import OrderedDict
 all_starters_list = list(bcs.starters.keys())
 num_processes = multiprocessing.cpu_count()
 
-max_num_of_modules = "M2"
+max_num_of_modules = "M3"
 
 def generate_pks_designs(starter: str):
     """
     Generates all PKS designs for a given starter unit.
     Returns a dictionary with PKS designs as keys and bound products as values.
     """
-    max_module = "M2"
+    max_module = "M3"
     all_PKS_designs_and_products_dict = {}
 
     # Initialize the loading module
@@ -71,7 +71,7 @@ def generate_pks_designs(starter: str):
 
 if __name__ == "__main__":
     # use multiprocessing to distribute computation across multiple cores
-    with multiprocessing.Pool(processes = num_processes) as pool:
+    with multiprocessing.Pool(processes = 6) as pool:
         results = pool.map(generate_pks_designs, all_starters_list)
 
     # merge all results into a single dictionary
