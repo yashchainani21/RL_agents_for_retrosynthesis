@@ -3,3 +3,4 @@
 scripts/*.txt
 notebooks/.ipynb_checkpoints/
 .DS_store
+*.pgnet
