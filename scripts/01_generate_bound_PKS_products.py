@@ -30,7 +30,7 @@ def generate_pks_designs(starter: str):
 
     # Store the loading module design
     all_PKS_designs_and_products_dict[tuple(loading_modules_list)] = bound_LM_product
-
+    return all_PKS_designs_and_products_dict
     # stop here if generating PKS designs only up until the loading module
     if max_module == "LM":
         return all_PKS_designs_and_products_dict
@@ -82,6 +82,6 @@ if __name__ == "__main__":
     output_filepath = f'../data/raw/PKS_designs_and_products_{max_num_of_modules}.pkl'
 
     with open(output_filepath, "wb") as f:
-        pickle.dump(all_PKS_designs_and_products_dict, f)
+        pickle.dump(all_PKS_designs_and_products_dict, f, protocol = 4)
 
     print(f"\nGenerated {len(all_PKS_designs_and_products_dict)} PKS designs and saved to file.")
