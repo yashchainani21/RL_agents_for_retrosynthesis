@@ -63,7 +63,7 @@ def process_pks_design(args):
     return local_results, unique_products
 
 def main():
-    max_module = "M2"  # Pick from "LM", "M1", "M2", or "M3"
+    max_module = "M3"  # Pick from "LM", "M1", "M2", or "M3"
 
     input_filepath = f'../data/raw/PKS_designs_and_products_{max_module}.pkl'
     output_dict_filepath = f'../data/interim/PKS_designs_and_unbound_products_{max_module}.pkl'
