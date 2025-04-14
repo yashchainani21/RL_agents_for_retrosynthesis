@@ -47,3 +47,13 @@ def test_number_of_unique_M2_products_without_stereochemistry():
     with open('../data/interim/unique_PKS_products_no_stereo_M2.txt','r') as f:
         products_list = f.readlines()
         assert len(products_list) == 67192
+
+def test_number_of_M3_PKS_designs():
+    with open('../data/raw/PKS_designs_and_products_M3.pkl', 'rb') as f:
+        PKS_designs_and_bound_products_dict = pickle.load(f)
+        assert len(PKS_designs_and_bound_products_dict) == 25128384
+
+def test_number_of_unique_M3_products_without_stereochemistry():
+    with open('../data/interim/unique_PKS_products_no_stereo_M3.txt','r') as f:
+        products_list = f.readlines()
+        assert len(products_list) == 2850334
