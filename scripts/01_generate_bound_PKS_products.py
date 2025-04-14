@@ -30,7 +30,7 @@ def generate_pks_designs(starter: str):
 
     # Store the loading module design
     all_PKS_designs_and_products_dict[tuple(loading_modules_list)] = bound_LM_product
-    return all_PKS_designs_and_products_dict
+
     # stop here if generating PKS designs only up until the loading module
     if max_module == "LM":
         return all_PKS_designs_and_products_dict
