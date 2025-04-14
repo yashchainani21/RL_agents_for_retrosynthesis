@@ -11,7 +11,6 @@ class MCTS:
     def __init__(self,
                  root: Node,
                  target_molecule: Chem.Mol,
-                 target_name: str,
                  max_depth: int = 10,
                  total_iterations: int = 15000,
                  maxPKSDesignsRetroTide: int = 25,
@@ -22,7 +21,6 @@ class MCTS:
         self.nodes: List[Node] = [] # store all nodes for visualization
         self.edges: List[Tuple[int, int]] = [] # store all edges for parent-child relationships
         self.target_molecule: Chem.Mol = target_molecule
-        self.target_name: str = target_name
         self.max_depth: int = max_depth
         self.total_iterations: int = total_iterations
         self.maxPKSDesigns: int = maxPKSDesignsRetroTide
@@ -325,7 +323,7 @@ class MCTS:
             self.edges.append((node.node_id, new_node.node_id)) # store edge between parent and new child
 
     def simulate_and_get_reward(self,
-                                node: Node) -> int:
+                                node: Node) -> float:
 
         # calculate reward based on bag of graphs analysis, thereby skipping expensive simulations
         # we use only the top 25 designs for fast simulation
@@ -340,33 +338,40 @@ class MCTS:
                                                     maxDesignsPerRound = 15,
                                                     similarity ='mcs_without_stereo')
 
-        additional_reward_if_target_met = 0
         best_design = simulated_designs[-1][0][0]
         best_score = simulated_designs[-1][0][1]
         best_molecule = simulated_designs[-1][0][2]
 
+        # first, release the bound PKS product by a thiolysis reaction catalyzed by the thioesterase domain
         carboxylated_PKS_product = self.run_pks_release_reaction(pks_release_mechanism = "thiolysis",
                                                                  bound_product_mol = best_molecule)
 
+        # if target is reached through this thiolysis reaction, return a reward of 1
         if self.are_isomorphic(carboxylated_PKS_product, self.target_molecule):
             print("TARGET REACHED IN SIMULATION THROUGH THIOLYSIS!")
-            additional_reward_if_target_met += 0
             self.successful_simulated_designs.append(best_design.modules) # store successful simulation
+            reward = 1.0
+            return reward
 
+        # next, release the bound PKS product by a cyclization reaction catalyzed by the thioesterase domain
         try:
             cyclized_PKS_product = self.run_pks_release_reaction(pks_release_mechanism = "cyclization",
                                                                  bound_product_mol = best_molecule)
+
+        # if cyclization is not possible, do nothing
         except Exception as e:
             print(f"Error in performing cyclization reaction: {e} ")
             cyclized_PKS_product = None
 
+        # if cyclization is possible and target is reached, return a reward of 1
         if cyclized_PKS_product:
             if self.are_isomorphic(cyclized_PKS_product, self.target_molecule):
                 print("TARGET REACHED IN SIMULATION THROUGH CYCLIZATION!")
-                additional_reward_if_target_met += 0
                 self.successful_simulated_designs.append(best_design.modules) # store successful simulation
+                reward = 1.0
+                return reward
 
-        return best_score + additional_reward_if_target_met
+        return best_score
 
     @staticmethod
     def backpropagate(node: Node,
@@ -407,7 +412,7 @@ class MCTS:
             # Step 2: Expansion - Expand only if unexpanded
             if not leaf.children:  # Expand only if this node has not been expanded before
                 self.expand(leaf)
-                leaf.expand = True # update expand attribute to True for this slected leaf node
+                leaf.expand = True # update expand attribute to True for this selected leaf node
                 print(f"Expanded leaf node: {len(leaf.children)} new children")
 
             # Step 3: Simulation - Evaluate leaf node and get reward
@@ -441,7 +446,7 @@ class MCTS:
         print(f"Total edges stored: {len(self.edges)}")
 
     def save_results(self):
-        with open(f'./{self.target_name}_results.txt', 'w') as f:
+        with open(f'{Chem.MolToSmiles(self.target_molecule)}_results.txt', 'w') as f:
 
             # store successful nodes with PKS designs that actually reached the target product
             f.write('\nFollowing are the successful nodes that were actually reached by the RetroTide MCTS agent:\n')
