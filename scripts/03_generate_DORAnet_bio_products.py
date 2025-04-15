@@ -66,7 +66,6 @@ else:
 # each process then receives its chunk of precursor SMILES
 my_precursors = comm.scatter(chunks, root = 0)
 
-
 def perform_DORAnet_bio_1step(precursor_smiles: str):
     """Generates one-step DORAnet products for a given precursor SMILES string."""
     forward_network = enzymatic.generate_network(
@@ -86,23 +85,25 @@ def perform_DORAnet_bio_1step(precursor_smiles: str):
 
     return generated_bioproducts_list
 
-def process_precursors_parallel(precursors, num_workers=mp.cpu_count()):
-    """Parallelize the processing of precursor SMILES using multiprocessing."""
-    with mp.Pool(processes=num_workers) as pool:
-        results = pool.map(perform_DORAnet_bio_1step, precursors)
+# process each precursor in the assigned chunk
+my_results = []
+for precursor in my_precursors:
+    my_results.append(perform_DORAnet_bio_1step(precursor))
 
-    # Flatten results (convert list of lists into a single list)
-    all_bioproducts_list = [prod for sublist in results for prod in sublist]
+# flatten the results for this rank
+my_results_flat = [item for sublist in my_results for item in sublist]
 
-    return all_bioproducts_list
+# gather the lists of results from all processes to the master process
+all_results = comm.gather(my_results_flat, root=0)
 
-if __name__ == "__main__":
+if rank == 0:
+    # Combine and deduplicate results
+    combined_results = set()
+    for sublist in all_results:
+        combined_results.update(sublist)
 
-    print(f"Running with {mp.cpu_count()} cores...")
-    all_bioproducts_list = process_precursors_parallel(precursors_list, num_workers = mp.cpu_count())
-    all_bioproducts_list = list(set(all_bioproducts_list))
-    print(f"\nNumber of total, unique bioproducts generated: {len(all_bioproducts_list)}\n")
+    print(f"\nTotal unique bioproducts generated: {len(combined_results)}\n")
 
-    # save all biologically modified products
+    # Save the results to the output file
     with open(output_filepath, 'w') as output_file:
-        output_file.write('\n'.join(all_bioproducts_list))
+        output_file.write('\n'.join(combined_results))
