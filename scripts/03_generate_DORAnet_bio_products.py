@@ -1,11 +1,12 @@
-import multiprocessing as mp
+from mpi4py import MPI
 from rdkit import Chem
 import doranet.modules.enzymatic as enzymatic
 import pandas as pd
 
-# Read in cofactors and prepare a list of their canonical SMILES
-cofactors_df = pd.read_csv('../data/raw/all_cofactors.csv')
-cofactors_list = [Chem.MolToSmiles(Chem.MolFromSmiles(smi)) for smi in cofactors_df["SMILES"]]
+# MPI initialization
+comm = MPI.COMM_WORLD
+rank = comm.Get_rank()
+size = comm.Get_size()
 
 # Define file paths based on modification type
 input_products = "LM" # choose from "LM", "M1", "M2", "M3", "BIO1", "CHEM1"
@@ -24,13 +25,39 @@ if input_products in ("LM", "M1", "M2", "M3"):
     output_filepath = f'../data/interim/DORAnet_{output_products}_from_{input_products}.txt'
 
 # if performing DORAnet modifications for a second-step on DORAnet products from the first step
-if input_products in ("BIO1", "CHEM1"):
+elif input_products in ("BIO1", "CHEM1"):
     precursors_filepath = f'../data/interim/DORAnet_{input_products}_from_{module}.txt'
     output_filepath = f'../data/interim/DORAnet_{output_products}_from_{input_products}_from{module}.txt'
 
-# Read precursor SMILES
-with open(precursors_filepath, 'r') as precursors_file:
-    precursors_list = [s.strip('\n') for s in precursors_file.readlines()]
+else:
+    raise ValueError("invalid input products name provided")
+
+# only rank 0 reads files and sets up initial data
+if rank == 0:
+
+    # read in cofactors and prepare a list of their canonical SMILES
+    cofactors_df = pd.read_csv('../data/raw/all_cofactors.csv')
+    cofactors_list = [Chem.MolToSmiles(Chem.MolFromSmiles(smi)) for smi in cofactors_df["SMILES"]]
+
+
+    # read precursor SMILES
+    with open(precursors_filepath, 'r') as precursors_file:
+        precursors_list = [s.strip('\n') for s in precursors_file.readlines()]
+
+else:
+    cofactors_list = None
+    precursors_list = None
+
+# broadcast the cofactors list and precursors list to all processes
+cofactors_list = comm.bcast(cofactors_list, root = 0)
+precursors_list = comm.bcast(precursors_list, root = 0)
+
+# define a helper function to evenly split the precursors list into n chunks
+def chunkify(lst, n):
+    """Yield successive n-sized chunks from lst."""
+    return [lst[i::n] for i in range(n)]
+
+# scatter
 
 def perform_DORAnet_bio_1step(precursor_smiles: str):
     """Generates one-step DORAnet products for a given precursor SMILES string."""
