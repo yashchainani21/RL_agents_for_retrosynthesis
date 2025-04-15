@@ -1,3 +1,4 @@
+import uuid
 from mpi4py import MPI
 from rdkit import Chem
 import doranet.modules.enzymatic as enzymatic
@@ -68,8 +69,12 @@ my_precursors = comm.scatter(chunks, root = 0)
 
 def perform_DORAnet_bio_1step(precursor_smiles: str):
     """Generates one-step DORAnet products for a given precursor SMILES string."""
+
+    unique_id = str(uuid.uuid4())
+    unique_jobname = f'{precursor_smiles}_{unique_id}'
+
     forward_network = enzymatic.generate_network(
-        job_name = precursor_smiles,
+        job_name = unique_jobname,
         starters = {precursor_smiles},
         gen = 1,
         direction = "forward")
