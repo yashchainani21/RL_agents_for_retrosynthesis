@@ -57,7 +57,15 @@ def chunkify(lst, n):
     """Yield successive n-sized chunks from lst."""
     return [lst[i::n] for i in range(n)]
 
-# scatter
+# scatter the data (only rank 0 prepares the chunks)
+if rank == 0:
+    chunks = chunkify(precursors_list, size)
+else:
+    chunks = None
+
+# each process then receives its chunk of precursor SMILES
+my_precursors = comm.scatter(chunks, root = 0)
+
 
 def perform_DORAnet_bio_1step(precursor_smiles: str):
     """Generates one-step DORAnet products for a given precursor SMILES string."""
