@@ -3,6 +3,9 @@ from mpi4py import MPI
 from rdkit import Chem
 import doranet.modules.enzymatic as enzymatic
 import pandas as pd
+from rdkit import RDLogger
+RDLogger.DisableLog('rdApp.*')
+
 
 if __name__ == '__main__':
 
@@ -12,7 +15,7 @@ if __name__ == '__main__':
     size = comm.Get_size()
 
     # Define file paths based on modification type
-    input_products = "LM" # choose from "LM", "M1", "M2", "M3", "BIO1", "CHEM1"
+    input_products = "M1" # choose from "LM", "M1", "M2", "M3", "BIO1", "CHEM1"
     output_products = "BIO1" # choose from either "BIO1", or "BIO2"
     module = "LM" # choose from "LM", "M1", "M2", "M3"
     modify_PKS_products = True
@@ -65,13 +68,20 @@ if __name__ == '__main__':
     # scatter the data (only rank 0 prepares the chunks)
     if rank == 0:
         chunks = chunkify(precursors_list, size)
+        num_active_ranks = len(chunks)
     else:
         chunks = None
 
-    # each process then receives its chunk of precursor SMILES
-    my_precursors = comm.scatter(chunks, root = 0)
+    # broadcast num_active_ranks to all processes
+    num_active_ranks = comm.bcast(num_active_ranks if rank == 0 else None, root=0)
 
-    print(f"[Rank {rank}] received {len(my_precursors)} precursors.")
+    # Scatter to all ranks — unused ranks get empty lists
+    if rank < num_active_ranks:
+        my_precursors = comm.scatter(chunks, root=0)
+    else:
+        my_precursors = []
+
+    print(f"[Rank {rank}] received {len(my_precursors)} precursors.", flush=True)
 
     def perform_DORAnet_bio_1step(precursor_smiles: str):
         """Generates one-step DORAnet products for a given precursor SMILES string."""
@@ -113,7 +123,7 @@ if __name__ == '__main__':
         for sublist in all_results:
             combined_results.update(sublist)
 
-        print(f"\nTotal unique bioproducts generated: {len(combined_results)}\n")
+        print(f"\nTotal unique bioproducts generated: {len(combined_results)}\n", flush = True)
 
         # Save the results to the output file
         with open(output_filepath, 'w') as output_file:
