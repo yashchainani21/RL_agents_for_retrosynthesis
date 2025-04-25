@@ -14,9 +14,9 @@ if __name__ == '__main__':
     size = comm.Get_size()
 
     # Define file paths based on modification type
-    input_products = "LM"  # choose from "LM", "M1", "M2", "M3", "BIO1", "CHEM1"
+    input_products = "M2"  # choose from "LM", "M1", "M2", "M3", "BIO1", "CHEM1"
     output_products = "CHEM1"  # choose from either "CHEM1", or "CHEM2"
-    module = "LM"  # choose from "LM", "M1", "M2", "M3"
+    module = "M2"  # choose from "LM", "M1", "M2", "M3"
     modify_PKS_products = True
     DORAnet_product_type_to_modify = None
 
