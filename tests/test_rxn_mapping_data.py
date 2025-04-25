@@ -34,3 +34,8 @@ def test_if_biochem_mappings_are_unique():
     """Ensure all mapped biochemistry reaction-template pairs arising from the above datasets are unique."""
     all_mapped_bio_and_chem_rxns = pd.read_csv("../data/processed/all_unique_bio_and_chem_mapped_rxns.csv")
     assert sum(all_mapped_bio_and_chem_rxns.duplicated()) == 0
+
+def test_if_reactant_template_pair_datasets_are_unique():
+    """Ensure all mapped reaction-template pairs arising from the above datasets are unique."""
+    all_reactant_template_pairs = pd.read_csv("../data/processed/all_bio_and_chem_unique_reactant_template_pairs_no_stereo.csv")
+    assert sum(all_reactant_template_pairs.duplicated()) == 0
