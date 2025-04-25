@@ -58,5 +58,10 @@ bio_and_chem_mapped_rxns_df = pd.concat([all_bio_mappings_df, all_chem_mappings_
 duplicates = bio_and_chem_mapped_rxns_df.duplicated()
 print(f'\nRemoving {sum(duplicates)} duplicate mapped reactions from all bio and chem mapped reactions')
 
-#
+all_bio_and_chem_mappings_df = bio_and_chem_mapped_rxns_df[~duplicates].reset_index(drop = True)
+print(f'\nNumber of unique mapped reactions across biology and chemistry: {all_bio_and_chem_mappings_df.shape[0]}')
+
+output_filepath = "../data/processed/all_unique_bio_and_chem_mapped_rxns.csv"
+print(f'\nSaving to: {output_filepath}')
+bio_and_chem_mapped_rxns_df.to_csv(output_filepath, index = False)
 
