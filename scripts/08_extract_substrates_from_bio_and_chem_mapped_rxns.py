@@ -11,6 +11,7 @@ from rdkit import Chem
 
 input_filepath = '../data/processed/all_unique_bio_and_chem_mapped_rxns.csv'
 all_bio_and_chem_mapped_rxns_df = pd.read_csv(input_filepath).drop(labels = ["Template", "Unnamed: 0"], axis = 1)
+ignore_stereo = True
 
 # read in cofactors list for biology and set up a list of helper molecules for chemistry
 # any reactants which fall within these two lists will not be stored
@@ -43,7 +44,8 @@ for i, rxn in enumerate(all_rxns):
 
             try:
                 Chem.SanitizeMol(reactant_mol) # sanitize reactant mol
-                Chem.RemoveStereochemistry(reactant_mol) # remove stereochemistry
+                if ignore_stereo:
+                    Chem.RemoveStereochemistry(reactant_mol) # remove stereochemistry
                 reactant_smiles_canonicalized = Chem.MolToSmiles(reactant_mol)
 
                 # do not save reactant structure if it is a cofactor in biology or a helper molecule in chemistry
@@ -60,7 +62,8 @@ for i, rxn in enumerate(all_rxns):
 
         try:
             Chem.SanitizeMol(reactant_mol) # sanitize reactant mol
-            Chem.RemoveStereochemistry(reactant_mol)  # remove stereochemistry
+            if ignore_stereo:
+                Chem.RemoveStereochemistry(reactant_mol)  # remove stereochemistry
             reactant_smiles_canonicalized = Chem.MolToSmiles(reactant_mol)
 
             # do not save reactant structure if it is a cofactor in biology or a helper molecule in chemistry
