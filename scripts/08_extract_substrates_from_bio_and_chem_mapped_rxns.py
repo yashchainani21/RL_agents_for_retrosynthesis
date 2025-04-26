@@ -28,6 +28,9 @@ final_reactants_list = [] # initialize empty list to store all reactant structur
 final_template_labels = [] # initialize empty list to store all template labels
 final_rxn_types = [] # initialize empty list to store if reaction is 'bio' or 'chem'
 
+# initialize a counter to track which compound-template pairs could not be stored because of sanitization issues
+num_failed_cpd_template_pairs = 0
+
 for i, rxn in enumerate(all_rxns):
 
     rxn_type = all_types[i] # extract the rxn type first ('bio', or 'chem')
@@ -56,6 +59,7 @@ for i, rxn in enumerate(all_rxns):
                     final_rxn_types.append(rxn_type)
 
             except Chem.rdchem.MolSanitizeException as e:
+                num_failed_cpd_template_pairs += 1
                 pass # do nothing if there are any sanitization errors
     else:
         reactant_mol = Chem.MolFromSmiles(rxn_lhs)
@@ -74,6 +78,7 @@ for i, rxn in enumerate(all_rxns):
                 final_rxn_types.append(rxn_type)
 
         except:
+            num_failed_cpd_template_pairs += 1
             pass # do nothing if there are sanitization errors
 
 reactant_template_mappings_df = pd.DataFrame(data = {"Reactant": final_reactants_list,
@@ -81,6 +86,9 @@ reactant_template_mappings_df = pd.DataFrame(data = {"Reactant": final_reactants
                                                      "Type": final_rxn_types})
 
 duplicates = reactant_template_mappings_df.duplicated()
+duplicate_indices = reactant_template_mappings_df.index[duplicates].tolist()
+duplicates_df = reactant_template_mappings_df[~duplicates].reset_index(drop = True)
+duplicates_df.to_csv("../data/processed/duplicated_bio_and_chem_reactant_template_pairs_no_stereo.csv", index = False)
 print(f"\n{sum(duplicates)} duplicate reactant-templates found across both biological and chemical reactions")
 
 all_bio_and_chem_mappings_df = reactant_template_mappings_df[~duplicates].reset_index(drop = True)
@@ -91,3 +99,5 @@ oufile_path = '../data/processed/all_bio_and_chem_unique_reactant_template_pairs
 print(f'Saving to: {oufile_path}')
 
 all_bio_and_chem_mappings_df.to_csv(oufile_path, index = False)
+
+print(f'\nNumber of failed compound-template pairs due to compound sanitzation issues: {num_failed_cpd_template_pairs}')
