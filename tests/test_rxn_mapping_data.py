@@ -40,4 +40,10 @@ def test_if_reactant_template_pair_dataset_has_only_unique_entries():
     all_reactant_template_pairs = pd.read_csv("../data/processed/all_bio_and_chem_unique_reactant_template_pairs_no_stereo.csv")
     assert sum(all_reactant_template_pairs.duplicated()) == 0
 
-def test_if_reactant_template
+def test_if_reactant_template_pair_duplicates_were_correctly_identified():
+    unique_df = pd.read_csv("../data/processed/all_bio_and_chem_unique_reactant_template_pairs_no_stereo.csv")
+    duplicate_df = pd.read_csv("../data/processed/duplicated_bio_and_chem_reactant_template_pairs_no_stereo.csv")
+    merged = duplicate_df.merge(unique_df, how='left', indicator=True)
+
+    # check if all rows from the duplicates list are present in the unique list
+    assert (merged['_merge'] == 'both').all()
