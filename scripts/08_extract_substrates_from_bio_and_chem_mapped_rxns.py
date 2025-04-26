@@ -37,7 +37,8 @@ for i, rxn in enumerate(all_rxns):
     rxn_template_label = all_template_labels[i]
     rxn_lhs, _ = rxn.split('>>')
 
-    # considering only the LHS of the reaction (since we care about reactant structures only)
+    # consider only the LHS of the reaction (since we care about reactant structures only)
+    # if there are multiple reactants on the LHS of the reaction, parse through each one
     if '.' in rxn_lhs:
         reactants_list = rxn_lhs.split('.')
 
@@ -45,8 +46,9 @@ for i, rxn in enumerate(all_rxns):
         for reactant_smiles in reactants_list:
             reactant_mol = Chem.MolFromSmiles(reactant_smiles)
 
+            # try sanitizing reactant first
             try:
-                Chem.SanitizeMol(reactant_mol) # sanitize reactant mol
+                Chem.SanitizeMol(reactant_mol)
                 if ignore_stereo:
                     Chem.RemoveStereochemistry(reactant_mol) # remove stereochemistry
                 reactant_smiles_canonicalized = Chem.MolToSmiles(reactant_mol)
@@ -58,14 +60,18 @@ for i, rxn in enumerate(all_rxns):
                     final_template_labels.append(rxn_template_label)
                     final_rxn_types.append(rxn_type)
 
+            # do not store this reactant-template pair if sanitization is not possible
             except Chem.rdchem.MolSanitizeException as e:
                 num_failed_cpd_template_pairs += 1
-                pass # do nothing if there are any sanitization errors
+                pass
+
+    # if there is only a single reactant, continue with sanitization
     else:
         reactant_mol = Chem.MolFromSmiles(rxn_lhs)
 
+        # try sanitizing reactant first
         try:
-            Chem.SanitizeMol(reactant_mol) # sanitize reactant mol
+            Chem.SanitizeMol(reactant_mol)
             if ignore_stereo:
                 Chem.RemoveStereochemistry(reactant_mol)  # remove stereochemistry
             reactant_smiles_canonicalized = Chem.MolToSmiles(reactant_mol)
@@ -77,9 +83,10 @@ for i, rxn in enumerate(all_rxns):
                 final_template_labels.append(rxn_template_label)
                 final_rxn_types.append(rxn_type)
 
+        # do not store this reactant-template pair if santiziation is not possible
         except:
             num_failed_cpd_template_pairs += 1
-            pass # do nothing if there are sanitization errors
+            pass
 
 reactant_template_mappings_df = pd.DataFrame(data = {"Reactant": final_reactants_list,
                                                      "Template Label": final_template_labels,
