@@ -5,3 +5,6 @@ notebooks/.ipynb_checkpoints/
 .DS_store
 *.pgnet
 data/processed/*.csv
+data/training
+data/testing
+data/validation
