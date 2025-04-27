@@ -1,5 +1,5 @@
 """
-In this script, we one-hot-encode reaction templates assigned to each reactant structure.
+In this script, we label-encode reaction templates assigned to each reactant structure.
 The total set of reaction templates available to us has 3927 elements (323 chemistry + 3604 biology).
 We will first read in both biology and chemical templates in order to combine them into a single list.
 Each template in this list will then be assigned an integer from 0 to 3926.
@@ -25,7 +25,7 @@ template_to_idx_mapping_df = pd.DataFrame({
 
 template_to_idx_mapping_df.to_csv("../data/processed/template_to_idx_mapping.csv", index = False)
 
-dataset_type = 'training' # choose from 'training', 'testing', or 'validation'
+dataset_type = 'validation' # choose from 'training', 'testing', or 'validation'
 stratification_type = 'bio_or_chem' # chose from 'bio_or_chem' or 'specific_rule'
 input_filepath = f'../data/{dataset_type}/reactant_template_pairs_stratified_by_{stratification_type}.csv'
 output_filepath = f'../data/{dataset_type}/reactant_template_pairs_stratified_by_{stratification_type}_labels_encoded.csv'
@@ -35,5 +35,18 @@ input_data = pd.read_csv(input_filepath)
 # make sure the input columns are as we would expect
 assert {'Reactant', 'Template Label', 'Type'}.issubset(input_data.columns), "Input data does not have expected columns."
 
+# map 'Template Label' to the 'Label Index'
+input_data['Label Index'] = input_data['Template Label'].map(template_to_idx)
 
+# safety check: ensure no templates failed to map
+if input_data['Label Index'].isnull().any():
+    missing_templates = input_data[input_data['Label Index'].isnull()]['Template Label'].unique()
+    raise ValueError(f"Some templates were not found in the template_to_idx mapping: {missing_templates}")
 
+# save the updated dataframe with integer-encoded labels
+input_data.to_csv(output_filepath, index=False)
+
+print(f"Saved label-encoded data to {output_filepath}")
+print(f"Example rows:\n{input_data.head()}")
+
+print(input_data)
