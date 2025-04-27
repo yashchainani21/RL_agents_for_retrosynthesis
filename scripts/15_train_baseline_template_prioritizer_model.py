@@ -4,15 +4,14 @@ Model hyperparameters here are optimized using a Bayesian hyperparameter optimiz
 The models here will form a baseline with which we can continue trying different architectures for improvement.
 """
 from dask.distributed import Client
-from dask_cuda import LocalCUDACluster
+# from dask_cuda import LocalCUDACluster # use this for single-node, multi-GPU
+from dask_mpi import initialize # use this for multi-node, multi-GPU
 from xgboost import dask as dxgb
 from bayes_opt import BayesianOptimization
 import dask.array as da
+import json
 import pandas as pd
-import xgboost as xgb
 import numpy as np
-from typing import Tuple
-import os
 
 # ---- Configuration ----
 
@@ -37,9 +36,16 @@ def load_features_labels_from_parquet(feature_path, label_path):
     y = pd.read_parquet(label_path)["Label Index"].values
     return X, y
 
-def start_dask_cluster(n_gpus):
-    cluster = LocalCUDACluster(n_workers=n_gpus, threads_per_worker=4)
-    client = Client(cluster)
+###### use the following helper-function for single-node, multi-gpu
+# def start_dask_cluster(n_gpus):
+#     cluster = LocalCUDACluster(n_workers=n_gpus, threads_per_worker=4)
+#     client = Client(cluster)
+#     return client
+
+###### use the following helper-function for multi-node, multi-gpu
+def start_dask_cluster():
+    initialize()
+    client = Client()
     return client
 
 def create_dask_dmatrix(client, X, y, chunks_per_gpu):
@@ -69,12 +75,14 @@ X_train, y_train = load_features_labels_from_parquet(
     label_path = training_labels_path)
 
 X_val, y_val = load_features_labels_from_parquet(
-    feature_path = training_features_path,
-    label_path = training_labels_path)
+    feature_path = validation_features_path,
+    label_path = validation_labels_path)
 
 # ---- Start Dask cluster ----
 print("Starting Dask cluster...")
-client = start_dask_cluster(N_GPUS)
+#client = start_dask_cluster(N_GPUS) # use this for single node, multi-GPU
+client = start_dask_cluster()
+print(f"Dask dashboard running at: {client.dashboard_link}")
 
 # Create Dask DMatrices
 chunks_per_gpu = len(X_train) // N_GPUS
@@ -90,7 +98,7 @@ def xgb_val_accuracy(max_depth, learning_rate, subsample, colsample_bytree):
     params = {
         'objective': 'multi:softprob',
         'num_class': NUM_CLASSES,
-        'tree_method': 'gpu_hist',
+        'tree_method': 'gpu_hist', # use gpu_hist for XGBoost 1.6.2
         'max_depth': max_depth,
         'learning_rate': learning_rate,
         'subsample': subsample,
@@ -134,11 +142,16 @@ print("Training final model...")
 
 best_params = optimizer.max['params']
 best_params['max_depth'] = int(best_params['max_depth'])  # cast back to int
+
+with open("../models/best_xgboost_hyperparams.json", "w") as f:
+    json.dump(best_params, f, indent=4)
+
+print("Best hyperparameters saved!")
+
 final_params = {
     'objective': 'multi:softprob',
     'num_class': NUM_CLASSES,
-    'tree_method': 'hist',
-    'device': 'cuda',
+    'tree_method': 'gpu_hist', # use gpu_hist for XGBoost 1.6.2
     'eval_metric': 'merror',
     'verbosity': 1,
     'max_depth': best_params['max_depth'],
