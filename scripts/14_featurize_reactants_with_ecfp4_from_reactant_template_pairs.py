@@ -75,5 +75,5 @@ if rank == 0:
     X_df = pd.DataFrame(X.astype(np.uint8))  # cast to uint8 to save space
     y_df = pd.DataFrame(y, columns=["Label Index"])
 
-    X_df.to_parquet(f'../data/{dataset_type}/reactant_ecfp4_fingerprints.parquet', index=False)
-    y_df.to_parquet(f'../data/{dataset_type}/template_labels.parquet', index=False)
+    X_df.to_parquet(f'../data/{dataset_type}/reactant_ecfp4_fingerprints_stratified_by_{stratification_type}.parquet', index=False)
+    y_df.to_parquet(f'../data/{dataset_type}/template_labels_stratified_by_{stratification_type}.parquet', index=False)
