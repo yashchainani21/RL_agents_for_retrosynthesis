@@ -16,7 +16,6 @@ size = comm.Get_size()
 radius = 2  # ECFP4 radius
 n_bits = 2048  # Fingerprint length
 
-
 def featurize_smiles(smiles):
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
