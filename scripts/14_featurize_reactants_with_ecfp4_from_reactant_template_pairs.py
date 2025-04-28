@@ -29,8 +29,7 @@ def featurize_smiles(smiles):
 if rank == 0:
     # Master rank reads the full dataset
     dataset_type = 'training'  # choose from 'training' or 'testing' / 'validation'
-    stratification_type = 'bio_or_chem'  # choose from 'type' or 'specific_rule'
-    input_filepath = f'../data/{dataset_type}/reactant_template_pairs_stratified_by_{stratification_type}_labels_encoded.csv'
+    input_filepath = f'../data/{dataset_type}/{dataset_type}_reactant_template_pairs.csv'
 
     data = pd.read_csv(input_filepath)
 
