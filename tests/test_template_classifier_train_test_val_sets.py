@@ -45,6 +45,21 @@ def test_if_every_template_appears_at_least_once_in_each_set():
     reactant_template_testing_pairs_df = pd.read_csv('../data/testing/testing_reactant_template_pairs.csv')
     reactant_template_validation_template_pairs_df = pd.read_csv('../data/validation/validation_reactant_template_pairs.csv')
 
+    # get all unique labels across the whole dataset
+    all_labels = set(pd.concat([reactant_template_training_pairs_df,
+                                reactant_template_validation_template_pairs_df,
+                                reactant_template_testing_pairs_df])['Template Label'].unique())
+
+    # check in each split
+    train_labels = set(reactant_template_training_pairs_df['Template Label'].unique())
+    val_labels = set(reactant_template_validation_template_pairs_df['Template Label'].unique())
+    test_labels = set(reactant_template_testing_pairs_df['Template Label'].unique())
+
+    # check that every label appears at least once in each split
+    for label in all_labels:
+        assert label in train_labels, f"Label {label} missing from training set!"
+        assert label in val_labels, f"Label {label} missing from validation set!"
+        assert label in test_labels, f"Label {label} missing from test set!"
 
 def test_no_overlap_between_train_test_val_split_of_reactant_template_pairs():
     """
