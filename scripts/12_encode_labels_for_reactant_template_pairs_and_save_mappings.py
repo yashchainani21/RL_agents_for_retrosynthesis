@@ -1,14 +1,8 @@
 """
 In this script, we split the unique reactant-template pairs obtained previously into train, test, and validation sets.
-We can stratify the reactant-template pairs dataset in two ways.
-The first is by the type of the reaction, i.e., by 'bio' or 'chem'.
-This ensures that the ratio of biology to chemistry reactions is retained in each set.
-Alternatively, we can also stratify by the specific template label.
-To do this, we first isolate template labels for which we have at least 10 reactant examples.
-These common reactant-template pairs are then split into train, test, and val sets, stratified by template label.
-Reactant-template pairs for which the templates have less than 10 reactants mapped to each of them are then lumped together.
-Using this second set of template reactant pairs, a random 80/10/10 split is performed.
-Both splits are then recombined together.
+We perform an 80/10/10 train/test/val split stratified by the specific template label that a reactant has been mapped to.
+This ensures that the distribution of reaction rules is approximately equal throughout all three sets.
+To perform such a split, we also need to ensure only template labels for which there are at least 10 reactant examples present are used. 
 """
 import pandas as pd
 
@@ -48,7 +42,7 @@ template_to_idx_mapping_df = pd.DataFrame({
 template_to_idx_mapping_df.to_csv("../data/processed/template_to_idx_mapping.csv", index = False)
 
 # insert integer-encoded labels into dataframe of reactant-template pairs
-reactant_template_pairs_df['Label Index'] = reactant_template_pairs_df['Template Label'].map(template_to_idx)
+filtered_reactant_template_df.loc[:,'Label Index'] = filtered_reactant_template_df.loc[:,'Template Label'].map(template_to_idx)
 
 # save the dataframe with integer-encoded labels to later split into train/ test/ val sets
-reactant_template_pairs_df.to_csv("../data/processed/all_bio_and_chem_unique_reactant_template_pairs_no_stereo_w_integer_labels.csv", index = False)
+filtered_reactant_template_df.to_csv("../data/processed/all_bio_and_chem_unique_reactant_template_pairs_no_stereo_w_integer_labels.csv", index = False)
