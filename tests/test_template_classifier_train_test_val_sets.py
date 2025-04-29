@@ -2,18 +2,22 @@ import pytest
 import pandas as pd
 
 def test_no_missing_values_in_reactant_template_dataset_before_splits():
+    """Check that there are no NaN values in the reactant-template dataset before splits."""
     reactant_template_pairs_before_splits_df = pd.read_csv('../data/processed/all_bio_and_chem_unique_reactant_template_pairs_no_stereo_w_integer_labels.csv')
     assert reactant_template_pairs_before_splits_df.isnull().values.any() == False
 
 def test_no_missing_values_in_reactant_template_training_dataset_after_splits():
+    """Check that there are no NaN values in the reactant-template training dataset after splits."""
     reactant_template_training_pairs_df = pd.read_csv('../data/training/training_reactant_template_pairs.csv')
     assert reactant_template_training_pairs_df.isnull().values.any() == False
 
 def test_no_missing_values_in_reactant_template_testing_dataset_after_splits():
+    """Check that there are no NaN values in the reactant-template testing dataset after splits."""
     reactant_template_testing_pairs_df = pd.read_csv('../data/testing/testing_reactant_template_pairs.csv')
     assert reactant_template_testing_pairs_df.isnull().values.any() == False
 
 def test_no_missing_values_in_reactant_template_validation_dataset_after_splits():
+    """Check that there are no NaN values in the reactant-template validation dataset after splits."""
     reactant_template_validation_template_pairs_df = pd.read_csv('../data/validation/validation_reactant_template_pairs.csv')
     assert reactant_template_validation_template_pairs_df.isnull().values.any() == False
 
