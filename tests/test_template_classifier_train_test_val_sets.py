@@ -5,6 +5,18 @@ def test_no_missing_values_in_reactant_template_dataset_before_splits():
     reactant_template_pairs_before_splits_df = pd.read_csv('../data/processed/all_bio_and_chem_unique_reactant_template_pairs_no_stereo_w_integer_labels.csv')
     assert reactant_template_pairs_before_splits_df.isnull().values.any() == False
 
+def test_no_missing_values_in_reactant_template_training_dataset_after_splits():
+    reactant_template_training_pairs_df = pd.read_csv('../data/training/training_reactant_template_pairs.csv')
+    assert reactant_template_training_pairs_df.isnull().values.any() == False
+
+def test_no_missing_values_in_reactant_template_testing_dataset_after_splits():
+    reactant_template_testing_pairs_df = pd.read_csv('../data/testing/testing_reactant_template_pairs.csv')
+    assert reactant_template_testing_pairs_df.isnull().values.any() == False
+
+def test_no_missing_values_in_reactant_template_validation_dataset_after_splits():
+    reactant_template_validation_template_pairs_df = pd.read_csv('../data/validation/validation_reactant_template_pairs.csv')
+    assert reactant_template_validation_template_pairs_df.isnull().values.any() == False
+
 def test_each_template_in_reactant_template_dataset_has_minimally_10_examples_before_splits():
     reactant_template_pairs_before_splits_df = pd.read_csv('../data/processed/all_bio_and_chem_unique_reactant_template_pairs_no_stereo_w_integer_labels.csv')
     template_frequency_counts = reactant_template_pairs_before_splits_df['Template Label'].value_counts()
