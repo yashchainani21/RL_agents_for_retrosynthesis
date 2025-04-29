@@ -41,8 +41,9 @@ template_to_idx_mapping_df = pd.DataFrame({
 
 template_to_idx_mapping_df.to_csv("../data/processed/template_to_idx_mapping.csv", index = False)
 
-# insert integer-encoded labels into dataframe of reactant-template pairs
-filtered_reactant_template_df.loc[:,'Label Index'] = filtered_reactant_template_df.loc[:,'Template Label'].map(template_to_idx)
+# insert integer-encoded labels into the filtered dataframe of reactant-template pairs
+filtered_reactant_template_df = filtered_reactant_template_df.copy()
+filtered_reactant_template_df.loc[:,'Label Index'] = filtered_reactant_template_df['Template Label'].map(template_to_idx)
 
 # save the dataframe with integer-encoded labels to later split into train/ test/ val sets
 filtered_reactant_template_df.to_csv("../data/processed/all_bio_and_chem_unique_reactant_template_pairs_no_stereo_w_integer_labels.csv", index = False)
