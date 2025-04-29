@@ -12,12 +12,12 @@ reactant_template_pairs_df = pd.read_csv(reactant_template_pairs_filepath)
 print(f'\nTotal number of unique reactant-template pairs across both biology and chemistry: {reactant_template_pairs_df.shape[0]}')
 
 # extract templates for which there are fewer than 10 reactant structures mapped to a template
-# the threshold is set at 10 because 10 examples allows for a clean 80/10/10 split into train/test/val sets
+# the threshold is set at 10 because 10 examples minimally allows for a clean 80/10/10 split into train/test/val sets
 template_frequency_counts = reactant_template_pairs_df["Template Label"].value_counts()
 templates_with_less_than_10_examples = []
 
 for idx, count in enumerate(template_frequency_counts):
-    if count <= 10:
+    if count < 10:
         templates_with_less_than_10_examples.append(idx)
         template = template_frequency_counts.index[idx]
         templates_with_less_than_10_examples.append(template)
