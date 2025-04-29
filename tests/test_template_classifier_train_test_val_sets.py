@@ -3,8 +3,7 @@ import pandas as pd
 
 def test_no_missing_values_in_reactant_template_dataset_before_splits():
     reactant_template_pairs_before_splits_df = pd.read_csv('../data/processed/all_bio_and_chem_unique_reactant_template_pairs_no_stereo_w_integer_labels.csv')
-    no_nans = not reactant_template_pairs_before_splits_df.isnull().values.any()
-    assert no_nans == False
+    assert reactant_template_pairs_before_splits_df.isnull().values.any() == False
 
 
 def test_no_overlap_between_train_test_val_split_of_reactant_template_pairs():
