@@ -1,3 +1,9 @@
+"""
+In this script, we use MPI to featurize PKS and non-PKS product molecules using ECFP4 fingerprints.
+ECFP4 fingerprints are used to later train baseline binary classification XGBoost models.
+Given an input molecule, at inference time, these models will predict the probability of the molecule being a polyketide.
+"""
+
 from mpi4py import MPI
 import pandas as pd
 import numpy as np
