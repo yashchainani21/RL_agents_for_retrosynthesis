@@ -5,8 +5,36 @@ This ensures that the distribution of polyketides to non-polyketides is retained
 """
 
 import dask.dataframe as dd
+from sklearn.model_selection import train_test_split
 
 module = "LM"
 input_PKS_and_non_PKS_products_path = f'../data/processed/{module}_labeled_products.parquet'
 
+train_outfile_path = f'../data/training/training_{module}_PKS_and_non_PKS_products.parquet'
+test_outfile_path = f'../data/testing/testing_{module}_PKS_and_non_PKS_products.parquet'
+val_outfile_path = f'../data/validation/validation_{module}_PKS_and_non_PKS_products.parquet'
+
 PKS_and_non_PKS_products_df = dd.read_parquet(input_PKS_and_non_PKS_products_path)
+
+# split reactant-template pairs stratified by 'Template Label'
+# at this point, only templates for which there are at least 10 examples have been retained
+train, test_and_val_combined = train_test_split(
+    PKS_and_non_PKS_products_df,
+    test_size = 0.2,
+    stratify = PKS_and_non_PKS_products_df['label'], # stratify by whether molecules are PKSs or PKS-modified products
+    random_state = 42)
+
+val, test = train_test_split(
+    test_and_val_combined,
+    test_size = 0.5,
+    stratify = test_and_val_combined['Template Label'], # stratify by whether molecules are PKSs or PKS-modified products
+    random_state = 42)
+
+print(f"Train size: {len(train)}")
+print(f"Validation size: {len(val)}")
+print(f"Test size: {len(test)}")
+
+train.to_parquet(train_outfile_path, index=False)
+test.to_parquet(test_outfile_path, index=False)
+val.to_parquet(val_outfile_path, index=False)
+
