@@ -20,14 +20,14 @@ PKS_and_non_PKS_products_df = pd.read_parquet(input_PKS_and_non_PKS_products_pat
 train, test_and_val_combined = train_test_split(
     PKS_and_non_PKS_products_df,
     test_size = 0.2,
-    stratify = PKS_and_non_PKS_products_df['label'], # stratify by whether molecules are PKSs or PKS-modified products
+    stratify = PKS_and_non_PKS_products_df['labels'], # stratify by whether molecules are PKSs or PKS-modified products
     random_state = 42)
 
 # then, the 20% testing and validation are divided further into 10% testing and 10% validation
 val, test = train_test_split(
     test_and_val_combined,
     test_size = 0.5,
-    stratify = test_and_val_combined['label'], # stratify by whether molecules are PKSs or PKS-modified products
+    stratify = test_and_val_combined['labels'], # stratify by whether molecules are PKSs or PKS-modified products
     random_state = 42)
 
 print(f"Train size: {len(train)}")

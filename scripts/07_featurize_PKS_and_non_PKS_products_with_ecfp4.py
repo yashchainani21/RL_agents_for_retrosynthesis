@@ -41,7 +41,7 @@ if rank == 0:
 
     # Extract reactants and label indices
     smiles_list = data['SMILES'].tolist()
-    label_indices = data['label'].tolist()
+    label_indices = data['labels'].tolist()
 
     # Split into approximately equal-sized chunks
     smiles_chunks = np.array_split(smiles_list, size)
@@ -76,8 +76,8 @@ if rank == 0:
     X = np.vstack(all_features)
     y = np.array(all_labels)
 
-    X_df = pd.DataFrame(X.astype(np.uint8))  # cast to uint8 to save space
-    y_df = pd.DataFrame(y, columns=["Label Index"])
+    X_df = pd.DataFrame(X.astype(np.uint8))  # scast to uint8 to save space
+    y_df = pd.DataFrame(y.astype(np.uint8))
 
-    X_df.to_parquet(f'../data/{dataset_type}/{dataset_type}_PKS_and_non_PKS_products_fingerprints.parquet', index=False)
-    y_df.to_parquet(f'../data/{dataset_type}/{dataset_type}_PKS_and_non_PKS_products_labels.parquet', index=False)
+    X_df.to_parquet(f'../data/{dataset_type}/{dataset_type}_{module}_PKS_and_non_PKS_products_fingerprints.parquet', index=False)
+    y_df.to_parquet(f'../data/{dataset_type}/{dataset_type}_{module}_PKS_and_non_PKS_products_labels.parquet', index=False)
