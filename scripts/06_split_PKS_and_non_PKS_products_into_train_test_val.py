@@ -4,7 +4,7 @@ Splits will be stratified by the label for each molecule which determines if a p
 This ensures that the distribution of polyketides to non-polyketides is retained across all sets.
 """
 
-import dask.dataframe as dd
+import pandas as pd
 from sklearn.model_selection import train_test_split
 
 module = "LM"
@@ -14,20 +14,20 @@ train_outfile_path = f'../data/training/training_{module}_PKS_and_non_PKS_produc
 test_outfile_path = f'../data/testing/testing_{module}_PKS_and_non_PKS_products.parquet'
 val_outfile_path = f'../data/validation/validation_{module}_PKS_and_non_PKS_products.parquet'
 
-PKS_and_non_PKS_products_df = dd.read_parquet(input_PKS_and_non_PKS_products_path)
+PKS_and_non_PKS_products_df = pd.read_parquet(input_PKS_and_non_PKS_products_path)
 
-# split reactant-template pairs stratified by 'Template Label'
-# at this point, only templates for which there are at least 10 examples have been retained
+# first, we split into 80% training and 20% testing + validation
 train, test_and_val_combined = train_test_split(
     PKS_and_non_PKS_products_df,
     test_size = 0.2,
     stratify = PKS_and_non_PKS_products_df['label'], # stratify by whether molecules are PKSs or PKS-modified products
     random_state = 42)
 
+# then, the 20% testing and validation are divided further into 10% testing and 10% validation
 val, test = train_test_split(
     test_and_val_combined,
     test_size = 0.5,
-    stratify = test_and_val_combined['Template Label'], # stratify by whether molecules are PKSs or PKS-modified products
+    stratify = test_and_val_combined['label'], # stratify by whether molecules are PKSs or PKS-modified products
     random_state = 42)
 
 print(f"Train size: {len(train)}")
