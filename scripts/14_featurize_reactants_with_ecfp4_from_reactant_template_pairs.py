@@ -1,3 +1,7 @@
+"""
+In this script, we use MPI to featurize reactant structures from train/test/val sets of reactant-template pairs.
+ECFP4 fingerprints are currently used to featurize reactants and train baseline XGBoost multi-class classifier models.
+"""
 from mpi4py import MPI
 import pandas as pd
 import numpy as np
