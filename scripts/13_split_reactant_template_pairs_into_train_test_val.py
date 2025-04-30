@@ -1,3 +1,9 @@
+"""
+In this script, we split our dataset of reactant-template pairs into train/test/val.
+An 80/10/10 split is used, stratified using the 'Template Label' column.
+Previously, we ensured only template-reactant pairs for which templates have >=10 reactants mapped to them are retained.
+Since there are at least 10 examples for each template, such a stratified split is possible.
+"""
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
