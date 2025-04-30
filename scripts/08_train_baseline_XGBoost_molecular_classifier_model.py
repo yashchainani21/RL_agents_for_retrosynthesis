@@ -1,0 +1,116 @@
+import numpy as np
+from xgboost_ray import RayDMatrix, RayParams, train, RayXGBClassifier
+from bayes_opt import BayesianOptimization
+from sklearn.metrics import average_precision_score
+import pandas as pd
+
+module = "LM"
+
+# load in fingerprints and labels from training and validation datasets
+training_fps_path = f'../data/training/training_{module}_PKS_and_non_PKS_products_fingerprints.parquet'
+training_labels_path = f'../data/training/training_{module}_PKS_and_non_PKS_products_labels.parquet'
+
+validation_fps_path = f'../data/training/training_{module}_PKS_and_non_PKS_products_fingerprints.parquet'
+validation_labels_path = f'../data/training/training_{module}_PKS_and_non_PKS_products_labels.parquet'
+
+X_train = pd.read_parquet(training_fps_path).to_numpy()
+y_train = pd.read_parquet(training_labels_path).to_numpy()
+
+X_val = pd.read_parquet(validation_fps_path).to_numpy()
+y_val = pd.read_parquet(validation_labels_path).to_numpy()
+
+def XGBC_objective(X_train: np.ndarray,
+                   y_train: np.ndarray,
+                   X_val: np.ndarray,
+                   y_val: np.ndarray):
+    """
+    Objective function for XGBoost hyperparameter optimization via a Bayesian optimization procedure.
+    This function will be passed to an instantiated BayesianOptimization object
+    """
+
+    def objective(learning_rate: float,
+                  max_leaves: int,
+                  max_depth: int,
+                  reg_alpha: float,
+                  reg_lambda: float,
+                  n_estimators: int,
+                  min_child_weight: float,
+                  colsample_bytree: float,
+                  colsample_bylevel: float,
+                  colsample_bynode: float,
+                  subsample: float,
+                  scale_pos_weight: float) -> float:
+
+        params = {'learning_rate': learning_rate,
+                  'max_leaves': int(max_leaves),
+                  'max_depth': int(max_depth),
+                  'reg_alpha': reg_alpha,
+                  'reg_lambda': reg_lambda,
+                  'n_estimators': int(n_estimators),
+                  'min_child_weight': min_child_weight,
+                  'colsample_bytree': colsample_bytree,
+                  'colsample_bylevel': colsample_bylevel,
+                  'colsample_bynode': colsample_bynode,
+                  'subsample': subsample,
+                  'scale_pos_weight': scale_pos_weight,
+                  'objective': 'binary:logistic',
+                  'eval_metric': 'logloss',
+                  'tree_method': 'gpu_hist', # since we have XGBoost 1.6.2
+                  'n_jobs': 4, # In XGBoost-Ray, n_jobs sets the number of actors
+                  'random_state': 42}
+
+        # train XGBoost classifier on training data
+        model = RayXGBClassifier(**params)
+        model.fit(X_train, y_train)
+
+        # then evaluate on validation data by predicting probabilities using validation fingerprints
+        y_val_predicted_probabilities = model.predict_proba(X_val)[:, 1]
+
+        # finally, calculate the AUPRC score between the validation labels and the validation predicted probabilities
+        auprc = average_precision_score(y_val, y_val_predicted_probabilities)
+        return auprc
+
+    return objective
+
+def run_bayesian_hyperparameter_search(X_train: np.ndarray,
+                                       y_train: np.ndarray,
+                                       X_val: np.ndarray,
+                                       y_val: np.ndarray):
+
+    objective = XGBC_objective(X_train, y_train, X_val, y_val)
+
+    # Define the bounds for each hyperparameter
+    pbounds = {
+        'learning_rate': (0.1, 0.5),
+        'max_leaves': (20, 300),
+        'max_depth': (1, 15),
+        'reg_alpha': (0, 1.0),
+        'reg_lambda': (0, 1.0),
+        'n_estimators': (20, 300),
+        'min_child_weight': (2, 10),
+        'colsample_bytree': (0.5, 1.0),
+        'colsample_bylevel': (0.5, 1.0),
+        'colsample_bynode': (0.5, 1.0),
+        'subsample': (0.4, 1.0),
+        'scale_pos_weight': (1, 5)
+    }
+
+    optimizer = BayesianOptimization(f = objective,
+                                     pbounds = pbounds,
+                                     random_state = 42)
+
+    optimizer.maximize(
+        init_points = 5,  # number of randomly chosen points to sample the target function before fitting the GP
+        n_iter = 20)  # total number of times the process is to be repeated
+
+    best_params = optimizer.max['params']
+    best_score = optimizer.max['target']
+
+    print(f"Best AUPRC: {best_score:.4f} achieved with {best_params}")
+
+    return best_params
+
+opt_params = run_bayesian_hyperparameter_search(X_train, y_train, X_val, y_val)
+
+
+
