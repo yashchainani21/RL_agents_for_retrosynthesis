@@ -8,7 +8,7 @@ train_outfile_path = f'../data/training/training_reactant_template_pairs.csv'
 test_outfile_path = f'../data/testing/testing_reactant_template_pairs.csv'
 val_outfile_path = f'../data/validation/validation_reactant_template_pairs.csv'
 
-# then, we split reactant-template pairs stratified by 'Template Label'
+# split reactant-template pairs stratified by 'Template Label'
 # at this point, only templates for which there are at least 10 examples have been retained
 train, test_and_val_combined = train_test_split(
     reactant_template_pairs_df ,
