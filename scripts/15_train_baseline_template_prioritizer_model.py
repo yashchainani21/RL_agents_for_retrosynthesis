@@ -15,18 +15,16 @@ from bayes_opt import BayesianOptimization
 
 # ---- Configuration ----
 
-stratification_type = 'bio_or_chem'  # choose from 'bio_or_chem' or 'specific_rule'
+training_features_path = f'./data/training/training_reactant_ecfp4_fingerprints.parquet'
+training_labels_path = f'./data/training/training_template_labels.parquet'
 
-training_features_path = f'../data/training/reactant_ecfp4_fingerprints_stratified_by_{stratification_type}.parquet'
-training_labels_path = f'../data/training/template_labels_stratified_by_{stratification_type}.parquet'
+validation_features_path = f'./data/validation/validation_reactant_ecfp4_fingerprints.parquet'
+validation_labels_path = f'../data/validation/validation_template_labels.parquet'
 
-validation_features_path = f'../data/validation/reactant_ecfp4_fingerprints_stratified_by_{stratification_type}.parquet'
-validation_labels_path = f'../data/validation/template_labels_stratified_by_{stratification_type}.parquet'
+SAVE_MODEL_PATH = "./models/template_prioritizer_XGBoost_model.json"
+SAVE_BEST_PARAMS_PATH = "./models/best_xgboost_hyperparams.json"
 
-SAVE_MODEL_PATH = "../models/template_prioritizer_XGBoost_model.json"
-SAVE_BEST_PARAMS_PATH = "../models/best_xgboost_hyperparams.json"
-
-NUM_CLASSES = 3927
+NUM_CLASSES = 932
 RANDOM_STATE = 42
 
 # ---- Helper functions ----
@@ -119,20 +117,17 @@ if __name__ == '__main__':
         'max_depth': (4, 12),
         'learning_rate': (0.01, 0.3),
         'subsample': (0.5, 1.0),
-        'colsample_bytree': (0.5, 1.0)
-    }
+        'colsample_bytree': (0.5, 1.0)}
 
     optimizer = BayesianOptimization(
         f=xgb_val_accuracy,
         pbounds=pbounds,
         random_state=RANDOM_STATE,
-        verbose=2
-    )
+        verbose=2)
 
     optimizer.maximize(
         init_points=5,
-        n_iter=25
-    )
+        n_iter=25)
 
     # ---- Train final model with the best hyperparameters ----
     print("Training final model...")
