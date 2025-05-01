@@ -7,8 +7,13 @@ from bayes_opt import BayesianOptimization
 from sklearn.metrics import average_precision_score
 import pandas as pd
 
-ray.init(address="auto")  # but use ray.init() for local testing
-module = "LM"
+ray.init(address = "auto")  # but use ray.init() for local testing
+module: str = "LM" # specify which module's PKS products and post-PKS products used for training
+
+max_actor_restarts: int = 2
+num_actors: int = 4
+cpus_per_actor: int = 4
+gpus_per_actor: int = 1
 
 # load in fingerprints and labels from training and validation datasets
 training_fps_path = f'../data/training/training_{module}_PKS_and_non_PKS_products_fingerprints.parquet'
@@ -30,7 +35,11 @@ y_val = pd.read_parquet(validation_labels_path).to_numpy().flatten()
 def XGBC_objective(X_train: np.ndarray,
                    y_train: np.ndarray,
                    X_val: np.ndarray,
-                   y_val: np.ndarray):
+                   y_val: np.ndarray,
+                   max_actor_restarts: int,
+                   num_actors: int,
+                   cpus_per_actor: int,
+                   gpus_per_actor: int,):
     """
     Objective function for XGBoost hyperparameter optimization via a Bayesian optimization procedure.
     This function will be passed to an instantiated BayesianOptimization object
@@ -69,10 +78,10 @@ def XGBC_objective(X_train: np.ndarray,
         # train XGBoost classifier on training data
         model = RayXGBClassifier(**params)
 
-        ray_params = RayParams(max_actor_restarts = 2,
-                               num_actors = 4,
-                               cpus_per_actor = 4,
-                               gpus_per_actor = 1)
+        ray_params = RayParams(max_actor_restarts = max_actor_restarts,
+                               num_actors = num_actors,
+                               cpus_per_actor = cpus_per_actor,
+                               gpus_per_actor = gpus_per_actor)
 
         model.fit(X_train, y_train, ray_params = ray_params)
 
@@ -88,9 +97,14 @@ def XGBC_objective(X_train: np.ndarray,
 def run_bayesian_hyperparameter_search(X_train: np.ndarray,
                                        y_train: np.ndarray,
                                        X_val: np.ndarray,
-                                       y_val: np.ndarray):
+                                       y_val: np.ndarray,
+                                       max_actor_restarts: int,
+                                       num_actors: int,
+                                       cpus_per_actor: int,
+                                       gpus_per_actor: int,):
 
-    objective = XGBC_objective(X_train, y_train, X_val, y_val)
+    objective = XGBC_objective(X_train, y_train, X_val, y_val,
+                               max_actor_restarts, num_actors, cpus_per_actor, gpus_per_actor)
 
     # Define the bounds for each hyperparameter
     pbounds = {
@@ -123,13 +137,40 @@ def run_bayesian_hyperparameter_search(X_train: np.ndarray,
 
     return best_params
 
-opt_params = run_bayesian_hyperparameter_search(X_train, y_train, X_val, y_val)
+opt_hyperparams = run_bayesian_hyperparameter_search(X_train, y_train, X_val, y_val)
 
 # save the optimized hyperparameters to a json file
 with open(opt_params_filepath,'w') as json_file:
-    json.dump(opt_params, json_file)
+    json.dump(opt_hyperparams, json_file)
 
-    
+# with the Bayesian optimized hyperparameters, train the baseline model
+
+molecular_classifier_xgboost = RayXGBClassifier(objective = 'binary:logistic',
+                                                random_state = 42,
+                                                max_leaves = int(opt_hyperparams['max_leaves']),
+                                                learning_rate = opt_hyperparams['learning_rate'],
+                                                max_depth = int(opt_hyperparams['max_depth']),
+                                                reg_alpha = opt_hyperparams['reg_alpha'],
+                                                reg_lambda = opt_hyperparams['reg_lambda'],
+                                                n_estimators = int(opt_hyperparams['n_estimators']),
+                                                min_child_weight = opt_hyperparams['min_child_weight'],
+                                                colsample_bytree = opt_hyperparams['colsample_bytree'],
+                                                colsample_bylevel = opt_hyperparams['colsample_bylevel'],
+                                                colsample_bynode = opt_hyperparams['colsample_bynode'],
+                                                subsample = opt_hyperparams['subsample'],
+                                                scale_pos_weight = opt_hyperparams['scale_pos_weight'])
+
+ray_params = RayParams(max_actor_restarts=max_actor_restarts,
+                       num_actors = num_actors,
+                       cpus_per_actor = cpus_per_actor,
+                       gpus_per_actor = gpus_per_actor)
+
+molecular_classifier_xgboost.fit(X_train, y_train, ray_params = ray_params)
+
+
+# save the trained XGBoost model
+with open(model_output_filepath, 'wb') as model_file:
+    pickle.dump(molecular_classifier_xgboost, model_file)
 
 
 
