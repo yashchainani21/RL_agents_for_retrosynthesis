@@ -1,4 +1,5 @@
 import pickle
+import json
 import numpy as np
 import ray
 from xgboost_ray import RayDMatrix, RayParams, train, RayXGBClassifier
@@ -6,7 +7,7 @@ from bayes_opt import BayesianOptimization
 from sklearn.metrics import average_precision_score
 import pandas as pd
 
-ray.init(address="auto")  # or ray.init() for local testing
+ray.init(address="auto")  # but use ray.init() for local testing
 module = "LM"
 
 # load in fingerprints and labels from training and validation datasets
@@ -18,6 +19,7 @@ validation_labels_path = f'../data/training/training_{module}_PKS_and_non_PKS_pr
 
 # define output filepath for molecular classifier based on which module's PKS & PKS-modified products used for training
 model_output_filepath = f'../models/molecular_classifier_baseline_XGBoost_trained_on_{module}_products.pkl'
+opt_params_filepath = f'../models/molecular_classifier_baseline_XGBoost_hyperparams_trained_on_{module}_products.json'
 
 X_train = pd.read_parquet(training_fps_path).to_numpy()
 y_train = pd.read_parquet(training_labels_path).to_numpy().flatten()
