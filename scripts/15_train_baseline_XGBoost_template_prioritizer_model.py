@@ -149,7 +149,7 @@ with open(opt_params_filepath,'w') as json_file:
 
 # with the Bayesian optimized hyperparameters, train the baseline model
 
-molecular_classifier_xgboost = RayXGBClassifier(objective = 'binary:logistic',
+molecular_classifier_xgboost = RayXGBClassifier(objective = 'multi:softprob',
                                                 random_state = 42,
                                                 max_leaves = int(opt_hyperparams['max_leaves']),
                                                 learning_rate = opt_hyperparams['learning_rate'],
@@ -162,7 +162,8 @@ molecular_classifier_xgboost = RayXGBClassifier(objective = 'binary:logistic',
                                                 colsample_bylevel = opt_hyperparams['colsample_bylevel'],
                                                 colsample_bynode = opt_hyperparams['colsample_bynode'],
                                                 subsample = opt_hyperparams['subsample'],
-                                                scale_pos_weight = opt_hyperparams['scale_pos_weight'])
+                                                scale_pos_weight = opt_hyperparams['scale_pos_weight'],
+                                                tree_method = 'gpu_hist')
 
 ray_params = RayParams(max_actor_restarts =max_actor_restarts,
                        num_actors = num_actors,

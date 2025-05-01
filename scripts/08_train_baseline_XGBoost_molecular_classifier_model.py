@@ -18,10 +18,10 @@ ray.init(address = "auto")  # but use ray.init() for local testing
 module: str = "LM"
 
 # specify Ray configurations for distributed multi-node, multi-gpu training
-max_actor_restarts: int = 2
-num_actors: int = 4
-cpus_per_actor: int = 4
-gpus_per_actor: int = 1
+max_actor_restarts: int = 2 # number of times Ray will restart an actor if it fails
+num_actors: int = 8 # total number of parallel workers (ideally = number of GPUs)
+cpus_per_actor: int = 4 # number of CPUs assigned per actor
+gpus_per_actor: int = 1 # number of GPUs per actor
 
 # load in fingerprints and labels from training and validation datasets
 training_fps_path = f'../data/training/training_{module}_PKS_and_non_PKS_products_fingerprints.parquet'
@@ -167,7 +167,8 @@ molecular_classifier_xgboost = RayXGBClassifier(objective = 'binary:logistic',
                                                 colsample_bylevel = opt_hyperparams['colsample_bylevel'],
                                                 colsample_bynode = opt_hyperparams['colsample_bynode'],
                                                 subsample = opt_hyperparams['subsample'],
-                                                scale_pos_weight = opt_hyperparams['scale_pos_weight'])
+                                                scale_pos_weight = opt_hyperparams['scale_pos_weight'],
+                                                tree_method = 'gpu_hist')
 
 ray_params = RayParams(max_actor_restarts=max_actor_restarts,
                        num_actors = num_actors,
