@@ -125,5 +125,11 @@ def run_bayesian_hyperparameter_search(X_train: np.ndarray,
 
 opt_params = run_bayesian_hyperparameter_search(X_train, y_train, X_val, y_val)
 
+# save the optimized hyperparameters to a json file
+with open(opt_params_filepath,'w') as json_file:
+    json.dump(opt_params, json_file)
+
+    
+
 
 
