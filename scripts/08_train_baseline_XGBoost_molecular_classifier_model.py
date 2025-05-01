@@ -14,14 +14,21 @@ from bayes_opt import BayesianOptimization
 from sklearn.metrics import average_precision_score
 import pandas as pd
 
+# check to see if Ray can see GPUs
+import subprocess
+print("[DEBUG] nvidia-smi output:")
+print(subprocess.run(["nvidia-smi"], capture_output=True, text=True).stdout)
+
 ray.init(address = "auto")  # but use ray.init() for local testing
 module: str = "LM"
 
 # specify Ray configurations for distributed multi-node, multi-gpu training
+# for bash submission script, number GPUs requested = num_actors x gpus_per_actor
+# number of CPUs requested = num_actors x cpus_per_actor
 max_actor_restarts: int = 2 # number of times Ray will restart an actor if it fails
 num_actors: int = 8 # total number of parallel workers (ideally = number of GPUs)
 cpus_per_actor: int = 4 # number of CPUs assigned per actor
-gpus_per_actor: int = 1 # number of GPUs per actor
+gpus_per_actor: int = 1 # number of GPUs per actor (must be >=1 with 'tree_method' set to 'gpu_hist')
 
 # load in fingerprints and labels from training and validation datasets
 training_fps_path = f'../data/training/training_{module}_PKS_and_non_PKS_products_fingerprints.parquet'

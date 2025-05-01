@@ -9,14 +9,21 @@ import numpy as np
 import ray
 from xgboost_ray import RayDMatrix, RayParams, train, RayXGBClassifier
 from bayes_opt import BayesianOptimization
-from sklearn.metrics import average_precision_score
+from sklearn.metrics import accuracy_score
 import pandas as pd
 
+# check to see if Ray can see GPUs
+import subprocess
+print("[DEBUG] nvidia-smi output:")
+print(subprocess.run(["nvidia-smi"], capture_output=True, text=True).stdout)
+
 # specify Ray configurations for distributed multi-node, multi-gpu training
+# for bash submission script, number GPUs requested = num_actors x gpus_per_actor
+# number of CPUs requested = num_actors x cpus_per_actor
 max_actor_restarts: int = 2 # number of times Ray will restart an actor if it fails
 num_actors: int = 8 # total number of parallel workers (ideally = number of GPUs)
 cpus_per_actor: int = 4 # number of CPUs assigned per actor
-gpus_per_actor: int = 1 # number of GPUs per actor
+gpus_per_actor: int = 1 # number of GPUs per actor (must be >=1 with 'tree_method' set to 'gpu_hist')
 
 # load in fingerprints and labels from training and validation datasets
 training_fps_path = f'../data/training/training_reactant_ecfp4_fingerprints.parquet'
@@ -89,10 +96,11 @@ def XGBC_objective(X_train: np.ndarray,
         model.fit(X_train, y_train, ray_params = ray_params)
 
         # then evaluate on validation data by predicting probabilities using validation fingerprints
-        y_val_predicted_probabilities = model.predict_proba(X_val)[:, 1]
+        y_val_predicted = model.predict(X_val)[:, 1]
 
         # finally, calculate the AUPRC score between the validation labels and the validation predicted probabilities
-        auprc = average_precision_score(y_val, y_val_predicted_probabilities)
+        auprc = accuracy_score(y_true = y_val,
+                               y_pred = y_val_predicted)
         return auprc
 
     return objective
@@ -136,7 +144,7 @@ def run_bayesian_hyperparameter_search(X_train: np.ndarray,
     best_params = optimizer.max['params']
     best_score = optimizer.max['target']
 
-    print(f"Best AUPRC: {best_score:.4f} achieved with {best_params}")
+    print(f"Best accuracy: {best_score:.4f} achieved with {best_params}")
 
     return best_params
 
