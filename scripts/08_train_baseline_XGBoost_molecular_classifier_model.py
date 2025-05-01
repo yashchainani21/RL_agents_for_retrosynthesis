@@ -1,3 +1,4 @@
+import pickle
 import numpy as np
 import ray
 from xgboost_ray import RayDMatrix, RayParams, train, RayXGBClassifier
@@ -14,6 +15,9 @@ training_labels_path = f'../data/training/training_{module}_PKS_and_non_PKS_prod
 
 validation_fps_path = f'../data/training/training_{module}_PKS_and_non_PKS_products_fingerprints.parquet'
 validation_labels_path = f'../data/training/training_{module}_PKS_and_non_PKS_products_labels.parquet'
+
+# define output filepath for molecular classifier based on which module's PKS & PKS-modified products used for training
+model_output_filepath = f'../models/molecular_classifier_baseline_XGBoost_trained_on_{module}_products.pkl'
 
 X_train = pd.read_parquet(training_fps_path).to_numpy()
 y_train = pd.read_parquet(training_labels_path).to_numpy().flatten()
