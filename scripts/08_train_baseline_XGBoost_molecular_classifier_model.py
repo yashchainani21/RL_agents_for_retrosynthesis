@@ -8,7 +8,7 @@ from sklearn.metrics import average_precision_score
 import pandas as pd
 
 ray.init(address = "auto")  # but use ray.init() for local testing
-module: str = "LM" # specify which module's PKS products and post-PKS products used for training
+module: str = "LM"
 
 max_actor_restarts: int = 2
 num_actors: int = 4
@@ -137,7 +137,8 @@ def run_bayesian_hyperparameter_search(X_train: np.ndarray,
 
     return best_params
 
-opt_hyperparams = run_bayesian_hyperparameter_search(X_train, y_train, X_val, y_val)
+opt_hyperparams = run_bayesian_hyperparameter_search(X_train, y_train, X_val, y_val,
+                                                     max_actor_restarts, num_actors, cpus_per_actor, gpus_per_actor)
 
 # save the optimized hyperparameters to a json file
 with open(opt_params_filepath,'w') as json_file:
@@ -167,8 +168,7 @@ ray_params = RayParams(max_actor_restarts=max_actor_restarts,
 
 molecular_classifier_xgboost.fit(X_train, y_train, ray_params = ray_params)
 
-
-# save the trained XGBoost model
+# save the trained XGBoost model with pickle
 with open(model_output_filepath, 'wb') as model_file:
     pickle.dump(molecular_classifier_xgboost, model_file)
 
