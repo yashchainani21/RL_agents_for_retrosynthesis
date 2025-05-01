@@ -1,7 +1,6 @@
 """
 In this script, we train a distributed XGBoost multi-class classification model using ECFP4 fingerprints.
-Model hyperparameters are optimized via Bayesian Optimization.
-This script uses a single node with multiple GPUs through a LocalCUDACluster.
+Ray is used
 """
 
 import pickle
@@ -13,119 +12,165 @@ from bayes_opt import BayesianOptimization
 from sklearn.metrics import average_precision_score
 import pandas as pd
 
+# specify Ray configurations for distributed multi-node, multi-gpu training
+max_actor_restarts: int = 2
+num_actors: int = 4
+cpus_per_actor: int = 4
+gpus_per_actor: int = 1
+
 # load in fingerprints and labels from training and validation datasets
-training_features_path = f'../data/training/training_reactant_ecfp4_fingerprints.parquet'
+training_fps_path = f'../data/training/training_reactant_ecfp4_fingerprints.parquet'
 training_labels_path = f'../data/training/training_template_labels.parquet'
 
-validation_features_path = f'../data/validation/validation_reactant_ecfp4_fingerprints.parquet'
+validation_fps_path = f'../data/validation/validation_reactant_ecfp4_fingerprints.parquet'
 validation_labels_path = f'../data/validation/validation_template_labels.parquet'
 
-SAVE_MODEL_PATH = "./models/template_prioritizer_XGBoost_model.json"
-SAVE_BEST_PARAMS_PATH = "./models/best_xgboost_hyperparams.json"
+# define output filepath for multi-class template prioritizer model
+model_output_filepath = f"../models/template_prioritizer_baseline_model_XGBoost.pkl"
+opt_params_filepath = f'../models/template_prioritizer_baseline_XGBoost.json'
 
-# ---- Helper functions ----
+X_train = pd.read_parquet(training_fps_path).to_numpy()
+y_train = pd.read_parquet(training_labels_path).to_numpy().flatten()
 
+X_val = pd.read_parquet(validation_fps_path).to_numpy()
+y_val = pd.read_parquet(validation_labels_path).to_numpy().flatten()
 
+def XGBC_objective(X_train: np.ndarray,
+                   y_train: np.ndarray,
+                   X_val: np.ndarray,
+                   y_val: np.ndarray,
+                   max_actor_restarts: int,
+                   num_actors: int,
+                   cpus_per_actor: int,
+                   gpus_per_actor: int,):
+    """
+    Objective function for XGBoost hyperparameter optimization via a Bayesian optimization procedure.
+    This function will be passed to an instantiated BayesianOptimization object
+    """
 
-# ---- Main script ----
-if __name__ == '__main__':
+    def objective(learning_rate: float,
+                  max_leaves: int,
+                  max_depth: int,
+                  reg_alpha: float,
+                  reg_lambda: float,
+                  n_estimators: int,
+                  min_child_weight: float,
+                  colsample_bytree: float,
+                  colsample_bylevel: float,
+                  colsample_bynode: float,
+                  subsample: float,
+                  scale_pos_weight: float) -> float:
 
-    # ---- Load data ----
-    print("Loading training and validation data...")
+        params = {'learning_rate': learning_rate,
+                  'max_leaves': int(max_leaves),
+                  'max_depth': int(max_depth),
+                  'reg_alpha': reg_alpha,
+                  'reg_lambda': reg_lambda,
+                  'n_estimators': int(n_estimators),
+                  'min_child_weight': min_child_weight,
+                  'colsample_bytree': colsample_bytree,
+                  'colsample_bylevel': colsample_bylevel,
+                  'colsample_bynode': colsample_bynode,
+                  'subsample': subsample,
+                  'scale_pos_weight': scale_pos_weight,
+                  'objective': 'multi:softprob',
+                  'eval_metric': 'logloss',
+                  'tree_method': 'gpu_hist', # since we have XGBoost 1.6.2
+                  'random_state': 42}
 
-    X_train, y_train = load_features_labels_from_parquet(training_features_path, training_labels_path)
-    X_val, y_val = load_features_labels_from_parquet(validation_features_path, validation_labels_path)
+        # train XGBoost classifier on training data
+        model = RayXGBClassifier(**params)
 
-    # ---- Start Dask cluster ----
-    print("Starting Dask cluster...")
-    client = start_dask_cluster()
-    print(f"Dask dashboard available at: {client.dashboard_link}")
+        ray_params = RayParams(max_actor_restarts = max_actor_restarts,
+                               num_actors = num_actors,
+                               cpus_per_actor = cpus_per_actor,
+                               gpus_per_actor = gpus_per_actor)
 
-    # ---- Create Dask DMatrices ----
-    print("Creating Dask DMatrices...")
-    dtrain = create_dask_dmatrix(client, X_train, y_train)
-    dval = create_dask_dmatrix(client, X_val, y_val)
+        model.fit(X_train, y_train, ray_params = ray_params)
 
-    # ---- Define Bayesian Optimization Objective ----
-    def xgb_val_accuracy(max_depth, learning_rate, subsample, colsample_bytree):
-        """Objective function to maximize validation accuracy."""
-        max_depth = int(max_depth)
+        # then evaluate on validation data by predicting probabilities using validation fingerprints
+        y_val_predicted_probabilities = model.predict_proba(X_val)[:, 1]
 
-        params = {
-            'objective': 'multi:softprob',
-            'num_class': NUM_CLASSES,
-            'tree_method': 'gpu_hist',  # for GPU training
-            'max_depth': max_depth,
-            'learning_rate': learning_rate,
-            'subsample': subsample,
-            'colsample_bytree': colsample_bytree,
-            'eval_metric': 'merror',
-            'verbosity': 0,
-        }
+        # finally, calculate the AUPRC score between the validation labels and the validation predicted probabilities
+        auprc = average_precision_score(y_val, y_val_predicted_probabilities)
+        return auprc
 
-        booster, history = train_xgboost(client, dtrain, dval, params)
+    return objective
 
-        # Properly handle merror list-of-lists
-        validation_merrors = []
-        for k, v in history.items():
-            if 'validation' in k:
-                for sublist in v.values():
-                    validation_merrors.extend(sublist)
+def run_bayesian_hyperparameter_search(X_train: np.ndarray,
+                                       y_train: np.ndarray,
+                                       X_val: np.ndarray,
+                                       y_val: np.ndarray,
+                                       max_actor_restarts: int,
+                                       num_actors: int,
+                                       cpus_per_actor: int,
+                                       gpus_per_actor: int,):
 
-        best_merror = min(validation_merrors)
-        val_accuracy = 1.0 - best_merror
-        return val_accuracy
+    objective = XGBC_objective(X_train, y_train, X_val, y_val,
+                               max_actor_restarts, num_actors, cpus_per_actor, gpus_per_actor)
 
-    # ---- Set up and run Bayesian Optimization ----
-    print("Starting Bayesian Optimization...")
-
+    # Define the bounds for each hyperparameter
     pbounds = {
-        'max_depth': (4, 12),
-        'learning_rate': (0.01, 0.3),
-        'subsample': (0.5, 1.0),
-        'colsample_bytree': (0.5, 1.0)}
-
-    optimizer = BayesianOptimization(
-        f=xgb_val_accuracy,
-        pbounds=pbounds,
-        random_state=RANDOM_STATE,
-        verbose=2)
-
-    optimizer.maximize(
-        init_points=5,
-        n_iter=25)
-
-    # ---- Train final model with the best hyperparameters ----
-    print("Training final model...")
-
-    best_params = optimizer.max['params']
-    best_params['max_depth'] = int(best_params['max_depth'])  # cast back to int
-
-    # Save best hyperparameters
-    with open(SAVE_BEST_PARAMS_PATH, "w") as f:
-        json.dump(best_params, f, indent=4)
-    print(f"Best hyperparameters saved to {SAVE_BEST_PARAMS_PATH}.")
-
-    final_params = {
-        'objective': 'multi:softprob',
-        'num_class': NUM_CLASSES,
-        'tree_method': 'gpu_hist',
-        'eval_metric': 'merror',
-        'verbosity': 1,
-        'max_depth': best_params['max_depth'],
-        'learning_rate': best_params['learning_rate'],
-        'subsample': best_params['subsample'],
-        'colsample_bytree': best_params['colsample_bytree'],
+        'learning_rate': (0.1, 0.5),
+        'max_leaves': (20, 300),
+        'max_depth': (1, 15),
+        'reg_alpha': (0, 1.0),
+        'reg_lambda': (0, 1.0),
+        'n_estimators': (20, 300),
+        'min_child_weight': (2, 10),
+        'colsample_bytree': (0.5, 1.0),
+        'colsample_bylevel': (0.5, 1.0),
+        'colsample_bynode': (0.5, 1.0),
+        'subsample': (0.4, 1.0),
+        'scale_pos_weight': (1, 5)
     }
 
-    final_booster, _ = train_xgboost(client, dtrain, dval, final_params, num_boost_round=2000, early_stopping_rounds=50)
+    optimizer = BayesianOptimization(f = objective,
+                                     pbounds = pbounds,
+                                     random_state = 42)
 
-    # ---- Save the final model ----
-    print(f"Saving final model to {SAVE_MODEL_PATH}...")
-    final_booster.save_model(SAVE_MODEL_PATH)
+    optimizer.maximize(
+        init_points = 5,  # number of randomly chosen points to sample the target function before fitting the GP
+        n_iter = 20)  # total number of times the process is to be repeated
 
-    print("Training and hyperparameter optimization complete.")
+    best_params = optimizer.max['params']
+    best_score = optimizer.max['target']
 
-    # ---- Close Dask client ----
-    client.close()
-    print("Dask client closed. Job complete.")
+    print(f"Best AUPRC: {best_score:.4f} achieved with {best_params}")
+
+    return best_params
+
+opt_hyperparams = run_bayesian_hyperparameter_search(X_train, y_train, X_val, y_val,
+                                                     max_actor_restarts, num_actors, cpus_per_actor, gpus_per_actor)
+
+# save the optimized hyperparameters to a json file
+with open(opt_params_filepath,'w') as json_file:
+    json.dump(opt_hyperparams, json_file)
+
+# with the Bayesian optimized hyperparameters, train the baseline model
+
+molecular_classifier_xgboost = RayXGBClassifier(objective = 'binary:logistic',
+                                                random_state = 42,
+                                                max_leaves = int(opt_hyperparams['max_leaves']),
+                                                learning_rate = opt_hyperparams['learning_rate'],
+                                                max_depth = int(opt_hyperparams['max_depth']),
+                                                reg_alpha = opt_hyperparams['reg_alpha'],
+                                                reg_lambda = opt_hyperparams['reg_lambda'],
+                                                n_estimators = int(opt_hyperparams['n_estimators']),
+                                                min_child_weight = opt_hyperparams['min_child_weight'],
+                                                colsample_bytree = opt_hyperparams['colsample_bytree'],
+                                                colsample_bylevel = opt_hyperparams['colsample_bylevel'],
+                                                colsample_bynode = opt_hyperparams['colsample_bynode'],
+                                                subsample = opt_hyperparams['subsample'],
+                                                scale_pos_weight = opt_hyperparams['scale_pos_weight'])
+
+ray_params = RayParams(max_actor_restarts =max_actor_restarts,
+                       num_actors = num_actors,
+                       cpus_per_actor = cpus_per_actor,
+                       gpus_per_actor = gpus_per_actor)
+
+molecular_classifier_xgboost.fit(X_train, y_train, ray_params = ray_params)
+
+# save the trained XGBoost model with pickle
+with open(model_output_filepath, 'wb') as model_file:
+    pickle.dump(molecular_classifier_xgboost, model_file)

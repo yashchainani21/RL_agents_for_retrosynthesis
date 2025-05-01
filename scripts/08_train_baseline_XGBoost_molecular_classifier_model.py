@@ -17,6 +17,7 @@ import pandas as pd
 ray.init(address = "auto")  # but use ray.init() for local testing
 module: str = "LM"
 
+# specify Ray configurations for distributed multi-node, multi-gpu training
 max_actor_restarts: int = 2
 num_actors: int = 4
 cpus_per_actor: int = 4
