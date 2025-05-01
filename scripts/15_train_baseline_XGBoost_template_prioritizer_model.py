@@ -4,62 +4,28 @@ Model hyperparameters are optimized via Bayesian Optimization.
 This script uses a single node with multiple GPUs through a LocalCUDACluster.
 """
 
-import pandas as pd
-import numpy as np
-import dask.array as da
+import pickle
 import json
-from dask.distributed import Client
-from dask_cuda import LocalCUDACluster
-from xgboost import dask as dxgb
+import numpy as np
+import ray
+from xgboost_ray import RayDMatrix, RayParams, train, RayXGBClassifier
 from bayes_opt import BayesianOptimization
+from sklearn.metrics import average_precision_score
+import pandas as pd
 
-# ---- Configuration ----
+# load in fingerprints and labels from training and validation datasets
+training_features_path = f'../data/training/training_reactant_ecfp4_fingerprints.parquet'
+training_labels_path = f'../data/training/training_template_labels.parquet'
 
-training_features_path = f'./data/training/training_reactant_ecfp4_fingerprints.parquet'
-training_labels_path = f'./data/training/training_template_labels.parquet'
-
-validation_features_path = f'./data/validation/validation_reactant_ecfp4_fingerprints.parquet'
+validation_features_path = f'../data/validation/validation_reactant_ecfp4_fingerprints.parquet'
 validation_labels_path = f'../data/validation/validation_template_labels.parquet'
 
 SAVE_MODEL_PATH = "./models/template_prioritizer_XGBoost_model.json"
 SAVE_BEST_PARAMS_PATH = "./models/best_xgboost_hyperparams.json"
 
-NUM_CLASSES = 932
-RANDOM_STATE = 42
-
 # ---- Helper functions ----
 
-def load_features_labels_from_parquet(feature_path, label_path):
-    """Load ECFP4 features and label indices from .parquet files."""
-    X = pd.read_parquet(feature_path).values
-    y = pd.read_parquet(label_path)["Label Index"].values
-    return X, y
 
-def start_dask_cluster():
-    """Start a LocalCUDACluster for single-node multi-GPU training."""
-    cluster = LocalCUDACluster()
-    client = Client(cluster)
-    return client
-
-def create_dask_dmatrix(client, X, y):
-    """Create a DaskDMatrix from features and labels with matching partitions."""
-    X_dask = da.from_array(X, chunks="auto")
-    y_dask = da.from_array(y, chunks=(X_dask.chunks[0],))
-    return dxgb.DaskDMatrix(client, X_dask, y_dask)
-
-def train_xgboost(client, dtrain, dval, params, num_boost_round=1000, early_stopping_rounds=30):
-    """Train an XGBoost model with Dask."""
-    evals = [(dtrain, 'train'), (dval, 'validation')]
-    output = dxgb.train(
-        client,
-        params,
-        dtrain,
-        num_boost_round=num_boost_round,
-        evals=evals,
-        early_stopping_rounds=early_stopping_rounds,
-        verbose_eval=False
-    )
-    return output['booster'], output['history']
 
 # ---- Main script ----
 if __name__ == '__main__':
