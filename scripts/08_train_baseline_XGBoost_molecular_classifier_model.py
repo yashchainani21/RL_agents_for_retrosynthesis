@@ -1,3 +1,10 @@
+"""
+In this script, we train an XGBoost molecular classification model to distinguish between PKS and non-PKS molecules.
+Training XGBoost binary classifiers with a bayesian hyperparameter optimization procedure will be our baseline.
+More advanced, graph-based deep learning architectures can then be compared against this baseline.
+These molecular classification models will eventually help decide if a PKS is required to synthesize a fragment.
+"""
+
 import pickle
 import json
 import numpy as np
