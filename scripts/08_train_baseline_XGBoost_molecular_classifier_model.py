@@ -1,9 +1,11 @@
 import numpy as np
+import ray
 from xgboost_ray import RayDMatrix, RayParams, train, RayXGBClassifier
 from bayes_opt import BayesianOptimization
 from sklearn.metrics import average_precision_score
 import pandas as pd
 
+ray.init(address="auto")  # or ray.init() for local testing
 module = "LM"
 
 # load in fingerprints and labels from training and validation datasets
@@ -14,10 +16,10 @@ validation_fps_path = f'../data/training/training_{module}_PKS_and_non_PKS_produ
 validation_labels_path = f'../data/training/training_{module}_PKS_and_non_PKS_products_labels.parquet'
 
 X_train = pd.read_parquet(training_fps_path).to_numpy()
-y_train = pd.read_parquet(training_labels_path).to_numpy()
+y_train = pd.read_parquet(training_labels_path).to_numpy().flatten()
 
 X_val = pd.read_parquet(validation_fps_path).to_numpy()
-y_val = pd.read_parquet(validation_labels_path).to_numpy()
+y_val = pd.read_parquet(validation_labels_path).to_numpy().flatten()
 
 def XGBC_objective(X_train: np.ndarray,
                    y_train: np.ndarray,
@@ -56,12 +58,17 @@ def XGBC_objective(X_train: np.ndarray,
                   'objective': 'binary:logistic',
                   'eval_metric': 'logloss',
                   'tree_method': 'gpu_hist', # since we have XGBoost 1.6.2
-                  'n_jobs': 4, # In XGBoost-Ray, n_jobs sets the number of actors
                   'random_state': 42}
 
         # train XGBoost classifier on training data
         model = RayXGBClassifier(**params)
-        model.fit(X_train, y_train)
+
+        ray_params = RayParams(max_actor_restarts = 2,
+                               num_actors = 4,
+                               cpus_per_actor = 4,
+                               gpus_per_actor = 1)
+
+        model.fit(X_train, y_train, ray_params = ray_params)
 
         # then evaluate on validation data by predicting probabilities using validation fingerprints
         y_val_predicted_probabilities = model.predict_proba(X_val)[:, 1]
