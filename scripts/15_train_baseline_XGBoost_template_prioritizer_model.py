@@ -99,9 +99,9 @@ def XGBC_objective(X_train: np.ndarray,
         y_val_predicted = model.predict(X_val)[:, 1]
 
         # finally, calculate the AUPRC score between the validation labels and the validation predicted probabilities
-        auprc = accuracy_score(y_true = y_val,
+        accuracy = accuracy_score(y_true = y_val,
                                y_pred = y_val_predicted)
-        return auprc
+        return accuracy
 
     return objective
 
