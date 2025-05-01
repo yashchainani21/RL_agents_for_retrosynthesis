@@ -13,10 +13,10 @@ from sklearn.metrics import average_precision_score
 import pandas as pd
 
 # specify Ray configurations for distributed multi-node, multi-gpu training
-max_actor_restarts: int = 2
-num_actors: int = 4
-cpus_per_actor: int = 4
-gpus_per_actor: int = 1
+max_actor_restarts: int = 2 # number of times Ray will restart an actor if it fails
+num_actors: int = 8 # total number of parallel workers (ideally = number of GPUs)
+cpus_per_actor: int = 4 # number of CPUs assigned per actor
+gpus_per_actor: int = 1 # number of GPUs per actor
 
 # load in fingerprints and labels from training and validation datasets
 training_fps_path = f'../data/training/training_reactant_ecfp4_fingerprints.parquet'
