@@ -95,12 +95,12 @@ def XGBC_objective(X_train: np.ndarray,
 
         model.fit(X_train, y_train, ray_params = ray_params)
 
-        # then evaluate on validation data by predicting probabilities using validation fingerprints
-        y_val_predicted = model.predict(X_val)[:, 1]
+        # then evaluate on validation data by predicting the template label using validation fingerprints
+        y_val_predicted = model.predict(X_val)
 
         # finally, calculate the AUPRC score between the validation labels and the validation predicted probabilities
         accuracy = accuracy_score(y_true = y_val,
-                               y_pred = y_val_predicted)
+                                  y_pred = y_val_predicted)
         return accuracy
 
     return objective
