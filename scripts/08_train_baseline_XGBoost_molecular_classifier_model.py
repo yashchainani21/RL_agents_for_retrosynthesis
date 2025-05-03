@@ -54,7 +54,7 @@ def XGBC_objective(X_train: np.ndarray,
                    max_actor_restarts: int,
                    num_actors: int,
                    cpus_per_actor: int,
-                   gpus_per_actor: int,):
+                   gpus_per_actor: int):
     """
     Objective function for XGBoost hyperparameter optimization via a Bayesian optimization procedure.
     This function will be passed to an instantiated BayesianOptimization object

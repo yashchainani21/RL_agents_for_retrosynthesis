@@ -13,7 +13,7 @@ size = comm.Get_size()
 
 radius = 2
 n_bits = 2048
-module = "LM"
+module = "M2"
 
 def featurize_smiles(smiles):
     mol = Chem.MolFromSmiles(smiles)
@@ -30,15 +30,24 @@ if rank == 0:
     data = pd.read_parquet(input_filepath)
 
     smiles_list = data['SMILES'].tolist()
-    label_indices = data['labels'].tolist()
+    label_list = data['labels'].tolist()
 
-    assert len(smiles_list) == len(label_indices), "SMILES and labels length mismatch."
+    assert len(smiles_list) == len(label_list), "SMILES and labels length mismatch."
 
     # Explicitly ensure chunk size matches MPI ranks
-    smiles_chunks = np.array_split(smiles_list, size)
-    labels_chunks = np.array_split(label_indices, size)
+    #smiles_chunks = np.array_split(smiles_list, size)
+    # labels_chunks = np.array_split(label_indices, size)
 
-    # Debugging print statements
+    # split list of SMILES strings into chunks
+    smiles_chunks = [[] for _ in range(size)]
+    for i, chunk in enumerate(smiles_list):
+        smiles_chunks[i % size].append(chunk)
+
+    # split list of binary labels into chunks
+    labels_chunks = [[] for _ in range(size)]
+    for i, chunk in enumerate(label_list):
+        labels_chunks[i % size].append(chunk)
+
     for idx, chunk in enumerate(smiles_chunks):
         print(f"Chunk {idx} size: {len(chunk)}")
 
