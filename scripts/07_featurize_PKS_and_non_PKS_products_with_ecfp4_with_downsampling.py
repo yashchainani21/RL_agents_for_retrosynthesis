@@ -33,11 +33,13 @@ if rank == 0:
     non_PKS_products_df = all_products_df[all_products_df["labels"] == 0]
 
     # downsample the set of non-PKS products to the pre-determine ratio of non-PKS to PKS products
-    num_non_PKS_products_to_sample = non_PKS_products_df.shape[0]**ratio_of_non_PKS_to_PKS_products
+    num_non_PKS_products_to_sample = non_PKS_products_df.shape[0]*ratio_of_non_PKS_to_PKS_products
     non_PKS_products_df_index = non_PKS_products_df.index.values
-    subsampled_indices = np.random.choice(non_PKS_products_df_index,
-                                          size = num_non_PKS_products_to_sample,
-                                          replace = False)
+    subsampled_indices = np.random.choice(non_PKS_products_df_index, size = num_non_PKS_products_to_sample, replace = False)
+    non_PKS_products_df_subsampled = non_PKS_products_df.iloc[subsampled_indices,:]
+
+    # merge both dataframes back together
+    data = pd.concat([PKS_products_df, non_PKS_products_df_subsampled], axis = 1).sample(frac=1).reset_index(drop=True)
 
     smiles_list = data['SMILES'].tolist()
     label_list = data['labels'].tolist()
@@ -105,5 +107,5 @@ if rank == 0:
     X_df = pd.DataFrame(X)
     y_df = pd.DataFrame(y)
 
-    X_df.to_parquet(f'../data/{dataset_type}/{dataset_type}_{module}_PKS_and_non_PKS_products_fingerprints.parquet', index=False)
-    y_df.to_parquet(f'../data/{dataset_type}/{dataset_type}_{module}_PKS_and_non_PKS_products_labels.parquet', index=False)
+    X_df.to_parquet(f'../data/{dataset_type}/{dataset_type}_{module}_PKS_and_non_PKS_products_fingerprints_with_downsampling_ratio_{ratio_of_non_PKS_to_PKS_products}.parquet', index=False)
+    y_df.to_parquet(f'../data/{dataset_type}/{dataset_type}_{module}_PKS_and_non_PKS_products_labels.parquet_with_downsampling_ratio_{ratio_of_non_PKS_to_PKS_products}', index=False)
