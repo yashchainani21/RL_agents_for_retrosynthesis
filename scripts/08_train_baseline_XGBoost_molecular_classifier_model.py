@@ -155,6 +155,8 @@ def run_bayesian_hyperparameter_search(X_train: np.ndarray,
 opt_hyperparams = run_bayesian_hyperparameter_search(X_train, y_train, X_val, y_val,
                                                      max_actor_restarts, num_actors, cpus_per_actor, gpus_per_actor)
 
+print(f'The optimal hyperparameters are: {opt_hyperparams}')
+
 # save the optimized hyperparameters to a json file
 with open(opt_params_filepath,'w') as json_file:
     json.dump(opt_hyperparams, json_file)
@@ -177,7 +179,7 @@ molecular_classifier_xgboost = RayXGBClassifier(objective = 'binary:logistic',
                                                 scale_pos_weight = opt_hyperparams['scale_pos_weight'],
                                                 tree_method = 'gpu_hist')
 
-ray_params = RayParams(max_actor_restarts=max_actor_restarts,
+ray_params = RayParams(max_actor_restarts = max_actor_restarts,
                        num_actors = num_actors,
                        cpus_per_actor = cpus_per_actor,
                        gpus_per_actor = gpus_per_actor)
