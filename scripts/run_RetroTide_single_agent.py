@@ -1,6 +1,3 @@
-from bokeh.io import output_notebook
-output_notebook()
-
 from rdkit import Chem
 from RetroTide_agent.node import Node
 from RetroTide_agent.mcts import MCTS
