@@ -2,9 +2,17 @@ LICENSE
 README.md
 setup.py
 RetroTide_agent/__init__.py
+RetroTide_agent/mcts.py
 RetroTide_agent/node.py
 RetroTide_agent.egg-info/PKG-INFO
 RetroTide_agent.egg-info/SOURCES.txt
 RetroTide_agent.egg-info/dependency_links.txt
 RetroTide_agent.egg-info/top_level.txt
+tests/test_mcts.py
+tests/test_molecular_classifier_train_test_val_sets.py
 tests/test_node.py
+tests/test_rxn_mapping_data.py
+tests/test_synthetic_PKS_data.py
+tests/test_template_classifier_train_test_val_sets.py
+utils/__init__.py
+utils/utils.py
