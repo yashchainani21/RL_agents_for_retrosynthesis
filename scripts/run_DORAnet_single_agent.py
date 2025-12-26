@@ -33,7 +33,8 @@ def main() -> None:
     # target_smiles = "CCCC(C)=O"  # 3-pentanone (simple ketone)
     # target_smiles = "OCCCC(=O)O"  # 4-hydroxybutyric acid (gamma-hydroxybutyric acid)
     # target_smiles = "OCCCCO"  # 1,4-butanediol
-    target_smiles = "CCCCC(=O)O"  # pentanoic acid (valeric acid)
+    # target_smiles = "CCCCC(=O)O"  # pentanoic acid (valeric acid)
+    target_smiles = "CCCCCCCCC(=O)O"  # nonanoic acid (known PKS product)
     target_molecule = Chem.MolFromSmiles(target_smiles)
     if target_molecule is None:
         raise ValueError(f"Could not parse target SMILES: {target_smiles}")
@@ -43,29 +44,31 @@ def main() -> None:
     # Path to cofactors file (metabolites to exclude from the network)
     cofactors_file = REPO_ROOT / "data" / "raw" / "all_cofactors.csv"
 
+    # Path to PKS library file for reward calculation
+    pks_library_file = REPO_ROOT / "data" / "processed" / "PKS_smiles.txt"
+
     # Create root node with target
     root = Node(fragment=target_molecule, parent=None, depth=0, provenance="target")
 
     # Configure the DORAnet agent
-    # Set spawn_retrotide=False to test DORAnet fragmentation in isolation
+    # Enable RetroTide spawning to get PKS designs for PKS library matches
     agent = DORAnetMCTS(
         root=root,
         target_molecule=target_molecule,
-        total_iterations=3,        # Keep small for testing
-        max_depth=1,               # Single step fragmentation
+        total_iterations=5,         # More iterations for thorough exploration
+        max_depth=1,                # Shallow depth for proof of concept
         use_enzymatic=True,
         use_synthetic=True,
         generations_per_expand=1,
-        max_children_per_expand=5,  # Limit children per node
+        max_children_per_expand=10,  # More children since only PKS matches trigger RetroTide
         cofactors_file=str(cofactors_file),  # Exclude cofactors from network
-        spawn_retrotide=True,       # Enable RetroTide spawning
-        retrotide_kwargs=dict(
-            max_depth=5,
-            total_iterations=100,   # Reduced for faster testing
-            maxPKSDesignsRetroTide=50,
-            selection_policy="UCB1",
-            save_logs=False,
-        ),
+        pks_library_file=str(pks_library_file),  # Use PKS library for reward
+        spawn_retrotide=True,       # Enable RetroTide for PKS library matches only
+        retrotide_kwargs={
+            "max_depth": 10,          # More PKS modules to try for exact matches
+            "total_iterations": 200,  # More iterations to find exact matches
+            "maxPKSDesignsRetroTide": 50,  # More designs per round
+        },
     )
 
     # Run the search
@@ -74,8 +77,29 @@ def main() -> None:
     # Print tree summary
     print("\n" + agent.get_tree_summary())
 
-    # Print detailed results summary
-    print(agent.get_results_summary())
+    # Check if we're in PKS library mode or RetroTide mode
+    if agent.pks_library:
+        # PKS library mode - show matches
+        pks_matches = agent.get_pks_matches()
+        print(f"\n" + "=" * 70)
+        print("PKS Library Match Results")
+        print("=" * 70)
+        print(f"\nTotal nodes explored: {len(agent.nodes)}")
+        print(f"PKS library matches: {len(pks_matches)}")
+
+        if pks_matches:
+            print(f"\n✅ FRAGMENTS MATCHING PKS LIBRARY:")
+            print("-" * 70)
+            for node in pks_matches:
+                avg_value = node.value / node.visits if node.visits > 0 else 0
+                print(f"  Node {node.node_id} ({node.provenance}): {node.smiles}")
+                print(f"    Depth: {node.depth}, Visits: {node.visits}, Avg Value: {avg_value:.2f}")
+                if node.reaction_name:
+                    rxn_display = node.reaction_name[:60] + "..." if len(node.reaction_name) > 60 else node.reaction_name
+                    print(f"    Reaction: {rxn_display}")
+    else:
+        # RetroTide mode - show detailed results
+        print(agent.get_results_summary())
 
     # Save detailed results to file
     results_dir = REPO_ROOT / "results"
@@ -84,12 +108,17 @@ def main() -> None:
     results_path = results_dir / f"doranet_results_{safe_smiles}_{timestamp}.txt"
     agent.save_results(str(results_path))
 
-    # Print summary of successful results
-    successful = agent.get_successful_results()
-    if successful:
-        print(f"\n🎉 Found {len(successful)} successful PKS designs!")
-        for r in successful:
-            print(f"   Node {r.doranet_node_id} ({r.doranet_node_provenance}): {r.doranet_node_smiles}")
+    # Print summary
+    if agent.pks_library:
+        pks_matches = agent.get_pks_matches()
+        if pks_matches:
+            print(f"\n🎉 Found {len(pks_matches)} PKS-synthesizable fragments!")
+    else:
+        successful = agent.get_successful_results()
+        if successful:
+            print(f"\n🎉 Found {len(successful)} successful PKS designs!")
+            for r in successful:
+                print(f"   Node {r.doranet_node_id} ({r.doranet_node_provenance}): {r.doranet_node_smiles}")
 
 
 if __name__ == "__main__":
