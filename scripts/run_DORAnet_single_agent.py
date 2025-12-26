@@ -1,11 +1,12 @@
 """
-Example runner for the DORAnet-guided MCTS agent.
+Example runner for the simplified DORAnet MCTS agent.
 
-The script launches a single tree search that applies retro-style
-DORAnet enzymatic/synthetic steps to fragment a target molecule.
-Whenever an intermediate fragment matches the polyketide library,
-the agent records it as a success (and can optionally spawn a
-RetroTide forward search—disabled by default here).
+This script launches a DORAnet tree search that fragments a target molecule
+using retro-enzymatic and retro-synthetic transformations. For each fragment
+discovered, a RetroTide forward MCTS search is spawned to attempt synthesis
+from PKS building blocks.
+
+Current implementation: Selection + Expansion only (no rollout/backprop yet).
 """
 
 from __future__ import annotations
@@ -16,63 +17,79 @@ import sys
 from rdkit import Chem
 from rdkit import RDLogger
 
-# Ensure the repository root (which contains the RL_agents_for_retrosynthesis package)
-# is discoverable when this script is executed directly.
-REPO_ROOT = Path(__file__).resolve().parents[2]
+# Ensure the repository root is discoverable when running directly.
+REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from RL_agents_for_retrosynthesis.DORAnet_agent import DORAnetMCTS, Node
+from DORAnet_agent import DORAnetMCTS, Node
 
-# Quiet down RDKit warnings for cleaner logs during runs.
+# Quiet down RDKit warnings.
 RDLogger.DisableLog("rdApp.*")
 
 
 def main() -> None:
-    target_smiles = "CCCC(C)=O"  
+    # Example target molecule
+    # target_smiles = "CCCC(C)=O"  # 3-pentanone (simple ketone)
+    # target_smiles = "OCCCC(=O)O"  # 4-hydroxybutyric acid (gamma-hydroxybutyric acid)
+    # target_smiles = "OCCCCO"  # 1,4-butanediol
+    target_smiles = "CCCCC(=O)O"  # pentanoic acid (valeric acid)
     target_molecule = Chem.MolFromSmiles(target_smiles)
     if target_molecule is None:
         raise ValueError(f"Could not parse target SMILES: {target_smiles}")
 
+    print(f"Target molecule: {target_smiles}")
+
+    # Path to cofactors file (metabolites to exclude from the network)
+    cofactors_file = REPO_ROOT / "data" / "raw" / "all_cofactors.csv"
+
+    # Create root node with target
     root = Node(fragment=target_molecule, parent=None, depth=0, provenance="target")
 
-    polyketide_library = (
-        "RL_agents_for_retrosynthesis/data/processed/PKS_smiles.txt"
-    )
-
+    # Configure the DORAnet agent
+    # Set spawn_retrotide=False to test DORAnet fragmentation in isolation
     agent = DORAnetMCTS(
         root=root,
         target_molecule=target_molecule,
-        polyketide_library_path=polyketide_library,
-        total_iterations=250,
-        max_depth=5,
-        generations_per_expand=1,
-        max_children_per_expand=50,
+        total_iterations=3,        # Keep small for testing
+        max_depth=1,               # Single step fragmentation
         use_enzymatic=True,
         use_synthetic=True,
-        # Flip to True and pass RetroTide parameters if you want downstream exploration.
-        spawn_retrotide_on_success=False,
+        generations_per_expand=1,
+        max_children_per_expand=5,  # Limit children per node
+        cofactors_file=str(cofactors_file),  # Exclude cofactors from network
+        spawn_retrotide=True,       # Enable RetroTide spawning
         retrotide_kwargs=dict(
             max_depth=5,
-            total_iterations=1500,
-            maxPKSDesignsRetroTide=100,
+            total_iterations=100,   # Reduced for faster testing
+            maxPKSDesignsRetroTide=50,
             selection_policy="UCB1",
             save_logs=False,
         ),
     )
 
+    # Run the search
     agent.run()
 
-    results_path = Path("RL_agents_for_retrosynthesis/results/doranet_successes.txt")
-    agent.save_results(results_path)
+    # Print tree summary
+    print("\n" + agent.get_tree_summary())
 
-    print(f"Search complete. Successful fragments saved to {results_path}")
-    if agent.successful_nodes:
-        print("\nDiscovered fragments:")
-        for node in sorted(agent.successful_nodes, key=lambda n: n.node_id):
-            print(f"- {node.smiles} (depth={node.depth}, via {node.provenance})")
-    else:
-        print("\nNo known polyketide fragments encountered in this run.")
+    # Print detailed results summary
+    print(agent.get_results_summary())
+
+    # Save detailed results to file
+    results_dir = REPO_ROOT / "results"
+    timestamp = __import__('datetime').datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_smiles = target_smiles.replace("/", "_").replace("\\", "_")[:20]
+    results_path = results_dir / f"doranet_results_{safe_smiles}_{timestamp}.txt"
+    agent.save_results(str(results_path))
+
+    # Print summary of successful results
+    successful = agent.get_successful_results()
+    if successful:
+        print(f"\n🎉 Found {len(successful)} successful PKS designs!")
+        for r in successful:
+            print(f"   Node {r.doranet_node_id} ({r.doranet_node_provenance}): {r.doranet_node_smiles}")
 
 
 if __name__ == "__main__":
