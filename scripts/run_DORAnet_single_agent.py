@@ -28,7 +28,13 @@ from DORAnet_agent import DORAnetMCTS, Node
 RDLogger.DisableLog("rdApp.*")
 
 
-def main() -> None:
+def main(generate_visualization: bool = False) -> None:
+    """
+    Run the DORAnet MCTS agent.
+
+    Args:
+        generate_visualization: If True, generate tree visualization images.
+    """
     # Example target molecule
     # target_smiles = "CCCC(C)=O"  # 3-pentanone (simple ketone)
     # target_smiles = "OCCCC(=O)O"  # 4-hydroxybutyric acid (gamma-hydroxybutyric acid)
@@ -120,6 +126,39 @@ def main() -> None:
             for r in successful:
                 print(f"   Node {r.doranet_node_id} ({r.doranet_node_provenance}): {r.doranet_node_smiles}")
 
+    # Generate visualizations (optional)
+    if generate_visualization:
+        try:
+            from DORAnet_agent.visualize import visualize_doranet_tree, visualize_pks_pathways
+
+            print("\n[Visualization] Generating MCTS tree visualization...")
+
+            # Full tree visualization
+            tree_viz_path = results_dir / f"doranet_tree_{safe_smiles}_{timestamp}.png"
+            visualize_doranet_tree(agent, output_path=str(tree_viz_path))
+
+            # PKS pathways visualization
+            pks_viz_path = results_dir / f"doranet_pks_pathways_{safe_smiles}_{timestamp}.png"
+            visualize_pks_pathways(agent, output_path=str(pks_viz_path))
+
+            print(f"[Visualization] Tree visualization: {tree_viz_path}")
+            print(f"[Visualization] PKS pathways visualization: {pks_viz_path}")
+
+        except ImportError as e:
+            print(f"[Visualization] Could not generate visualizations: {e}")
+        except Exception as e:
+            print(f"[Visualization] Error generating visualizations: {e}")
+
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run DORAnet MCTS agent for retrosynthesis")
+    parser.add_argument(
+        "--visualize", "-v",
+        action="store_true",
+        help="Generate tree visualization images"
+    )
+    args = parser.parse_args()
+
+    main(generate_visualization=args.visualize)
