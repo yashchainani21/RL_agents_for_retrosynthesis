@@ -561,12 +561,20 @@ class DORAnetMCTS:
         print(f"[DORAnet] Starting MCTS with {self.total_iterations} iterations, "
               f"max_depth={self.max_depth}, mode={mode_str}")
 
+        # Track current iteration for visualization
+        self.current_iteration = 0
+
         for iteration in range(self.total_iterations):
+            self.current_iteration = iteration
+
             # Selection: find a leaf node using UCB1
             leaf = self.select(self.root)
             if leaf is None:
                 print(f"[DORAnet] No valid leaf found at iteration {iteration}, stopping.")
                 break
+
+            # Track when this node was selected
+            leaf.selected_at_iterations.append(iteration)
 
             # Check depth limit
             if leaf.depth >= self.max_depth:
@@ -577,11 +585,13 @@ class DORAnetMCTS:
 
             # Expansion: generate fragments
             if not leaf.expanded:
+                leaf.expanded_at_iteration = iteration
                 new_children = self.expand(leaf)
                 pks_matches = 0
 
                 # Calculate rewards for each child and backpropagate
                 for child in new_children:
+                    child.created_at_iteration = iteration
                     reward = self.calculate_reward(child)
                     if reward > 0:
                         pks_matches += 1

@@ -45,6 +45,11 @@ class Node:
         self.selection_score: Optional[float] = None
         self.expanded: bool = False
 
+        # Iteration tracking for visualization
+        self.created_at_iteration: Optional[int] = None
+        self.selected_at_iterations: List[int] = []
+        self.expanded_at_iteration: Optional[int] = None
+
         # identifiers for logging/visualizing the tree
         self.node_id: int = Node.node_counter
         self.parent_id: Optional[int] = parent.node_id if parent else None
