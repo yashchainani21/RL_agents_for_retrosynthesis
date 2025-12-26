@@ -1,0 +1,222 @@
+======================================================================
+DORAnet + RetroTide Multi-Agent MCTS Results
+Generated: 2025-12-25T19:49:32.811377
+======================================================================
+
+TARGET MOLECULE
+----------------------------------------------------------------------
+SMILES: O=C(O)CCCO
+
+DORANET CONFIGURATION
+----------------------------------------------------------------------
+Total iterations: 3
+Max depth: 1
+Use enzymatic: True
+Use synthetic: True
+Max children per expand: 5
+Spawn RetroTide: True
+
+DORANET SEARCH TREE
+----------------------------------------------------------------------
+DORAnet MCTS Tree Summary:
+========================================
+Node 0: O=C(O)CCCO (depth=0, visits=1, via=target)
+  Node 1: CCCO (depth=1, visits=1, via=enzymatic)
+  Node 2: CC(CO)C(=O)O (depth=1, visits=1, via=enzymatic)
+  Node 3: CC(O)CC(=O)O (depth=1, visits=0, via=enzymatic)
+  Node 4: CCC(O)C(=O)O (depth=1, visits=0, via=enzymatic)
+  Node 5: CCC(=O)O (depth=1, visits=0, via=enzymatic)
+  Node 6: O=C(O)C=CCO (depth=1, visits=0, via=synthetic)
+  Node 7: C=CCC(=O)O (depth=1, visits=0, via=synthetic)
+  Node 8: C=CC=C=O (depth=1, visits=0, via=synthetic)
+  Node 9: O=C(O)C#CCO (depth=1, visits=0, via=synthetic)
+  Node 10: O=C(O)CC#CO (depth=1, visits=0, via=synthetic)
+
+
+======================================================================
+RetroTide Results Summary
+======================================================================
+
+Total RetroTide searches: 10
+Successful searches: 3
+
+✅ SUCCESSFUL PKS DESIGNS:
+----------------------------------------------------------------------
+  DORAnet Node 3:
+    Fragment SMILES: CC(O)CC(=O)O
+    Depth: 1, Provenance: enzymatic
+    RetroTide Target: CC(O)CC(=O)O
+    Successful Nodes: 6
+    Best Score: 1.000
+    Total RetroTide Nodes: 501
+
+  DORAnet Node 4:
+    Fragment SMILES: CCC(O)C(=O)O
+    Depth: 1, Provenance: enzymatic
+    RetroTide Target: CCC(O)C(=O)O
+    Successful Nodes: 3
+    Best Score: 1.000
+    Total RetroTide Nodes: 501
+
+  DORAnet Node 6:
+    Fragment SMILES: O=C(O)C=CCO
+    Depth: 1, Provenance: synthetic
+    RetroTide Target: O=C(O)C=CCO
+    Successful Nodes: 1
+    Best Score: 1.000
+    Total RetroTide Nodes: 251
+
+❌ UNSUCCESSFUL SEARCHES (top 5 by score):
+----------------------------------------------------------------------
+  DORAnet Node 1: CCCO...
+    Provenance: enzymatic, Best Score: 0.800
+  DORAnet Node 5: CCC(=O)O...
+    Provenance: enzymatic, Best Score: 0.667
+  DORAnet Node 2: CC(CO)C(=O)O...
+    Provenance: enzymatic, Best Score: 0.625
+  DORAnet Node 7: C=CCC(=O)O...
+    Provenance: synthetic, Best Score: 0.625
+  DORAnet Node 8: C=CC=C=O...
+    Provenance: synthetic, Best Score: 0.571
+
+
+======================================================================
+DETAILED SUCCESSFUL RESULTS
+======================================================================
+
+SUCCESS #1
+----------------------------------------
+DORAnet Node ID: 3
+Fragment SMILES: CC(O)CC(=O)O
+Fragment Depth: 1
+Fragment Provenance: enzymatic
+
+--- DORAnet Reaction (how fragment was created) ---
+Reaction Name: OpDatBasic('([#6&!$([#6&!R](=&!@[#6&!R](-&!@[#6&!R
+Reaction SMARTS: OpDatBasic('([#6&!$([#6&!R](=&!@[#6&!R](-&!@[#6&!R]-&!@[#6&!R](=&!@[#8&!R])-&!@[#8&!R])-&!@[#6&!R](=...
+Reactants: O=C(O)CCCO
+Products: CC(O)CC(=O)O
+
+--- RetroTide Results ---
+RetroTide Target: CC(O)CC(=O)O
+Successful PKS Nodes: 6
+Best Score: 1.0000
+Total RetroTide Nodes Explored: 501
+
+--- Successful PKS Designs ---
+
+  PKS Design #1:
+    Product SMILES: C[C@@H](O)CC(=O)[S]
+    Design Depth: 1
+    Design Score: 0.7143
+    PKS Modules:
+      Module 0: ["AT{'substrate': 'Acetyl-CoA'}", 'loading: True']
+      Module 1: ["AT{'substrate': 'Malonyl-CoA'}", "KR{'type': 'B'}", 'loading: False']
+
+  PKS Design #2:
+    Product SMILES: C[C@@H](O)CC(=O)[S]
+    Design Depth: 1
+    Design Score: 0.7143
+    PKS Modules:
+      Module 0: ["AT{'substrate': 'Malonyl-CoA'}", 'loading: True']
+      Module 1: ["AT{'substrate': 'Malonyl-CoA'}", "KR{'type': 'B'}", 'loading: False']
+
+  PKS Design #3:
+    Product SMILES: C[C@H](O)CC(=O)[S]
+    Design Depth: 1
+    Design Score: 0.7143
+    PKS Modules:
+      Module 0: ["AT{'substrate': 'cemal'}", 'loading: True']
+      Module 1: ["AT{'substrate': 'Malonyl-CoA'}", "KR{'type': 'A'}", 'loading: False']
+
+SUCCESS #2
+----------------------------------------
+DORAnet Node ID: 4
+Fragment SMILES: CCC(O)C(=O)O
+Fragment Depth: 1
+Fragment Provenance: enzymatic
+
+--- DORAnet Reaction (how fragment was created) ---
+Reaction Name: OpDatBasic('([#6&!$([#6&!R](-&!@[#6&!R](-&!@[#6&!R
+Reaction SMARTS: OpDatBasic('([#6&!$([#6&!R](-&!@[#6&!R](-&!@[#6&!R](-&!@[#8&!R])-&!@[#6&!R](-&!@[#8&!R])-&!@[#6&!R]-...
+Reactants: O=C(O)CCCO
+Products: CCC(O)C(=O)O
+
+--- RetroTide Results ---
+RetroTide Target: CCC(O)C(=O)O
+Successful PKS Nodes: 3
+Best Score: 1.0000
+Total RetroTide Nodes Explored: 501
+
+--- Successful PKS Designs ---
+
+  PKS Design #1:
+    Product SMILES: CC[C@H](O)C(=O)[S]
+    Design Depth: 1
+    Design Score: 0.7143
+    PKS Modules:
+      Module 0: ["AT{'substrate': 'cemal'}", 'loading: True']
+      Module 1: ["AT{'substrate': 'hmal'}", "KR{'type': 'B1'}", 'DH{}', 'ER{}', 'loading: False'
+
+  PKS Design #2:
+    Product SMILES: CC[C@H](O)C(=O)[S]
+    Design Depth: 1
+    Design Score: 0.7143
+    PKS Modules:
+      Module 0: ["AT{'substrate': 'Acetyl-CoA'}", 'loading: True']
+      Module 1: ["AT{'substrate': 'hmal'}", "KR{'type': 'B1'}", 'DH{}', 'ER{}', 'loading: False'
+
+  PKS Design #3:
+    Product SMILES: CC[C@H](O)C(=O)[S]
+    Design Depth: 1
+    Design Score: 0.7143
+    PKS Modules:
+      Module 0: ["AT{'substrate': 'Malonyl-CoA'}", 'loading: True']
+      Module 1: ["AT{'substrate': 'hmal'}", "KR{'type': 'B1'}", 'DH{}', 'ER{}', 'loading: False'
+
+SUCCESS #3
+----------------------------------------
+DORAnet Node ID: 6
+Fragment SMILES: O=C(O)C=CCO
+Fragment Depth: 1
+Fragment Provenance: synthetic
+
+--- DORAnet Reaction (how fragment was created) ---
+Reaction Name: OpDatBasic('[C&+0&!H0:1][C&+0&!H0:2]>>[*:1]=[*:2].
+Reaction SMARTS: OpDatBasic('[C&+0&!H0:1][C&+0&!H0:2]>>[*:1]=[*:2].[#1][#1]')
+Reactants: O=C(O)CCCO
+Products: O=C(O)C=CCO + [H][H]
+
+--- RetroTide Results ---
+RetroTide Target: O=C(O)C=CCO
+Successful PKS Nodes: 1
+Best Score: 1.0000
+Total RetroTide Nodes Explored: 251
+
+--- Successful PKS Designs ---
+
+  PKS Design #1:
+    Product SMILES: O=C([S])C=CCO
+    Design Depth: 1
+    Design Score: 0.7143
+    PKS Modules:
+      Module 0: ["AT{'substrate': 'Hydroxymalonyl-CoA'}", 'loading: True']
+      Module 1: ["AT{'substrate': 'Malonyl-CoA'}", "KR{'type': 'B'}", 'DH{}', 'loading: False']
+
+
+======================================================================
+ALL RETROTIDE RESULTS TABLE
+======================================================================
+
+Node ID    Provenance   Success    Score      Fragment SMILES
+----------------------------------------------------------------------
+1          enzymatic    ❌ NO       0.800      CCCO
+2          enzymatic    ❌ NO       0.625      CC(CO)C(=O)O
+3          enzymatic    ✅ YES      1.000      CC(O)CC(=O)O
+4          enzymatic    ✅ YES      1.000      CCC(O)C(=O)O
+5          enzymatic    ❌ NO       0.667      CCC(=O)O
+6          synthetic    ✅ YES      1.000      O=C(O)C=CCO
+7          synthetic    ❌ NO       0.625      C=CCC(=O)O
+8          synthetic    ❌ NO       0.571      C=CC=C=O
+9          synthetic    ❌ NO       0.333      O=C(O)C#CCO
+10         synthetic    ❌ NO       0.500      O=C(O)CC#CO
