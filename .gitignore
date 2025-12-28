@@ -8,3 +8,4 @@ data/processed/*.csv
 data/training
 data/testing
 data/validation
+results/
