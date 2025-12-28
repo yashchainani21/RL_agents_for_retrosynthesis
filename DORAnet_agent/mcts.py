@@ -305,9 +305,16 @@ class DORAnetMCTS:
         if cofactors_files:
             cofactor_files_to_load.extend(cofactors_files)
 
+        # Track chemistry helpers separately for DORAnet synthetic network generation
+        self.chemistry_helpers: Set[str] = set()
+
         for cofactor_file_path in cofactor_files_to_load:
             cofactor_smiles = _load_cofactors_from_csv(cofactor_file_path)
             self.excluded_fragments.update(cofactor_smiles)
+
+            # If this is the chemistry_helpers file, also store for DORAnet
+            if "chemistry_helpers" in str(cofactor_file_path).lower():
+                self.chemistry_helpers.update(cofactor_smiles)
 
         # Load PKS product library for reward calculation
         self.pks_library: Set[str] = set()
@@ -319,6 +326,10 @@ class DORAnetMCTS:
         self._synthetic_labels = _load_synthetic_reaction_labels()
         print(f"[DORAnet] Loaded {len(self._enzymatic_labels)} enzymatic rule labels")
         print(f"[DORAnet] Loaded {len(self._synthetic_labels)} synthetic reaction labels")
+
+        # Report chemistry helpers for synthetic networks
+        if self.chemistry_helpers:
+            print(f"[DORAnet] Using {len(self.chemistry_helpers)} chemistry helpers for synthetic network generation")
 
     @dataclass
     class FragmentInfo:
@@ -353,12 +364,19 @@ class DORAnetMCTS:
 
         module = enzymatic if mode == "enzymatic" else synthetic
         try:
-            network = module.generate_network(
-                job_name=job_name,
-                starters={starter_smiles},
-                gen=self.generations_per_expand,
-                direction="retro",
-            )
+            # Build network generation kwargs
+            network_kwargs = {
+                "job_name": job_name,
+                "starters": {starter_smiles},
+                "gen": self.generations_per_expand,
+                "direction": "retro",
+            }
+
+            # Add helpers for synthetic network generation
+            if mode == "synthetic" and self.chemistry_helpers:
+                network_kwargs["helpers"] = self.chemistry_helpers
+
+            network = module.generate_network(**network_kwargs)
         except Exception as exc:
             print(f"[WARN] DORAnet {mode} failed for {starter_smiles}: {exc}")
             return []
