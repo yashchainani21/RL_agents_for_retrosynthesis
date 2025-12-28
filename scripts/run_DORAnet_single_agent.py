@@ -10,10 +10,8 @@ Current implementation: Selection + Expansion only (no rollout/backprop yet).
 """
 
 from __future__ import annotations
-
 from pathlib import Path
 import sys
-
 from rdkit import Chem
 from rdkit import RDLogger
 
@@ -26,8 +24,7 @@ from DORAnet_agent import DORAnetMCTS, Node
 from DORAnet_agent.visualize import create_enhanced_interactive_html
 RDLogger.DisableLog("rdApp.*")
 
-
-def main(generate_visualization: bool = True) -> None:
+def main() -> None:
     """
     Run the DORAnet MCTS agent.
 
@@ -60,22 +57,22 @@ def main(generate_visualization: bool = True) -> None:
     agent = DORAnetMCTS(
         root=root,
         target_molecule=target_molecule,
-        total_iterations=10,        # More iterations for deeper exploration
-        max_depth=2,                # Deeper retrosynthetic search
+        total_iterations=10,        # more iterations for deeper exploration
+        max_depth=2,                # deeper retrosynthetic search
         use_enzymatic=True,
         use_synthetic=True,
         generations_per_expand=1,
-        max_children_per_expand=10,  # More children since only PKS matches trigger RetroTide
-        cofactors_file=str(cofactors_file),  # Exclude cofactors from network
-        pks_library_file=str(pks_library_file),  # Use PKS library for reward
-        spawn_retrotide=True,       # Enable RetroTide for PKS library matches only
+        max_children_per_expand=10,  # more children since only PKS matches trigger RetroTide
+        cofactors_file=str(cofactors_file),  # exclude cofactors from network
+        pks_library_file=str(pks_library_file),  # use PKS library for reward
+        spawn_retrotide=True,       # enable RetroTide for PKS library matches only
         retrotide_kwargs={
-            "max_depth": 10,          # More PKS modules to try for exact matches
-            "total_iterations": 200,  # More iterations to find exact matches
-            "maxPKSDesignsRetroTide": 50,  # More designs per round
+            "max_depth": 10,          # more PKS modules to try for exact matches
+            "total_iterations": 200,  # more iterations to find exact matches
+            "maxPKSDesignsRetroTide": 50,  
         },
-        enable_visualization=generate_visualization,  # Use the flag passed to main()
-        visualization_output_dir=str(REPO_ROOT / "results"),  # Save visualizations to results dir
+        enable_visualization=True,  
+        visualization_output_dir=str(REPO_ROOT / "results"),  
     )
 
     # Run the search
