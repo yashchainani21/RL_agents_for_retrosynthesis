@@ -1,0 +1,118 @@
+======================================================================
+DORAnet + RetroTide Multi-Agent MCTS Results
+Generated: 2025-12-25T21:59:12.945955
+======================================================================
+
+TARGET MOLECULE
+----------------------------------------------------------------------
+SMILES: CCCCCCCCC(=O)O
+
+DORANET CONFIGURATION
+----------------------------------------------------------------------
+Total iterations: 2
+Max depth: 1
+Use enzymatic: True
+Use synthetic: True
+Max children per expand: 5
+Spawn RetroTide: False
+
+DORANET SEARCH TREE
+----------------------------------------------------------------------
+DORAnet MCTS Tree Summary:
+========================================
+Node 0: CCCCCCCCC(=O)O (depth=0, visits=11, value=0.36, via=target) ✓PKS
+  Node 1: CCCCCCCC (depth=1, visits=1, value=0.00, via=enzymatic) 
+  Node 2: CCCCCC(C)CC(=O)O (depth=1, visits=1, value=0.00, via=enzymatic) 
+  Node 3: CCCCC(CC)CC(=O)O (depth=1, visits=1, value=0.00, via=enzymatic) 
+  Node 4: CCCC(CCC)CC(=O)O (depth=1, visits=1, value=0.00, via=enzymatic) 
+  Node 5: CCCCCCC(C)C(=O)O (depth=1, visits=2, value=1.00, via=enzymatic) ✓PKS
+  Node 6: C=CCCCCCCC(=O)O (depth=1, visits=1, value=0.00, via=synthetic) 
+  Node 7: CC=CCCCCCC(=O)O (depth=1, visits=1, value=0.00, via=synthetic) 
+  Node 8: CCC=CCCCCC(=O)O (depth=1, visits=1, value=1.00, via=synthetic) ✓PKS
+  Node 9: CCCC=CCCCC(=O)O (depth=1, visits=1, value=0.00, via=synthetic) 
+  Node 10: CCCCC=CCCC(=O)O (depth=1, visits=1, value=1.00, via=synthetic) ✓PKS
+
+======================================================================
+DORANET PRECURSORS - PKS LIBRARY MATCHES
+======================================================================
+
+PKS Library Size: 13312 molecules
+
+Total DORAnet nodes: 11
+Nodes matching PKS library: 4
+Nodes NOT in PKS library: 7
+
+✅ PRECURSORS FOUND IN PKS LIBRARY:
+----------------------------------------------------------------------
+  Node 0 (depth=0, target): CCCCCCCCC(=O)O
+  Node 5 (depth=1, enzymatic): CCCCCCC(C)C(=O)O
+  Node 8 (depth=1, synthetic): CCC=CCCCCC(=O)O
+  Node 10 (depth=1, synthetic): CCCCC=CCCC(=O)O
+
+======================================================================
+DORANET PATHWAYS TO PKS-SYNTHESIZABLE FRAGMENTS
+======================================================================
+
+PATHWAY #1: Node 0
+----------------------------------------
+Final Fragment: CCCCCCCCC(=O)O
+Depth: 0, Provenance: target
+
+Retrosynthetic Route:
+  Target molecule (no transformations needed)
+
+PATHWAY #2: Node 5
+----------------------------------------
+Final Fragment: CCCCCCC(C)C(=O)O
+Depth: 1, Provenance: enzymatic
+
+Retrosynthetic Route:
+  Step 0 (Target): CCCCCCCCC(=O)O
+  Step 1 (enzymatic): CCCCCCC(C)C(=O)O
+           Reaction: OpDatBasic('([#6&!$([#6&!R](=&!@[#6&!R](-&!@[#6&!R
+
+PATHWAY #3: Node 8
+----------------------------------------
+Final Fragment: CCC=CCCCCC(=O)O
+Depth: 1, Provenance: synthetic
+
+Retrosynthetic Route:
+  Step 0 (Target): CCCCCCCCC(=O)O
+  Step 1 (synthetic): CCC=CCCCCC(=O)O
+           Reaction: OpDatBasic('[C&+0&!H0:1][C&+0&!H0:2]>>[*:1]=[*:2].
+
+PATHWAY #4: Node 10
+----------------------------------------
+Final Fragment: CCCCC=CCCC(=O)O
+Depth: 1, Provenance: synthetic
+
+Retrosynthetic Route:
+  Step 0 (Target): CCCCCCCCC(=O)O
+  Step 1 (synthetic): CCCCC=CCCC(=O)O
+           Reaction: OpDatBasic('[C&+0&!H0:1][C&+0&!H0:2]>>[*:1]=[*:2].
+
+❌ PRECURSORS NOT IN PKS LIBRARY:
+----------------------------------------------------------------------
+  Node 1 (depth=1, enzymatic): CCCCCCCC
+  Node 2 (depth=1, enzymatic): CCCCCC(C)CC(=O)O
+  Node 3 (depth=1, enzymatic): CCCCC(CC)CC(=O)O
+  Node 4 (depth=1, enzymatic): CCCC(CCC)CC(=O)O
+  Node 6 (depth=1, synthetic): C=CCCCCCCC(=O)O
+  Node 7 (depth=1, synthetic): CC=CCCCCCC(=O)O
+  Node 9 (depth=1, synthetic): CCCC=CCCCC(=O)O
+
+
+======================================================================
+RetroTide Results Summary
+======================================================================
+
+Total RetroTide searches: 0
+Successful searches: 0
+
+
+======================================================================
+ALL RETROTIDE RESULTS TABLE
+======================================================================
+
+Node ID    Provenance   Success    Score      Fragment SMILES
+----------------------------------------------------------------------
