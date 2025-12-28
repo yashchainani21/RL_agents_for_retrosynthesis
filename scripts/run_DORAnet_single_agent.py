@@ -24,7 +24,7 @@ from DORAnet_agent import DORAnetMCTS, Node
 from DORAnet_agent.visualize import create_enhanced_interactive_html
 RDLogger.DisableLog("rdApp.*")
 
-def main() -> None:
+def main(create_interactive_visualization: bool = True) -> None:
     """
     Run the DORAnet MCTS agent.
 
@@ -124,8 +124,39 @@ def main() -> None:
             for r in successful:
                 print(f"   Node {r.doranet_node_id} ({r.doranet_node_provenance}): {r.doranet_node_smiles}")
 
+    if create_interactive_visualization:
+        results_dir = REPO_ROOT / "results"
+        results_dir.mkdir(parents=True, exist_ok=True)
+
+        interactive_path = results_dir / "doranet_interactive_enhanced.html"
+
+        create_enhanced_interactive_html(
+            agent=agent,
+            output_path=str(interactive_path),
+            molecule_img_size=(250, 250),  # size of molecule images in pixels
+            auto_open=True,  # automatically open in browser!
+            )
+
+        print("\n" + "=" * 70)
+        print("✓ Interactive visualization complete!")
+        print("=" * 70)
+        print(f"\nOpen in your browser:")
+        print(f"  file://{interactive_path}")
+        print("\nFeatures:")
+        print("  • Hover over nodes to see molecule structures")
+        print("  • View metadata: provenance, PKS match, visits, value")
+        print("  • Hover over edges to see reaction SMARTS")
+        print("  • Use mouse wheel to zoom")
+        print("  • Drag to pan around the tree")
+        print("  • Click reset button to restore original view")
+        print("\nColor scheme:")
+        print("  🟠 Orange = Target molecule")
+        print("  🔵 Blue = Enzymatic pathway")
+        print("  🟣 Purple = Synthetic pathway")
+        print("  🟢 Green = PKS library match ✓")
 
 if __name__ == "__main__":
+    
     import argparse
 
     parser = argparse.ArgumentParser(description="Run DORAnet MCTS agent for retrosynthesis")
@@ -136,4 +167,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    main() #args.visualize)
+    main() #args.visualize
