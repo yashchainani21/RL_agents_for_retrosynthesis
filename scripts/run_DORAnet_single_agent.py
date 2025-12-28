@@ -48,8 +48,11 @@ def main(create_interactive_visualization: bool = True, molecule_name: str = Non
     else:
         print(f"Target molecule: {target_smiles}")
 
-    # Path to cofactors file (metabolites to exclude from the network)
-    cofactors_file = REPO_ROOT / "data" / "raw" / "all_cofactors.csv"
+    # Paths to cofactor files (metabolites and chemistry helpers to exclude from the network)
+    cofactors_files = [
+        REPO_ROOT / "data" / "raw" / "all_cofactors.csv",
+        REPO_ROOT / "data" / "raw" / "chemistry_helpers.csv",
+    ]
 
     # Path to PKS library file for reward calculation
     pks_library_file = REPO_ROOT / "data" / "processed" / "PKS_smiles.txt"
@@ -68,7 +71,7 @@ def main(create_interactive_visualization: bool = True, molecule_name: str = Non
         use_synthetic=True,
         generations_per_expand=1,
         max_children_per_expand=10,  # more children since only PKS matches trigger RetroTide
-        cofactors_file=str(cofactors_file),  # exclude cofactors from network
+        cofactors_files=[str(f) for f in cofactors_files],  # exclude cofactors and chemistry helpers
         pks_library_file=str(pks_library_file),  # use PKS library for reward
         spawn_retrotide=True,       # enable RetroTide for PKS library matches only
         retrotide_kwargs={
