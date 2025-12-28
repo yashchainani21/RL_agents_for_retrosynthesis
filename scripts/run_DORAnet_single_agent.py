@@ -24,12 +24,13 @@ from DORAnet_agent import DORAnetMCTS, Node
 from DORAnet_agent.visualize import create_enhanced_interactive_html
 RDLogger.DisableLog("rdApp.*")
 
-def main(create_interactive_visualization: bool = True) -> None:
+def main(create_interactive_visualization: bool = True, molecule_name: str = None) -> None:
     """
     Run the DORAnet MCTS agent.
 
     Args:
-        generate_visualization: If True, generate tree visualization images.
+        create_interactive_visualization: If True, generate interactive HTML visualization.
+        molecule_name: Optional name for the target molecule (used in output filenames).
     """
     # Example target molecule
     # target_smiles = "CCCC(C)=O"  # 3-pentanone (simple ketone)
@@ -41,7 +42,11 @@ def main(create_interactive_visualization: bool = True) -> None:
     if target_molecule is None:
         raise ValueError(f"Could not parse target SMILES: {target_smiles}")
 
-    print(f"Target molecule: {target_smiles}")
+    # Use molecule name if provided, otherwise show SMILES
+    if molecule_name:
+        print(f"Target molecule: {molecule_name} ({target_smiles})")
+    else:
+        print(f"Target molecule: {target_smiles}")
 
     # Path to cofactors file (metabolites to exclude from the network)
     cofactors_file = REPO_ROOT / "data" / "raw" / "all_cofactors.csv"
@@ -108,8 +113,18 @@ def main(create_interactive_visualization: bool = True) -> None:
     # Save detailed results to file (and generate visualizations if enabled)
     results_dir = REPO_ROOT / "results"
     timestamp = __import__('datetime').datetime.now().strftime("%Y%m%d_%H%M%S")
-    safe_smiles = target_smiles.replace("/", "_").replace("\\", "_")[:20]
-    results_path = results_dir / f"doranet_results_{safe_smiles}_{timestamp}.txt"
+
+    # Use molecule name for filename if provided, otherwise use SMILES
+    if molecule_name:
+        # Sanitize molecule name for filename
+        safe_name = molecule_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
+        safe_name = "".join(c for c in safe_name if c.isalnum() or c in "_-")
+        filename_base = safe_name
+    else:
+        safe_smiles = target_smiles.replace("/", "_").replace("\\", "_")[:20]
+        filename_base = safe_smiles
+
+    results_path = results_dir / f"doranet_results_{filename_base}_{timestamp}.txt"
     agent.save_results(str(results_path))
 
     # Print summary
@@ -128,7 +143,8 @@ def main(create_interactive_visualization: bool = True) -> None:
         results_dir = REPO_ROOT / "results"
         results_dir.mkdir(parents=True, exist_ok=True)
 
-        interactive_path = results_dir / "doranet_interactive_enhanced.html"
+        # Use same filename base for interactive visualization
+        interactive_path = results_dir / f"doranet_interactive_{filename_base}_{timestamp}.html"
 
         create_enhanced_interactive_html(
             agent=agent,
@@ -156,15 +172,23 @@ def main(create_interactive_visualization: bool = True) -> None:
         print("  🟢 Green = PKS library match ✓")
 
 if __name__ == "__main__":
-    
+
     import argparse
 
     parser = argparse.ArgumentParser(description="Run DORAnet MCTS agent for retrosynthesis")
     parser.add_argument(
         "--visualize", "-v",
         action="store_true",
-        help="Generate tree visualization images"
+        default=True,
+        help="Generate interactive visualization (default: True)"
+    )
+    parser.add_argument(
+        "--name", "-n",
+        type=str,
+        default=None,
+        help="Name for the target molecule (used in output filenames). Example: --name nonanoic_acid"
     )
     args = parser.parse_args()
 
-    main() #args.visualize
+    #main(create_interactive_visualization=args.visualize, molecule_name=args.name)
+    main(molecule_name="nonanoic_acid")
