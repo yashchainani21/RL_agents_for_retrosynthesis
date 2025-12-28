@@ -74,6 +74,64 @@ def _canonicalize_smiles(smiles: str) -> Optional[str]:
     return Chem.MolToSmiles(mol)
 
 
+def _load_enzymatic_rule_labels() -> List[str]:
+    """
+    Load enzymatic reaction rule labels from DORAnet.
+
+    Returns:
+        List of rule names indexed by operator position.
+    """
+    try:
+        import doranet.modules.enzymatic as enzymatic
+        import os
+        import pandas as pd
+
+        # Load rule labels from TSV file
+        enzymatic_path = os.path.dirname(enzymatic.__file__)
+        rules_file = os.path.join(enzymatic_path, 'JN3604IMT_rules.tsv')
+        df = pd.read_csv(rules_file, sep='\t')
+
+        # Create list of names indexed by position (same order as in file)
+        labels = []
+        for _, row in df.iterrows():
+            name = row['Name']
+            if pd.notna(name):
+                labels.append(name)
+            else:
+                labels.append(None)
+
+        return labels
+
+    except Exception as e:
+        print(f"[WARN] Could not load enzymatic rule labels: {e}")
+        return []
+
+
+def _load_synthetic_reaction_labels() -> List[str]:
+    """
+    Load synthetic reaction labels from DORAnet.
+
+    Returns:
+        List of reaction names indexed by operator position.
+    """
+    try:
+        import doranet.modules.synthetic.Reaction_Smarts_Retro as retro_smarts
+
+        # Create list of names indexed by position
+        labels = []
+        for op_def in retro_smarts.op_retro_smarts:
+            if hasattr(op_def, 'name'):
+                labels.append(op_def.name)
+            else:
+                labels.append(None)
+
+        return labels
+
+    except Exception as e:
+        print(f"[WARN] Could not load synthetic reaction labels: {e}")
+        return []
+
+
 # Small molecules to exclude (common byproducts, not useful fragments)
 DEFAULT_EXCLUDED_FRAGMENTS = (
     "O",           # water
@@ -177,6 +235,8 @@ class DORAnetMCTS:
         spawn_retrotide: bool = True,
         retrotide_kwargs: Optional[Dict] = None,
         enable_visualization: bool = False,
+        enable_interactive_viz: bool = False,
+        auto_open_viz: bool = False,
         visualization_output_dir: Optional[str] = None,
     ) -> None:
         """
@@ -194,7 +254,9 @@ class DORAnetMCTS:
             pks_library_file: Path to text file with PKS product SMILES for reward calculation.
             spawn_retrotide: Whether to spawn RetroTide searches for each fragment.
             retrotide_kwargs: Parameters passed to RetroTide MCTS agents.
-            enable_visualization: Whether to automatically generate visualizations after run.
+            enable_visualization: Whether to automatically generate static visualizations (PNG).
+            enable_interactive_viz: Whether to generate interactive HTML visualization.
+            auto_open_viz: If True, automatically open interactive visualization in browser.
             visualization_output_dir: Directory to save visualizations (default: current directory).
         """
         self.root = root
@@ -208,6 +270,8 @@ class DORAnetMCTS:
         self.spawn_retrotide = spawn_retrotide and RETROTIDE_AVAILABLE
         self.retrotide_kwargs = retrotide_kwargs or {}
         self.enable_visualization = enable_visualization
+        self.enable_interactive_viz = enable_interactive_viz
+        self.auto_open_viz = auto_open_viz
         self.visualization_output_dir = visualization_output_dir or "."
 
         if spawn_retrotide and not RETROTIDE_AVAILABLE:
@@ -240,6 +304,12 @@ class DORAnetMCTS:
         self.pks_library: Set[str] = set()
         if pks_library_file:
             self.pks_library = _load_pks_library(pks_library_file)
+
+        # Load reaction label mappings for human-readable names
+        self._enzymatic_labels = _load_enzymatic_rule_labels()
+        self._synthetic_labels = _load_synthetic_reaction_labels()
+        print(f"[DORAnet] Loaded {len(self._enzymatic_labels)} enzymatic rule labels")
+        print(f"[DORAnet] Loaded {len(self._synthetic_labels)} synthetic reaction labels")
 
     @dataclass
     class FragmentInfo:
@@ -297,13 +367,27 @@ class DORAnetMCTS:
                 # Get the operator using its index
                 op_idx = rxn.operator
                 op = ops_list[op_idx] if op_idx < len(ops_list) else None
-                rxn_smarts = str(op) if op else None
 
-                # Extract a readable name from the SMARTS
-                rxn_name = None
-                if rxn_smarts:
-                    # Use first 50 chars of SMARTS as a name identifier
-                    rxn_name = rxn_smarts[:50] if len(rxn_smarts) > 50 else rxn_smarts
+                # Extract SMARTS - use uid attribute if available, otherwise convert to string
+                if op and hasattr(op, 'uid'):
+                    rxn_smarts = op.uid
+                else:
+                    rxn_smarts = str(op) if op else None
+
+                # Get human-readable reaction label using operator index
+                rxn_label = None
+                if op_idx is not None:
+                    # Look up label by operator index
+                    if mode == "enzymatic":
+                        if op_idx < len(self._enzymatic_labels):
+                            rxn_label = self._enzymatic_labels[op_idx]
+                    else:  # synthetic
+                        if op_idx < len(self._synthetic_labels):
+                            rxn_label = self._synthetic_labels[op_idx]
+
+                # Fallback to truncated SMARTS if no label found
+                if not rxn_label and rxn_smarts:
+                    rxn_label = rxn_smarts[:60] + "..." if len(rxn_smarts) > 60 else rxn_smarts
 
                 # Get reactants and products using their indices
                 reactant_idxs = rxn.reactants
@@ -324,7 +408,7 @@ class DORAnetMCTS:
                     if canonical_prod and canonical_prod not in mol_to_reaction:
                         mol_to_reaction[canonical_prod] = {
                             'smarts': rxn_smarts,
-                            'name': rxn_name,
+                            'label': rxn_label,  # Human-readable label
                             'reactants': reactant_smiles,
                             'products': product_smiles,
                         }
@@ -367,7 +451,7 @@ class DORAnetMCTS:
                 molecule=rd_mol,
                 smiles=canonical,
                 reaction_smarts=rxn_info.get('smarts'),
-                reaction_name=rxn_info.get('name'),
+                reaction_name=rxn_info.get('label'),  # Use the human-readable label
                 reactants_smiles=rxn_info.get('reactants', []),
                 products_smiles=rxn_info.get('products', []),
             )
@@ -1122,7 +1206,11 @@ class DORAnetMCTS:
             results_path: Path to the results text file (used to derive viz filenames).
         """
         try:
-            from .visualize import visualize_doranet_tree, visualize_pks_pathways
+            from .visualize import (
+                visualize_doranet_tree,
+                visualize_pks_pathways,
+                create_enhanced_interactive_html
+            )
 
             print("\n[DORAnet] Generating visualizations...")
 
@@ -1142,8 +1230,18 @@ class DORAnetMCTS:
             visualize_pks_pathways(self, output_path=str(pks_viz_path))
             print(f"[DORAnet] PKS pathways visualization saved to: {pks_viz_path}")
 
+            # Interactive HTML visualization (if enabled)
+            if self.enable_interactive_viz:
+                interactive_path = viz_dir / f"{base_name}_interactive.html"
+                create_enhanced_interactive_html(
+                    self,
+                    output_path=str(interactive_path),
+                    auto_open=self.auto_open_viz
+                )
+                print(f"[DORAnet] Interactive HTML saved to: {interactive_path}")
+
         except ImportError as e:
             print(f"[DORAnet] Could not generate visualizations: {e}")
-            print("[DORAnet] Install required packages: pip install networkx matplotlib")
+            print("[DORAnet] Install required packages: pip install networkx matplotlib bokeh")
         except Exception as e:
             print(f"[DORAnet] Error generating visualizations: {e}")

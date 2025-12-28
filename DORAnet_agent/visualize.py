@@ -357,6 +357,42 @@ def visualize_pks_pathways(
     return fig
 
 
+def _generate_molecule_image_base64(smiles: str, size: Tuple[int, int] = (200, 200)) -> Optional[str]:
+    """
+    Generate a base64-encoded PNG image of a molecule from SMILES.
+
+    Args:
+        smiles: SMILES string of the molecule.
+        size: Image size (width, height).
+
+    Returns:
+        Base64-encoded PNG image string, or None on failure.
+    """
+    try:
+        from rdkit import Chem
+        from rdkit.Chem import Draw
+        import base64
+        from io import BytesIO
+
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return None
+
+        # Generate image
+        img = Draw.MolToImage(mol, size=size)
+
+        # Convert to base64
+        buffered = BytesIO()
+        img.save(buffered, format="PNG")
+        img_str = base64.b64encode(buffered.getvalue()).decode()
+
+        return f"data:image/png;base64,{img_str}"
+
+    except Exception as e:
+        print(f"[Visualization] Error generating molecule image: {e}")
+        return None
+
+
 def create_interactive_html(
     agent: "DORAnetMCTS",
     output_path: str,
@@ -456,8 +492,8 @@ def create_interactive_html(
     p.multi_line(edge_x, edge_y, line_color='#bdc3c7', line_width=2)
 
     # Draw nodes
-    p.circle('x', 'y', source=source, size='size', color='color',
-             line_color='#2c3e50', line_width=2)
+    p.scatter('x', 'y', source=source, size='size', color='color',
+              line_color='#2c3e50', line_width=2, marker='circle')
 
     # Hover tool
     hover = HoverTool(tooltips=[
@@ -480,3 +516,289 @@ def create_interactive_html(
 
     save(p)
     print(f"[Visualization] Interactive HTML saved to: {output_path}")
+
+
+def create_enhanced_interactive_html(
+    agent: "DORAnetMCTS",
+    output_path: str,
+    molecule_img_size: Tuple[int, int] = (250, 250),
+    auto_open: bool = False,
+) -> None:
+    """
+    Create an enhanced interactive HTML visualization with molecule images and reaction info.
+
+    Features:
+    - Hover over nodes to see molecule structure images
+    - Node metadata (enzymatic/synthetic, PKS match, visits, value, depth)
+    - Hover over edges to see reaction information
+    - Same color scheme as static visualizations
+    - Interactive zoom and pan
+
+    Args:
+        agent: The DORAnetMCTS agent after running.
+        output_path: Path to save the HTML file.
+        molecule_img_size: Size of molecule images in pixels (width, height).
+        auto_open: If True, automatically open the HTML file in the default browser.
+    """
+    try:
+        from bokeh.plotting import figure, save, output_file
+        from bokeh.models import HoverTool, ColumnDataSource, LabelSet
+        from bokeh.layouts import column
+        from bokeh.models.annotations import Title
+    except ImportError:
+        print("[Visualization] Bokeh not installed. Install with: pip install bokeh")
+        return
+
+    from rdkit import Chem
+
+    print("[Visualization] Generating enhanced interactive visualization...")
+    print("[Visualization] Creating molecule structure images...")
+
+    # Create graph
+    G = create_tree_graph(agent)
+    if len(G.nodes) == 0:
+        print("[Visualization] No nodes to visualize.")
+        return
+
+    pos = get_hierarchical_pos(G, root=0)
+
+    # Prepare node data with molecule images
+    node_ids = []
+    x_coords = []
+    y_coords = []
+    colors = []
+    sizes = []
+    smiles_list = []
+    smiles_short_list = []
+    visits_list = []
+    values_list = []
+    avg_values_list = []
+    provenance_list = []
+    pks_match_list = []
+    depth_list = []
+    mol_images = []
+
+    for n in G.nodes:
+        data = G.nodes[n]
+        is_pks = data.get('is_pks_match', False)
+        prov = data.get('provenance', 'target')
+        smiles = data.get('smiles', '')
+        smiles_short = data.get('smiles_short', str(n))
+
+        # Color based on type (same as static visualization)
+        if is_pks:
+            color = '#2ecc71'  # Green for PKS match
+        elif prov == 'enzymatic':
+            color = '#3498db'  # Blue for enzymatic
+        elif prov == 'synthetic':
+            color = '#9b59b6'  # Purple for synthetic
+        else:
+            color = '#f39c12'  # Orange for target
+
+        visits = data.get('visits', 0)
+        value = data.get('value', 0.0)
+        avg_value = data.get('avg_value', 0.0)
+        depth = data.get('depth', 0)
+
+        # Generate molecule image
+        mol_img = _generate_molecule_image_base64(smiles, size=molecule_img_size)
+
+        node_ids.append(n)
+        x_coords.append(pos[n][0])
+        y_coords.append(pos[n][1])
+        colors.append(color)
+        sizes.append(min(15 + visits * 3, 50))
+        smiles_list.append(smiles if smiles else 'N/A')
+        smiles_short_list.append(smiles_short)
+        visits_list.append(visits)
+        values_list.append(f"{value:.2f}")
+        avg_values_list.append(f"{avg_value:.3f}")
+        provenance_list.append(prov.capitalize())
+        pks_match_list.append('✓ Yes' if is_pks else '✗ No')
+        depth_list.append(depth)
+        mol_images.append(mol_img if mol_img else "")
+
+    # Create node data source
+    node_source = ColumnDataSource(data=dict(
+        x=x_coords,
+        y=y_coords,
+        node_id=node_ids,
+        color=colors,
+        size=sizes,
+        smiles=smiles_list,
+        smiles_short=smiles_short_list,
+        visits=visits_list,
+        value=values_list,
+        avg_value=avg_values_list,
+        provenance=provenance_list,
+        pks_match=pks_match_list,
+        depth=depth_list,
+        mol_img=mol_images,
+    ))
+
+    # Prepare edge data with reaction information
+    print("[Visualization] Extracting reaction information for edges...")
+    edge_x0 = []
+    edge_y0 = []
+    edge_x1 = []
+    edge_y1 = []
+    edge_reactions = []
+    edge_colors = []
+
+    for parent_id, child_id in agent.edges:
+        if parent_id in pos and child_id in pos:
+            # Get child node for reaction info
+            child_node = next((n for n in agent.nodes if n.node_id == child_id), None)
+
+            # Extract reaction information
+            if child_node:
+                rxn_label = child_node.reaction_name or "Unknown reaction"
+
+                # Truncate for tooltip
+                rxn_label_short = rxn_label[:100] + "..." if len(rxn_label) > 100 else rxn_label
+
+                reaction_info = rxn_label_short
+
+                # Edge color based on provenance
+                if child_node.provenance == 'enzymatic':
+                    edge_color = '#3498db'
+                elif child_node.provenance == 'synthetic':
+                    edge_color = '#9b59b6'
+                else:
+                    edge_color = '#95a5a6'
+            else:
+                reaction_info = "No reaction information"
+                edge_color = '#95a5a6'
+
+            edge_x0.append(pos[parent_id][0])
+            edge_y0.append(pos[parent_id][1])
+            edge_x1.append(pos[child_id][0])
+            edge_y1.append(pos[child_id][1])
+            edge_reactions.append(reaction_info)
+            edge_colors.append(edge_color)
+
+    # Create edge data source
+    edge_source = ColumnDataSource(data=dict(
+        x0=edge_x0,
+        y0=edge_y0,
+        x1=edge_x1,
+        y1=edge_y1,
+        reaction=edge_reactions,
+        color=edge_colors,
+    ))
+
+    # Create Bokeh figure
+    target_smiles = Chem.MolToSmiles(agent.target_molecule) if agent.target_molecule else "Unknown"
+    pks_matches = len([n for n in G.nodes if G.nodes[n].get('is_pks_match', False)])
+
+    p = figure(
+        title=f"DORAnet MCTS Interactive Search Tree",
+        width=1400,
+        height=900,
+        tools="pan,wheel_zoom,box_zoom,reset,save",
+        active_scroll="wheel_zoom",
+    )
+
+    # Add subtitle with target info
+    p.add_layout(Title(
+        text=f"Target: {target_smiles[:100]} | Total Nodes: {len(G.nodes)} | PKS Matches: {pks_matches}",
+        text_font_size="11pt",
+        text_font_style="italic"
+    ), 'above')
+
+    # Draw edges with hover
+    edge_lines = p.segment(
+        x0='x0', y0='y0', x1='x1', y1='y1',
+        source=edge_source,
+        color='color',
+        line_width=2.5,
+        alpha=0.7,
+        line_cap='round'
+    )
+
+    # Edge hover tool
+    edge_hover = HoverTool(
+        renderers=[edge_lines],
+        tooltips=[
+            ("Reaction", "@reaction"),
+        ],
+        point_policy="follow_mouse"
+    )
+    p.add_tools(edge_hover)
+
+    # Draw nodes
+    node_circles = p.scatter(
+        'x', 'y',
+        source=node_source,
+        size='size',
+        color='color',
+        line_color='#2c3e50',
+        line_width=2.5,
+        alpha=0.9,
+        marker='circle'
+    )
+
+    # Node hover tool with custom HTML template for molecule images
+    node_hover_html = """
+    <div style="width: 320px; background-color: white; border: 2px solid #2c3e50; border-radius: 8px; padding: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+        <div style="text-align: center; margin-bottom: 10px;">
+            <img src="@mol_img" style="max-width: 250px; max-height: 250px; border: 1px solid #ddd; border-radius: 4px;">
+        </div>
+        <div style="font-family: monospace; font-size: 12px;">
+            <b style="color: #2c3e50;">Node ID:</b> @node_id<br>
+            <b style="color: #2c3e50;">Depth:</b> @depth<br>
+            <b style="color: #2c3e50;">Provenance:</b> <span style="color: @color; font-weight: bold;">@provenance</span><br>
+            <b style="color: #2c3e50;">PKS Match:</b> @pks_match<br>
+            <b style="color: #2c3e50;">Visits:</b> @visits<br>
+            <b style="color: #2c3e50;">Avg Value:</b> @avg_value<br>
+            <b style="color: #2c3e50;">SMILES:</b><br>
+            <span style="font-size: 10px; word-break: break-all;">@smiles</span>
+        </div>
+    </div>
+    """
+
+    node_hover = HoverTool(
+        renderers=[node_circles],
+        tooltips=node_hover_html,
+        point_policy="follow_mouse"
+    )
+    p.add_tools(node_hover)
+
+    # Add node ID labels
+    labels = LabelSet(
+        x='x', y='y',
+        text='node_id',
+        source=node_source,
+        text_font_size='9pt',
+        text_align='center',
+        text_baseline='middle',
+        text_color='black'
+        # Note: text_font_weight not supported in LabelSet
+    )
+    p.add_layout(labels)
+
+    # Style the plot
+    p.axis.visible = False
+    p.grid.visible = False
+    p.background_fill_color = "#f8f9fa"
+    p.border_fill_color = "#ffffff"
+
+    # Save to HTML
+    output_file(output_path)
+    save(p)
+
+    print(f"[Visualization] Enhanced interactive HTML saved to: {output_path}")
+    print(f"[Visualization] Open in browser to explore:")
+    print(f"[Visualization]   - Hover over nodes to see molecule structures")
+    print(f"[Visualization]   - Hover over edges to see reactions")
+    print(f"[Visualization]   - Use mouse wheel to zoom, drag to pan")
+
+    # Auto-open in browser if requested
+    if auto_open:
+        import webbrowser
+        from pathlib import Path
+
+        # Convert to absolute path and open
+        abs_path = Path(output_path).resolve()
+        webbrowser.open(f"file://{abs_path}")
+        print(f"[Visualization] Opening visualization in your default browser...")
