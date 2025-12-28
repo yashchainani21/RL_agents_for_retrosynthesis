@@ -176,6 +176,8 @@ class DORAnetMCTS:
         pks_library_file: Optional[str] = None,
         spawn_retrotide: bool = True,
         retrotide_kwargs: Optional[Dict] = None,
+        enable_visualization: bool = False,
+        visualization_output_dir: Optional[str] = None,
     ) -> None:
         """
         Args:
@@ -192,6 +194,8 @@ class DORAnetMCTS:
             pks_library_file: Path to text file with PKS product SMILES for reward calculation.
             spawn_retrotide: Whether to spawn RetroTide searches for each fragment.
             retrotide_kwargs: Parameters passed to RetroTide MCTS agents.
+            enable_visualization: Whether to automatically generate visualizations after run.
+            visualization_output_dir: Directory to save visualizations (default: current directory).
         """
         self.root = root
         self.target_molecule = target_molecule
@@ -203,6 +207,8 @@ class DORAnetMCTS:
         self.max_children_per_expand = max_children_per_expand
         self.spawn_retrotide = spawn_retrotide and RETROTIDE_AVAILABLE
         self.retrotide_kwargs = retrotide_kwargs or {}
+        self.enable_visualization = enable_visualization
+        self.visualization_output_dir = visualization_output_dir or "."
 
         if spawn_retrotide and not RETROTIDE_AVAILABLE:
             print("[WARN] RetroTide not available - spawning disabled")
@@ -1103,3 +1109,41 @@ class DORAnetMCTS:
                     f.write("\n" + "-" * 70 + "\n\n")
 
         print(f"[DORAnet] Results saved to: {path}")
+
+        # Generate visualizations if enabled
+        if self.enable_visualization:
+            self._generate_visualizations(output_path)
+
+    def _generate_visualizations(self, results_path: str) -> None:
+        """
+        Generate tree and pathway visualizations.
+
+        Args:
+            results_path: Path to the results text file (used to derive viz filenames).
+        """
+        try:
+            from .visualize import visualize_doranet_tree, visualize_pks_pathways
+
+            print("\n[DORAnet] Generating visualizations...")
+
+            # Derive visualization paths from results path
+            results_path_obj = Path(results_path)
+            base_name = results_path_obj.stem  # filename without extension
+            viz_dir = Path(self.visualization_output_dir)
+            viz_dir.mkdir(parents=True, exist_ok=True)
+
+            # Full tree visualization
+            tree_viz_path = viz_dir / f"{base_name}_tree.png"
+            visualize_doranet_tree(self, output_path=str(tree_viz_path))
+            print(f"[DORAnet] Tree visualization saved to: {tree_viz_path}")
+
+            # PKS pathways visualization
+            pks_viz_path = viz_dir / f"{base_name}_pks_pathways.png"
+            visualize_pks_pathways(self, output_path=str(pks_viz_path))
+            print(f"[DORAnet] PKS pathways visualization saved to: {pks_viz_path}")
+
+        except ImportError as e:
+            print(f"[DORAnet] Could not generate visualizations: {e}")
+            print("[DORAnet] Install required packages: pip install networkx matplotlib")
+        except Exception as e:
+            print(f"[DORAnet] Error generating visualizations: {e}")
