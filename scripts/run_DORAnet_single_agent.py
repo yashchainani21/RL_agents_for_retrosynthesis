@@ -23,8 +23,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from DORAnet_agent import DORAnetMCTS, Node
-
-# Quiet down RDKit warnings.
+from DORAnet_agent.visualize import create_enhanced_interactive_html
 RDLogger.DisableLog("rdApp.*")
 
 
