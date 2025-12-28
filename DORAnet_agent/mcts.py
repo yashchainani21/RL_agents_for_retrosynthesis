@@ -231,6 +231,7 @@ class DORAnetMCTS:
         max_children_per_expand: int = 10,
         excluded_fragments: Optional[Iterable[str]] = None,
         cofactors_file: Optional[str] = None,
+        cofactors_files: Optional[List[str]] = None,
         pks_library_file: Optional[str] = None,
         spawn_retrotide: bool = True,
         retrotide_kwargs: Optional[Dict] = None,
@@ -250,7 +251,8 @@ class DORAnetMCTS:
             generations_per_expand: DORAnet generations per expansion step.
             max_children_per_expand: Max fragments to retain per expansion.
             excluded_fragments: SMILES of fragments to ignore (small byproducts).
-            cofactors_file: Path to CSV file with cofactor SMILES to exclude.
+            cofactors_file: Path to CSV file with cofactor SMILES to exclude (deprecated, use cofactors_files).
+            cofactors_files: List of paths to CSV files with cofactor SMILES to exclude.
             pks_library_file: Path to text file with PKS product SMILES for reward calculation.
             spawn_retrotide: Whether to spawn RetroTide searches for each fragment.
             retrotide_kwargs: Parameters passed to RetroTide MCTS agents.
@@ -295,9 +297,16 @@ class DORAnetMCTS:
             if _canonicalize_smiles(smi)
         }
 
-        # Add cofactors from CSV file if provided
+        # Add cofactors from CSV files if provided
+        # Support both single file (deprecated) and list of files
+        cofactor_files_to_load = []
         if cofactors_file:
-            cofactor_smiles = _load_cofactors_from_csv(cofactors_file)
+            cofactor_files_to_load.append(cofactors_file)
+        if cofactors_files:
+            cofactor_files_to_load.extend(cofactors_files)
+
+        for cofactor_file_path in cofactor_files_to_load:
+            cofactor_smiles = _load_cofactors_from_csv(cofactor_file_path)
             self.excluded_fragments.update(cofactor_smiles)
 
         # Load PKS product library for reward calculation
