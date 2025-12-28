@@ -61,8 +61,8 @@ def main(generate_visualization: bool = False) -> None:
     agent = DORAnetMCTS(
         root=root,
         target_molecule=target_molecule,
-        total_iterations=5,         # More iterations for thorough exploration
-        max_depth=1,                # Shallow depth for proof of concept
+        total_iterations=10,        # More iterations for deeper exploration
+        max_depth=2,                # Deeper retrosynthetic search
         use_enzymatic=True,
         use_synthetic=True,
         generations_per_expand=1,
@@ -75,6 +75,8 @@ def main(generate_visualization: bool = False) -> None:
             "total_iterations": 200,  # More iterations to find exact matches
             "maxPKSDesignsRetroTide": 50,  # More designs per round
         },
+        enable_visualization=generate_visualization,  # Use the flag passed to main()
+        visualization_output_dir=str(REPO_ROOT / "results"),  # Save visualizations to results dir
     )
 
     # Run the search
@@ -107,7 +109,7 @@ def main(generate_visualization: bool = False) -> None:
         # RetroTide mode - show detailed results
         print(agent.get_results_summary())
 
-    # Save detailed results to file
+    # Save detailed results to file (and generate visualizations if enabled)
     results_dir = REPO_ROOT / "results"
     timestamp = __import__('datetime').datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_smiles = target_smiles.replace("/", "_").replace("\\", "_")[:20]
@@ -126,29 +128,6 @@ def main(generate_visualization: bool = False) -> None:
             for r in successful:
                 print(f"   Node {r.doranet_node_id} ({r.doranet_node_provenance}): {r.doranet_node_smiles}")
 
-    # Generate visualizations (optional)
-    if generate_visualization:
-        try:
-            from DORAnet_agent.visualize import visualize_doranet_tree, visualize_pks_pathways
-
-            print("\n[Visualization] Generating MCTS tree visualization...")
-
-            # Full tree visualization
-            tree_viz_path = results_dir / f"doranet_tree_{safe_smiles}_{timestamp}.png"
-            visualize_doranet_tree(agent, output_path=str(tree_viz_path))
-
-            # PKS pathways visualization
-            pks_viz_path = results_dir / f"doranet_pks_pathways_{safe_smiles}_{timestamp}.png"
-            visualize_pks_pathways(agent, output_path=str(pks_viz_path))
-
-            print(f"[Visualization] Tree visualization: {tree_viz_path}")
-            print(f"[Visualization] PKS pathways visualization: {pks_viz_path}")
-
-        except ImportError as e:
-            print(f"[Visualization] Could not generate visualizations: {e}")
-        except Exception as e:
-            print(f"[Visualization] Error generating visualizations: {e}")
-
 
 if __name__ == "__main__":
     import argparse
@@ -161,4 +140,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    main(generate_visualization=args.visualize)
+    main(generate_visualization=True)#args.visualize)
