@@ -28,7 +28,7 @@ from DORAnet_agent import DORAnetMCTS, Node
 RDLogger.DisableLog("rdApp.*")
 
 
-def main(generate_visualization: bool = False) -> None:
+def main(generate_visualization: bool = True) -> None:
     """
     Run the DORAnet MCTS agent.
 
@@ -140,4 +140,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    main(generate_visualization=True)#args.visualize)
+    main() #args.visualize)
