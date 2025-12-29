@@ -24,13 +24,22 @@ from DORAnet_agent import DORAnetMCTS, Node
 from DORAnet_agent.visualize import create_enhanced_interactive_html
 RDLogger.DisableLog("rdApp.*")
 
-def main(create_interactive_visualization: bool = True, molecule_name: str = None) -> None:
+def main(
+    create_interactive_visualization: bool = True,
+    molecule_name: str = None,
+    enable_iteration_viz: bool = False,
+    iteration_interval: int = 1,
+    auto_open_iteration_viz: bool = False,
+) -> None:
     """
     Run the DORAnet MCTS agent.
 
     Args:
         create_interactive_visualization: If True, generate interactive HTML visualization.
         molecule_name: Optional name for the target molecule (used in output filenames).
+        enable_iteration_viz: If True, generate visualizations after each iteration.
+        iteration_interval: How often to generate iteration visualizations (every N iterations).
+        auto_open_iteration_viz: If True, automatically open iteration visualizations in browser.
     """
     # Example target molecule
     # target_smiles = "CCCC(C)=O"  # 3-pentanone (simple ketone)
@@ -77,10 +86,14 @@ def main(create_interactive_visualization: bool = True, molecule_name: str = Non
         retrotide_kwargs={
             "max_depth": 10,          # more PKS modules to try for exact matches
             "total_iterations": 200,  # more iterations to find exact matches
-            "maxPKSDesignsRetroTide": 50,  
+            "maxPKSDesignsRetroTide": 50,
         },
-        enable_visualization=True,  
-        visualization_output_dir=str(REPO_ROOT / "results"),  
+        enable_visualization=True,
+        enable_interactive_viz=True,  # enable interactive HTML visualizations
+        enable_iteration_visualizations=enable_iteration_viz,  # generate visualizations per iteration
+        iteration_viz_interval=iteration_interval,   # how often to generate iteration visualizations
+        auto_open_iteration_viz=auto_open_iteration_viz,  # auto-open iteration visualizations in browser
+        visualization_output_dir=str(REPO_ROOT / "results"),
     )
 
     # Run the search
@@ -191,7 +204,31 @@ if __name__ == "__main__":
         default=None,
         help="Name for the target molecule (used in output filenames). Example: --name nonanoic_acid"
     )
+    parser.add_argument(
+        "--iteration-viz",
+        action="store_true",
+        default=False,
+        help="Generate visualizations after each iteration (WARNING: creates many files!)"
+    )
+    parser.add_argument(
+        "--iteration-interval",
+        type=int,
+        default=1,
+        help="Generate iteration visualizations every N iterations (default: 1)"
+    )
+    parser.add_argument(
+        "--auto-open-iteration-viz",
+        action="store_true",
+        default=False,
+        help="Automatically open iteration visualizations in browser (WARNING: opens many tabs!)"
+    )
     args = parser.parse_args()
 
-    #main(create_interactive_visualization=args.visualize, molecule_name=args.name)
-    main(molecule_name="nonanoic_acid")
+    # Run with parsed arguments
+    main(
+        create_interactive_visualization=args.visualize,
+        molecule_name=args.name or "nonanoic acid",
+        enable_iteration_viz=args.iteration_viz,
+        iteration_interval=args.iteration_interval,
+        auto_open_iteration_viz=args.auto_open_iteration_viz,
+    )
