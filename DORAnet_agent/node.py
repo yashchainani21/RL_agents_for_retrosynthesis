@@ -50,6 +50,12 @@ class Node:
         self.selected_at_iterations: List[int] = []
         self.expanded_at_iteration: Optional[int] = None
 
+        # Sink compound flag - indicates commercially available building blocks
+        # that don't need further expansion
+        self.is_sink_compound: bool = False
+        # Type of sink compound: "biological", "chemical", or None
+        self.sink_compound_type: Optional[str] = None
+
         # identifiers for logging/visualizing the tree
         self.node_id: int = Node.node_counter
         self.parent_id: Optional[int] = parent.node_id if parent else None
@@ -71,9 +77,13 @@ class Node:
         self.visits += 1
 
     def __repr__(self) -> str:
+        if self.is_sink_compound:
+            sink_str = f", sink={self.sink_compound_type or 'True'}"
+        else:
+            sink_str = ""
         return (
             f"Node(id={self.node_id}, depth={self.depth}, "
             f"smiles={self.smiles}, provenance={self.provenance}, "
-            f"visits={self.visits}, value={self.value:.3f})"
+            f"visits={self.visits}, value={self.value:.3f}{sink_str})"
         )
 

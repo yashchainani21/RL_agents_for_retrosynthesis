@@ -208,6 +208,96 @@ def _load_pks_library(pks_file: str) -> Set[str]:
     return pks_smiles
 
 
+def _load_sink_compounds(
+    sink_file: str,
+    use_cache: bool = True,
+    show_progress: bool = True
+) -> Set[str]:
+    """
+    Load sink compound SMILES from a text file (one SMILES per line).
+
+    Sink compounds are commercially available building blocks that don't
+    need further retrosynthetic expansion.
+
+    For large files (>10k entries), this function will:
+    - Show progress during loading
+    - Cache the canonicalized SMILES to a pickle file for faster subsequent loads
+
+    Args:
+        sink_file: Path to text file with sink compound SMILES.
+        use_cache: If True, use cached canonical SMILES if available.
+        show_progress: If True, show progress for large files.
+
+    Returns:
+        Set of canonical SMILES strings for sink compounds.
+    """
+    import pickle
+    import hashlib
+
+    sink_smiles: Set[str] = set()
+    path = Path(sink_file)
+
+    if not path.exists():
+        print(f"[WARN] Sink compounds file not found: {sink_file}")
+        return sink_smiles
+
+    # Check for cached version
+    cache_dir = path.parent / ".cache"
+    # Create cache filename based on file content hash (first 1000 chars + file size)
+    with open(path, "r", encoding="utf-8") as f:
+        sample = f.read(1000)
+    file_stat = path.stat()
+    cache_key = hashlib.md5(f"{sample}{file_stat.st_size}{file_stat.st_mtime}".encode()).hexdigest()[:12]
+    cache_file = cache_dir / f"{path.stem}_{cache_key}.pkl"
+
+    if use_cache and cache_file.exists():
+        try:
+            with open(cache_file, "rb") as f:
+                sink_smiles = pickle.load(f)
+            print(f"[DORAnet] Loaded {len(sink_smiles)} sink compounds from cache ({path.name})")
+            return sink_smiles
+        except Exception as e:
+            print(f"[WARN] Could not load cache, will regenerate: {e}")
+
+    # Count lines for progress reporting
+    with open(path, "r", encoding="utf-8") as f:
+        total_lines = sum(1 for _ in f)
+
+    # Determine if we should show progress (for large files)
+    large_file = total_lines > 10000
+    progress_interval = max(total_lines // 20, 1000) if large_file else total_lines + 1
+
+    if large_file:
+        print(f"[DORAnet] Loading {total_lines:,} sink compounds from {path.name}...")
+
+    with open(path, "r", encoding="utf-8") as f:
+        for i, line in enumerate(f):
+            smiles = line.strip()
+            if smiles and not smiles.startswith("#"):
+                canonical = _canonicalize_smiles(smiles)
+                if canonical:
+                    sink_smiles.add(canonical)
+
+            # Show progress for large files
+            if show_progress and large_file and (i + 1) % progress_interval == 0:
+                pct = (i + 1) / total_lines * 100
+                print(f"[DORAnet]   Progress: {i + 1:,}/{total_lines:,} ({pct:.0f}%)")
+
+    print(f"[DORAnet] Loaded {len(sink_smiles):,} sink compounds from {path.name}")
+
+    # Cache the result for large files
+    if use_cache and large_file:
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            with open(cache_file, "wb") as f:
+                pickle.dump(sink_smiles, f)
+            print(f"[DORAnet] Cached canonicalized SMILES for faster future loads")
+        except Exception as e:
+            print(f"[WARN] Could not save cache: {e}")
+
+    return sink_smiles
+
+
 class DORAnetMCTS:
     """
     Simplified MCTS driver for DORAnet retro-fragmentation.
@@ -233,6 +323,8 @@ class DORAnetMCTS:
         cofactors_file: Optional[str] = None,
         cofactors_files: Optional[List[str]] = None,
         pks_library_file: Optional[str] = None,
+        sink_compounds_file: Optional[str] = None,
+        sink_compounds_files: Optional[List[str]] = None,
         spawn_retrotide: bool = True,
         retrotide_kwargs: Optional[Dict] = None,
         enable_visualization: bool = False,
@@ -257,6 +349,10 @@ class DORAnetMCTS:
             cofactors_file: Path to CSV file with cofactor SMILES to exclude (deprecated, use cofactors_files).
             cofactors_files: List of paths to CSV files with cofactor SMILES to exclude.
             pks_library_file: Path to text file with PKS product SMILES for reward calculation.
+            sink_compounds_file: Path to text file with sink compound SMILES (deprecated, use sink_compounds_files).
+            sink_compounds_files: List of paths to text files with sink compound SMILES.
+                Sink compounds are commercially available building blocks that don't need
+                further expansion. Supports both biological and chemical building blocks.
             spawn_retrotide: Whether to spawn RetroTide searches for each fragment.
             retrotide_kwargs: Parameters passed to RetroTide MCTS agents.
             enable_visualization: Whether to automatically generate static visualizations (PNG).
@@ -329,6 +425,35 @@ class DORAnetMCTS:
         self.pks_library: Set[str] = set()
         if pks_library_file:
             self.pks_library = _load_pks_library(pks_library_file)
+
+        # Load sink compounds (commercially available building blocks)
+        # Support both single file (deprecated) and list of files
+        # Track biological vs chemical separately for reporting
+        self.sink_compounds: Set[str] = set()
+        self.biological_sink_compounds: Set[str] = set()
+        self.chemical_sink_compounds: Set[str] = set()
+
+        sink_files_to_load = []
+        if sink_compounds_file:
+            sink_files_to_load.append(sink_compounds_file)
+        if sink_compounds_files:
+            sink_files_to_load.extend(sink_compounds_files)
+
+        for sink_file_path in sink_files_to_load:
+            sink_smiles = _load_sink_compounds(sink_file_path)
+            self.sink_compounds.update(sink_smiles)
+
+            # Categorize by file name
+            file_name_lower = str(sink_file_path).lower()
+            if "biological" in file_name_lower:
+                self.biological_sink_compounds.update(sink_smiles)
+            elif "chemical" in file_name_lower:
+                self.chemical_sink_compounds.update(sink_smiles)
+
+        if sink_files_to_load:
+            print(f"[DORAnet] Total sink compounds loaded: {len(self.sink_compounds):,} "
+                  f"(biological: {len(self.biological_sink_compounds):,}, "
+                  f"chemical: {len(self.chemical_sink_compounds):,})")
 
         # Load reaction label mappings for human-readable names
         self._enzymatic_labels = _load_enzymatic_rule_labels()
@@ -503,6 +628,7 @@ class DORAnetMCTS:
         Traverse tree using UCB1 policy to find a leaf node to expand.
 
         Returns the selected leaf node, or None if no valid node found.
+        Sink compounds are skipped as they are terminal nodes.
         """
         while node.children:
             best_node: Optional[Node] = None
@@ -510,6 +636,10 @@ class DORAnetMCTS:
             log_parent_visits = math.log(max(node.visits, 1))
 
             for child in node.children:
+                # Skip sink compounds - they are terminal building blocks
+                if child.is_sink_compound:
+                    continue
+
                 if child.visits == 0:
                     # Prioritize unvisited nodes
                     score = math.inf
@@ -529,6 +659,10 @@ class DORAnetMCTS:
 
             node = best_node
 
+        # Don't return sink compounds as they can't be expanded
+        if node.is_sink_compound:
+            return None
+
         return node
 
     def _is_in_pks_library(self, smiles: str) -> bool:
@@ -537,6 +671,34 @@ class DORAnetMCTS:
             return False
         canonical = _canonicalize_smiles(smiles)
         return canonical is not None and canonical in self.pks_library
+
+    def _is_sink_compound(self, smiles: str) -> bool:
+        """Check if a SMILES string is a sink compound (commercially available building block)."""
+        if not self.sink_compounds:
+            return False
+        canonical = _canonicalize_smiles(smiles)
+        return canonical is not None and canonical in self.sink_compounds
+
+    def _get_sink_compound_type(self, smiles: str) -> Optional[str]:
+        """
+        Get the type of sink compound for a SMILES string.
+
+        Returns:
+            "biological" if in biological building blocks,
+            "chemical" if in chemical building blocks,
+            None if not a sink compound.
+        """
+        canonical = _canonicalize_smiles(smiles)
+        if canonical is None:
+            return None
+
+        # Check biological first (smaller set, likely faster)
+        if canonical in self.biological_sink_compounds:
+            return "biological"
+        if canonical in self.chemical_sink_compounds:
+            return "chemical"
+
+        return None
 
     def expand(self, node: Node) -> List[Node]:
         """
@@ -576,6 +738,17 @@ class DORAnetMCTS:
             self.nodes.append(child)
             self.edges.append((node.node_id, child.node_id))
             new_children.append(child)
+
+            # Check if this fragment is a sink compound (commercially available building block)
+            sink_type = self._get_sink_compound_type(frag_info.smiles)
+            if sink_type:
+                child.is_sink_compound = True
+                child.sink_compound_type = sink_type
+                # Mark as expanded so we don't try to expand it further
+                child.expanded = True
+                type_label = "BIOLOGICAL" if sink_type == "biological" else "CHEMICAL"
+                print(f"[DORAnet] Fragment {frag_info.smiles} is a {type_label} BUILDING BLOCK")
+                continue  # Don't spawn RetroTide for sink compounds
 
             # Only spawn RetroTide for fragments that match the PKS library
             if self.spawn_retrotide and self._is_in_pks_library(frag_info.smiles):
@@ -642,11 +815,15 @@ class DORAnetMCTS:
 
     def calculate_reward(self, node: Node) -> float:
         """
-        Calculate reward for a node based on PKS library matching.
+        Calculate reward for a node based on PKS library or sink compound matching.
 
         Returns:
-            1.0 if the fragment is in the PKS library, 0.0 otherwise.
+            1.0 if the fragment is in the PKS library or is a sink compound, 0.0 otherwise.
         """
+        # Sink compounds are valuable terminal building blocks
+        if node.is_sink_compound:
+            return 1.0
+
         if not self.pks_library:
             # No PKS library loaded, return 0 (neutral reward)
             return 0.0
@@ -740,29 +917,51 @@ class DORAnetMCTS:
                     self._generate_iteration_visualization(iteration)
 
         # Summary statistics
+        sink_count = len(self.get_sink_compounds())
         if pks_mode:
-            total_matches = sum(1 for n in self.nodes if self.calculate_reward(n) > 0)
+            # Count PKS matches (excluding sink compounds since they're counted separately)
+            pks_only_matches = sum(1 for n in self.nodes
+                                    if self._is_in_pks_library(n.smiles or "") and not n.is_sink_compound)
             print(f"[DORAnet] MCTS complete. Total nodes: {len(self.nodes)}, "
-                  f"PKS matches: {total_matches}")
+                  f"PKS matches: {pks_only_matches}, Sink compounds: {sink_count}")
         else:
             print(f"[DORAnet] MCTS complete. Total nodes: {len(self.nodes)}, "
-                  f"RetroTide runs: {len(self.retrotide_runs)}")
+                  f"RetroTide runs: {len(self.retrotide_runs)}, Sink compounds: {sink_count}")
 
     def get_tree_summary(self) -> str:
         """Return a summary of the search tree."""
         lines = ["DORAnet MCTS Tree Summary:", "=" * 40]
         for node in self.nodes:
             indent = "  " * node.depth
-            pks_match = "✓PKS" if self.calculate_reward(node) > 0 else ""
+            # Indicate node type: sink compound (with type), PKS match, or neither
+            if node.is_sink_compound:
+                sink_type = node.sink_compound_type or "unknown"
+                marker = f"■SINK({sink_type})"
+            elif self._is_in_pks_library(node.smiles or ""):
+                marker = "✓PKS"
+            else:
+                marker = ""
             avg_value = f"{node.value / node.visits:.2f}" if node.visits > 0 else "N/A"
             lines.append(f"{indent}Node {node.node_id}: {node.smiles} "
                         f"(depth={node.depth}, visits={node.visits}, value={avg_value}, "
-                        f"via={node.provenance}) {pks_match}")
+                        f"via={node.provenance}) {marker}")
         return "\n".join(lines)
 
     def get_pks_matches(self) -> List[Node]:
         """Return nodes whose fragments match the PKS library."""
         return [n for n in self.nodes if self.calculate_reward(n) > 0]
+
+    def get_sink_compounds(self) -> List[Node]:
+        """Return nodes that are sink compounds (commercially available building blocks)."""
+        return [n for n in self.nodes if n.is_sink_compound]
+
+    def get_biological_sink_compounds(self) -> List[Node]:
+        """Return nodes that are biological building blocks."""
+        return [n for n in self.nodes if n.is_sink_compound and n.sink_compound_type == "biological"]
+
+    def get_chemical_sink_compounds(self) -> List[Node]:
+        """Return nodes that are chemical building blocks."""
+        return [n for n in self.nodes if n.is_sink_compound and n.sink_compound_type == "chemical"]
 
     def get_pathway_to_node(self, node: Node) -> List[Node]:
         """
@@ -988,7 +1187,8 @@ class DORAnetMCTS:
             f.write(f"Use enzymatic: {self.use_enzymatic}\n")
             f.write(f"Use synthetic: {self.use_synthetic}\n")
             f.write(f"Max children per expand: {self.max_children_per_expand}\n")
-            f.write(f"Spawn RetroTide: {self.spawn_retrotide}\n\n")
+            f.write(f"Spawn RetroTide: {self.spawn_retrotide}\n")
+            f.write(f"Sink compounds library size: {len(self.sink_compounds)}\n\n")
 
             # DORAnet tree
             f.write("DORANET SEARCH TREE\n")
@@ -1045,6 +1245,53 @@ class DORAnetMCTS:
                     f.write("\n")
             else:
                 f.write("No PKS library loaded - skipping PKS match analysis.\n\n")
+
+            # Sink compounds section
+            f.write("=" * 70 + "\n")
+            f.write("SINK COMPOUNDS (COMMERCIALLY AVAILABLE BUILDING BLOCKS)\n")
+            f.write("=" * 70 + "\n\n")
+
+            sink_nodes = self.get_sink_compounds()
+            bio_sinks = self.get_biological_sink_compounds()
+            chem_sinks = self.get_chemical_sink_compounds()
+
+            f.write(f"Sink compounds library size: {len(self.sink_compounds):,}\n")
+            f.write(f"  - Biological building blocks: {len(self.biological_sink_compounds):,}\n")
+            f.write(f"  - Chemical building blocks: {len(self.chemical_sink_compounds):,}\n\n")
+            f.write(f"Sink compounds found in tree: {len(sink_nodes)}\n")
+            f.write(f"  - Biological: {len(bio_sinks)}\n")
+            f.write(f"  - Chemical: {len(chem_sinks)}\n\n")
+
+            if bio_sinks:
+                f.write("■ BIOLOGICAL BUILDING BLOCKS DISCOVERED:\n")
+                f.write("-" * 70 + "\n")
+                for node in bio_sinks:
+                    f.write(f"  Node {node.node_id} (depth={node.depth}, {node.provenance}): {node.smiles}\n")
+                f.write("\n")
+
+            if chem_sinks:
+                f.write("■ CHEMICAL BUILDING BLOCKS DISCOVERED:\n")
+                f.write("-" * 70 + "\n")
+                for node in chem_sinks:
+                    f.write(f"  Node {node.node_id} (depth={node.depth}, {node.provenance}): {node.smiles}\n")
+                f.write("\n")
+
+            if sink_nodes:
+                # Detailed pathways for each sink compound
+                f.write("RETROSYNTHETIC PATHWAYS TO SINK COMPOUNDS:\n")
+                f.write("-" * 70 + "\n\n")
+
+                for i, node in enumerate(sink_nodes):
+                    sink_type = node.sink_compound_type or "unknown"
+                    f.write(f"PATHWAY #{i + 1}: Node {node.node_id} [{sink_type.upper()}]\n")
+                    f.write("-" * 40 + "\n")
+                    f.write(f"Sink Compound: {node.smiles}\n")
+                    f.write(f"Type: {sink_type.capitalize()} building block\n")
+                    f.write(f"Depth: {node.depth}, Provenance: {node.provenance}\n\n")
+                    f.write("Retrosynthetic Route:\n")
+                    f.write(self.format_pathway(node) + "\n\n")
+            else:
+                f.write("No sink compounds discovered in the search tree.\n\n")
 
             # RetroTide results summary
             f.write(self.get_results_summary() + "\n")
@@ -1250,7 +1497,8 @@ class DORAnetMCTS:
             from .visualize import (
                 visualize_doranet_tree,
                 visualize_pks_pathways,
-                create_enhanced_interactive_html
+                create_enhanced_interactive_html,
+                create_pathways_interactive_html
             )
 
             print("\n[DORAnet] Generating visualizations...")
@@ -1271,8 +1519,9 @@ class DORAnetMCTS:
             visualize_pks_pathways(self, output_path=str(pks_viz_path))
             print(f"[DORAnet] PKS pathways visualization saved to: {pks_viz_path}")
 
-            # Interactive HTML visualization (if enabled)
+            # Interactive HTML visualizations (if enabled)
             if self.enable_interactive_viz:
+                # Full tree interactive visualization
                 interactive_path = viz_dir / f"{base_name}_interactive.html"
                 create_enhanced_interactive_html(
                     self,
@@ -1280,6 +1529,15 @@ class DORAnetMCTS:
                     auto_open=self.auto_open_viz
                 )
                 print(f"[DORAnet] Interactive HTML saved to: {interactive_path}")
+
+                # Pathways-only interactive visualization (filtered to PKS matches and sink compounds)
+                pathways_path = viz_dir / f"{base_name}_pathways.html"
+                create_pathways_interactive_html(
+                    self,
+                    output_path=str(pathways_path),
+                    auto_open=self.auto_open_viz
+                )
+                print(f"[DORAnet] Pathways interactive HTML saved to: {pathways_path}")
 
         except ImportError as e:
             print(f"[DORAnet] Could not generate visualizations: {e}")

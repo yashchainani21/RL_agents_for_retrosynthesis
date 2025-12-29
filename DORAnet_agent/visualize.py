@@ -54,6 +54,8 @@ def create_tree_graph(agent: "DORAnetMCTS") -> nx.DiGraph:
             avg_value=avg_value,
             provenance=node.provenance or "target",
             is_pks_match=is_pks_match,
+            is_sink_compound=node.is_sink_compound,
+            sink_compound_type=node.sink_compound_type,
             expanded=node.expanded,
             created_at=node.created_at_iteration,
             expanded_at=node.expanded_at_iteration,
@@ -142,38 +144,53 @@ def visualize_doranet_tree(
     # Create figure
     fig, ax = plt.subplots(figsize=figsize)
 
-    # Prepare node colors based on PKS match and provenance
-    node_colors = []
-    node_sizes = []
-    node_edge_colors = []
+    # Separate nodes into regular nodes and sink compounds (for different shapes)
+    regular_nodes = []
+    sink_nodes = []
+
+    regular_colors = []
+    regular_sizes = []
+    regular_edge_colors = []
+
+    sink_colors = []
+    sink_sizes = []
+    sink_edge_colors = []
 
     for node_id in G.nodes:
         node_data = G.nodes[node_id]
         is_pks = node_data.get('is_pks_match', False)
+        is_sink = node_data.get('is_sink_compound', False)
         provenance = node_data.get('provenance', 'target')
         visits = node_data.get('visits', 1)
 
-        # Color based on PKS match
-        if is_pks:
-            color = '#2ecc71'  # Green for PKS match
-        elif provenance == 'enzymatic':
-            color = '#3498db'  # Blue for enzymatic
-        elif provenance == 'synthetic':
-            color = '#9b59b6'  # Purple for synthetic
-        else:
-            color = '#f39c12'  # Orange for target
-
-        node_colors.append(color)
-
         # Size based on visits (min 300, max 2000)
         size = min(300 + visits * 100, 2000)
-        node_sizes.append(size)
 
-        # Edge color: thick green border for PKS matches
-        if is_pks:
-            node_edge_colors.append('#27ae60')
+        # Determine color based on provenance (same for both sink and non-sink)
+        if is_pks and not is_sink:
+            color = '#2ecc71'  # Green for PKS match (non-sink)
+            edge_color = '#27ae60'
+        elif provenance == 'enzymatic':
+            color = '#3498db'  # Blue for enzymatic
+            edge_color = '#2c3e50'
+        elif provenance == 'synthetic':
+            color = '#9b59b6'  # Purple for synthetic
+            edge_color = '#2c3e50'
         else:
-            node_edge_colors.append('#2c3e50')
+            color = '#f39c12'  # Orange for target
+            edge_color = '#2c3e50'
+
+        if is_sink:
+            # Sink compounds are drawn as squares with provenance color
+            sink_nodes.append(node_id)
+            sink_colors.append(color)
+            sink_sizes.append(size)
+            sink_edge_colors.append(edge_color)
+        else:
+            regular_nodes.append(node_id)
+            regular_colors.append(color)
+            regular_sizes.append(size)
+            regular_edge_colors.append(edge_color)
 
     # Draw edges
     nx.draw_networkx_edges(
@@ -186,14 +203,28 @@ def visualize_doranet_tree(
         connectionstyle='arc3,rad=0.1',
     )
 
-    # Draw nodes
-    nx.draw_networkx_nodes(
-        G, pos, ax=ax,
-        node_color=node_colors,
-        node_size=node_sizes,
-        edgecolors=node_edge_colors,
-        linewidths=2,
-    )
+    # Draw regular nodes (circles)
+    if regular_nodes:
+        nx.draw_networkx_nodes(
+            G, pos, ax=ax,
+            nodelist=regular_nodes,
+            node_color=regular_colors,
+            node_size=regular_sizes,
+            edgecolors=regular_edge_colors,
+            linewidths=2,
+        )
+
+    # Draw sink compound nodes (squares)
+    if sink_nodes:
+        nx.draw_networkx_nodes(
+            G, pos, ax=ax,
+            nodelist=sink_nodes,
+            node_color=sink_colors,
+            node_size=sink_sizes,
+            edgecolors=sink_edge_colors,
+            linewidths=2,
+            node_shape='s',  # Square shape for sink compounds
+        )
 
     # Draw labels
     if show_smiles:
@@ -220,11 +251,14 @@ def visualize_doranet_tree(
         nx.draw_networkx_labels(G, pos, labels, ax=ax, font_size=8)
 
     # Add legend
+    from matplotlib.lines import Line2D
     legend_elements = [
         mpatches.Patch(facecolor='#f39c12', edgecolor='#2c3e50', label='Target'),
         mpatches.Patch(facecolor='#3498db', edgecolor='#2c3e50', label='Enzymatic'),
         mpatches.Patch(facecolor='#9b59b6', edgecolor='#2c3e50', label='Synthetic'),
         mpatches.Patch(facecolor='#2ecc71', edgecolor='#27ae60', linewidth=2, label='PKS Match ✓'),
+        Line2D([0], [0], marker='s', color='w', markerfacecolor='#7f8c8d',
+               markeredgecolor='#2c3e50', markersize=12, label='■ = Sink (Building Block)'),
     ]
     ax.legend(handles=legend_elements, loc='upper left', fontsize=10)
 
@@ -233,20 +267,23 @@ def visualize_doranet_tree(
         ax.set_title(title, fontsize=14, fontweight='bold')
     else:
         target_smiles = Chem.MolToSmiles(agent.target_molecule) if agent.target_molecule else "Unknown"
-        pks_matches = len([n for n in G.nodes if G.nodes[n].get('is_pks_match', False)])
+        pks_matches = len([n for n in G.nodes if G.nodes[n].get('is_pks_match', False) and not G.nodes[n].get('is_sink_compound', False)])
+        sink_compounds = len([n for n in G.nodes if G.nodes[n].get('is_sink_compound', False)])
         ax.set_title(
             f"DORAnet MCTS Search Tree\nTarget: {target_smiles}\n"
-            f"Total Nodes: {len(G.nodes)}, PKS Matches: {pks_matches}",
+            f"Total Nodes: {len(G.nodes)}, PKS Matches: {pks_matches}, Sink Compounds: {sink_compounds}",
             fontsize=12, fontweight='bold'
         )
 
     # Add stats box
+    sink_count = len(agent.get_sink_compounds()) if hasattr(agent, 'get_sink_compounds') else 0
     stats_text = (
         f"MCTS Statistics:\n"
         f"  Iterations: {agent.total_iterations}\n"
         f"  Max Depth: {agent.max_depth}\n"
         f"  Total Nodes: {len(agent.nodes)}\n"
         f"  PKS Library Size: {len(agent.pks_library)}\n"
+        f"  Sink Compounds: {sink_count}\n"
         f"  RetroTide Spawned: {len(agent.retrotide_results)}"
     )
     props = dict(boxstyle='round', facecolor='wheat', alpha=0.8)
@@ -434,20 +471,23 @@ def create_interactive_html(
     values_list = []
     provenance_list = []
     pks_match_list = []
+    sink_compound_list = []
 
     for n in node_ids:
         data = G.nodes[n]
         is_pks = data.get('is_pks_match', False)
+        is_sink = data.get('is_sink_compound', False)
         prov = data.get('provenance', 'target')
 
-        if is_pks:
-            colors.append('#2ecc71')
+        # Color based on provenance (same for sink and non-sink)
+        if is_pks and not is_sink:
+            colors.append('#2ecc71')  # Green for PKS match (non-sink)
         elif prov == 'enzymatic':
-            colors.append('#3498db')
+            colors.append('#3498db')  # Blue for enzymatic
         elif prov == 'synthetic':
-            colors.append('#9b59b6')
+            colors.append('#9b59b6')  # Purple for synthetic
         else:
-            colors.append('#f39c12')
+            colors.append('#f39c12')  # Orange for target
 
         visits = data.get('visits', 1)
         sizes.append(10 + visits * 3)
@@ -457,6 +497,7 @@ def create_interactive_html(
         values_list.append(f"{data.get('avg_value', 0):.3f}")
         provenance_list.append(prov)
         pks_match_list.append('Yes ✓' if is_pks else 'No')
+        sink_compound_list.append('■ Yes' if is_sink else 'No')
 
     # Create Bokeh plot
     output_file(output_path)
@@ -480,6 +521,7 @@ def create_interactive_html(
         avg_value=values_list,
         provenance=provenance_list,
         pks_match=pks_match_list,
+        sink_compound=sink_compound_list,
     ))
 
     # Draw edges
@@ -503,6 +545,7 @@ def create_interactive_html(
         ("Visits", "@visits"),
         ("Avg Value", "@avg_value"),
         ("PKS Match", "@pks_match"),
+        ("Sink Compound", "@sink_compound"),
     ])
     p.add_tools(hover)
 
@@ -570,6 +613,7 @@ def create_enhanced_interactive_html(
     y_coords = []
     colors = []
     sizes = []
+    markers = []  # For different shapes (circle vs square)
     smiles_list = []
     smiles_short_list = []
     visits_list = []
@@ -577,25 +621,31 @@ def create_enhanced_interactive_html(
     avg_values_list = []
     provenance_list = []
     pks_match_list = []
+    sink_compound_list = []
     depth_list = []
     mol_images = []
 
     for n in G.nodes:
         data = G.nodes[n]
         is_pks = data.get('is_pks_match', False)
+        is_sink = data.get('is_sink_compound', False)
         prov = data.get('provenance', 'target')
         smiles = data.get('smiles', '')
         smiles_short = data.get('smiles_short', str(n))
 
-        # Color based on type (same as static visualization)
-        if is_pks:
-            color = '#2ecc71'  # Green for PKS match
+        # Color based on provenance (same for sink and non-sink)
+        # Shape indicates sink compound status
+        if is_pks and not is_sink:
+            color = '#2ecc71'  # Green for PKS match (non-sink)
         elif prov == 'enzymatic':
             color = '#3498db'  # Blue for enzymatic
         elif prov == 'synthetic':
             color = '#9b59b6'  # Purple for synthetic
         else:
             color = '#f39c12'  # Orange for target
+
+        # Sink compounds are squares, others are circles
+        marker = 'square' if is_sink else 'circle'
 
         visits = data.get('visits', 0)
         value = data.get('value', 0.0)
@@ -610,6 +660,7 @@ def create_enhanced_interactive_html(
         y_coords.append(pos[n][1])
         colors.append(color)
         sizes.append(min(15 + visits * 3, 50))
+        markers.append(marker)
         smiles_list.append(smiles if smiles else 'N/A')
         smiles_short_list.append(smiles_short)
         visits_list.append(visits)
@@ -617,6 +668,7 @@ def create_enhanced_interactive_html(
         avg_values_list.append(f"{avg_value:.3f}")
         provenance_list.append(prov.capitalize())
         pks_match_list.append('✓ Yes' if is_pks else '✗ No')
+        sink_compound_list.append('■ Yes' if is_sink else '✗ No')
         depth_list.append(depth)
         mol_images.append(mol_img if mol_img else "")
 
@@ -627,6 +679,7 @@ def create_enhanced_interactive_html(
         node_id=node_ids,
         color=colors,
         size=sizes,
+        marker=markers,
         smiles=smiles_list,
         smiles_short=smiles_short_list,
         visits=visits_list,
@@ -634,6 +687,7 @@ def create_enhanced_interactive_html(
         avg_value=avg_values_list,
         provenance=provenance_list,
         pks_match=pks_match_list,
+        sink_compound=sink_compound_list,
         depth=depth_list,
         mol_img=mol_images,
     ))
@@ -691,7 +745,8 @@ def create_enhanced_interactive_html(
 
     # Create Bokeh figure
     target_smiles = Chem.MolToSmiles(agent.target_molecule) if agent.target_molecule else "Unknown"
-    pks_matches = len([n for n in G.nodes if G.nodes[n].get('is_pks_match', False)])
+    pks_matches = len([n for n in G.nodes if G.nodes[n].get('is_pks_match', False) and not G.nodes[n].get('is_sink_compound', False)])
+    sink_compounds = len([n for n in G.nodes if G.nodes[n].get('is_sink_compound', False)])
 
     # Use custom title if provided, otherwise use default
     plot_title = title if title else "DORAnet MCTS Interactive Search Tree"
@@ -706,7 +761,7 @@ def create_enhanced_interactive_html(
 
     # Add subtitle with target info
     p.add_layout(Title(
-        text=f"Target: {target_smiles[:100]} | Total Nodes: {len(G.nodes)} | PKS Matches: {pks_matches}",
+        text=f"Target: {target_smiles[:100]} | Total Nodes: {len(G.nodes)} | PKS Matches: {pks_matches} | Sink Compounds: {sink_compounds}",
         text_font_size="11pt",
         text_font_style="italic"
     ), 'above')
@@ -754,6 +809,7 @@ def create_enhanced_interactive_html(
             <b style="color: #2c3e50;">Depth:</b> @depth<br>
             <b style="color: #2c3e50;">Provenance:</b> <span style="color: @color; font-weight: bold;">@provenance</span><br>
             <b style="color: #2c3e50;">PKS Match:</b> @pks_match<br>
+            <b style="color: #00bcd4;">Sink Compound:</b> @sink_compound<br>
             <b style="color: #2c3e50;">Visits:</b> @visits<br>
             <b style="color: #2c3e50;">Avg Value:</b> @avg_value<br>
             <b style="color: #2c3e50;">SMILES:</b><br>
@@ -807,3 +863,354 @@ def create_enhanced_interactive_html(
         abs_path = Path(output_path).resolve()
         webbrowser.open(f"file://{abs_path}")
         print(f"[Visualization] Opening visualization in your default browser...")
+
+
+def create_pathways_interactive_html(
+    agent: "DORAnetMCTS",
+    output_path: str,
+    molecule_img_size: Tuple[int, int] = (250, 250),
+    auto_open: bool = False,
+    title: Optional[str] = None,
+) -> None:
+    """
+    Create an interactive HTML visualization showing ONLY pathways to PKS matches and sink compounds.
+
+    This filtered view helps focus on successful retrosynthetic routes by excluding
+    nodes that did not lead to any valuable building blocks.
+
+    Features:
+    - Shows only nodes that are PKS matches, sink compounds, or ancestors of these
+    - Same hover functionality as the full tree visualization
+    - Cleaner view of successful pathways
+
+    Args:
+        agent: The DORAnetMCTS agent after running.
+        output_path: Path to save the HTML file.
+        molecule_img_size: Size of molecule images in pixels (width, height).
+        auto_open: If True, automatically open the HTML file in the default browser.
+        title: Custom title for the plot. If None, uses default title.
+    """
+    try:
+        from bokeh.plotting import figure, save, output_file
+        from bokeh.models import HoverTool, ColumnDataSource, LabelSet
+        from bokeh.layouts import column
+        from bokeh.models.annotations import Title
+    except ImportError:
+        print("[Visualization] Bokeh not installed. Install with: pip install bokeh")
+        return
+
+    from rdkit import Chem
+
+    print("[Visualization] Generating pathways-only interactive visualization...")
+
+    # First, identify all terminal nodes (PKS matches and sink compounds)
+    terminal_nodes = set()
+    for node in agent.nodes:
+        is_pks = agent._is_in_pks_library(node.smiles or "")
+        is_sink = node.is_sink_compound
+        if is_pks or is_sink:
+            terminal_nodes.add(node.node_id)
+
+    if not terminal_nodes:
+        print("[Visualization] No PKS matches or sink compounds found. Skipping pathways visualization.")
+        return
+
+    # Trace back from each terminal node to find all nodes in pathways
+    nodes_in_pathways = set()
+    for node in agent.nodes:
+        if node.node_id in terminal_nodes:
+            # Trace back to root
+            current = node
+            while current is not None:
+                nodes_in_pathways.add(current.node_id)
+                current = current.parent
+
+    print(f"[Visualization] Found {len(terminal_nodes)} terminal nodes (PKS/sink), "
+          f"{len(nodes_in_pathways)} nodes in pathways")
+
+    # Create filtered graph
+    G = create_tree_graph(agent)
+
+    # Filter to only include nodes in pathways
+    nodes_to_keep = nodes_in_pathways
+    G_filtered = G.subgraph(nodes_to_keep).copy()
+
+    if len(G_filtered.nodes) == 0:
+        print("[Visualization] No nodes to visualize after filtering.")
+        return
+
+    pos = get_hierarchical_pos(G_filtered, root=0)
+
+    # Prepare node data with molecule images
+    print("[Visualization] Creating molecule structure images for pathways...")
+    node_ids = []
+    x_coords = []
+    y_coords = []
+    colors = []
+    sizes = []
+    markers = []
+    smiles_list = []
+    smiles_short_list = []
+    visits_list = []
+    values_list = []
+    avg_values_list = []
+    provenance_list = []
+    pks_match_list = []
+    sink_compound_list = []
+    depth_list = []
+    mol_images = []
+
+    for n in G_filtered.nodes:
+        data = G_filtered.nodes[n]
+        is_pks = data.get('is_pks_match', False)
+        is_sink = data.get('is_sink_compound', False)
+        prov = data.get('provenance', 'target')
+        smiles = data.get('smiles', '')
+        smiles_short = data.get('smiles_short', str(n))
+
+        # Color based on provenance
+        if is_pks and not is_sink:
+            color = '#2ecc71'  # Green for PKS match (non-sink)
+        elif prov == 'enzymatic':
+            color = '#3498db'  # Blue for enzymatic
+        elif prov == 'synthetic':
+            color = '#9b59b6'  # Purple for synthetic
+        else:
+            color = '#f39c12'  # Orange for target
+
+        # Sink compounds are squares, others are circles
+        marker = 'square' if is_sink else 'circle'
+
+        visits = data.get('visits', 0)
+        value = data.get('value', 0.0)
+        avg_value = data.get('avg_value', 0.0)
+        depth = data.get('depth', 0)
+
+        # Generate molecule image
+        mol_img = _generate_molecule_image_base64(smiles, size=molecule_img_size)
+
+        node_ids.append(n)
+        x_coords.append(pos[n][0])
+        y_coords.append(pos[n][1])
+        colors.append(color)
+        sizes.append(min(15 + visits * 3, 50))
+        markers.append(marker)
+        smiles_list.append(smiles if smiles else 'N/A')
+        smiles_short_list.append(smiles_short)
+        visits_list.append(visits)
+        values_list.append(f"{value:.2f}")
+        avg_values_list.append(f"{avg_value:.3f}")
+        provenance_list.append(prov.capitalize())
+        pks_match_list.append('✓ Yes' if is_pks else '✗ No')
+        sink_compound_list.append('■ Yes' if is_sink else '✗ No')
+        depth_list.append(depth)
+        mol_images.append(mol_img if mol_img else "")
+
+    # Create node data source
+    node_source = ColumnDataSource(data=dict(
+        x=x_coords,
+        y=y_coords,
+        node_id=node_ids,
+        color=colors,
+        size=sizes,
+        marker=markers,
+        smiles=smiles_list,
+        smiles_short=smiles_short_list,
+        visits=visits_list,
+        value=values_list,
+        avg_value=avg_values_list,
+        provenance=provenance_list,
+        pks_match=pks_match_list,
+        sink_compound=sink_compound_list,
+        depth=depth_list,
+        mol_img=mol_images,
+    ))
+
+    # Prepare edge data
+    edge_x0 = []
+    edge_y0 = []
+    edge_x1 = []
+    edge_y1 = []
+    edge_reactions = []
+    edge_colors = []
+
+    for parent_id, child_id in agent.edges:
+        # Only include edges where both nodes are in the filtered set
+        if parent_id in nodes_to_keep and child_id in nodes_to_keep:
+            if parent_id in pos and child_id in pos:
+                child_node = next((n for n in agent.nodes if n.node_id == child_id), None)
+
+                if child_node:
+                    rxn_label = child_node.reaction_name or "Unknown reaction"
+                    rxn_label_short = rxn_label[:100] + "..." if len(rxn_label) > 100 else rxn_label
+                    reaction_info = rxn_label_short
+
+                    if child_node.provenance == 'enzymatic':
+                        edge_color = '#3498db'
+                    elif child_node.provenance == 'synthetic':
+                        edge_color = '#9b59b6'
+                    else:
+                        edge_color = '#95a5a6'
+                else:
+                    reaction_info = "No reaction information"
+                    edge_color = '#95a5a6'
+
+                edge_x0.append(pos[parent_id][0])
+                edge_y0.append(pos[parent_id][1])
+                edge_x1.append(pos[child_id][0])
+                edge_y1.append(pos[child_id][1])
+                edge_reactions.append(reaction_info)
+                edge_colors.append(edge_color)
+
+    edge_source = ColumnDataSource(data=dict(
+        x0=edge_x0,
+        y0=edge_y0,
+        x1=edge_x1,
+        y1=edge_y1,
+        reaction=edge_reactions,
+        color=edge_colors,
+    ))
+
+    # Create Bokeh figure
+    target_smiles = Chem.MolToSmiles(agent.target_molecule) if agent.target_molecule else "Unknown"
+    pks_matches = len([n for n in G_filtered.nodes if G_filtered.nodes[n].get('is_pks_match', False) and not G_filtered.nodes[n].get('is_sink_compound', False)])
+    sink_compounds = len([n for n in G_filtered.nodes if G_filtered.nodes[n].get('is_sink_compound', False)])
+
+    plot_title = title if title else "DORAnet MCTS - Pathways to PKS Matches & Building Blocks"
+
+    p = figure(
+        title=plot_title,
+        width=1400,
+        height=900,
+        tools="pan,wheel_zoom,box_zoom,reset,save",
+        active_scroll="wheel_zoom",
+    )
+
+    # Add subtitle
+    p.add_layout(Title(
+        text=f"Target: {target_smiles[:80]} | Pathway Nodes: {len(G_filtered.nodes)} | PKS: {pks_matches} | Sink: {sink_compounds}",
+        text_font_size="11pt",
+        text_font_style="italic"
+    ), 'above')
+
+    # Draw edges
+    edge_lines = p.segment(
+        x0='x0', y0='y0', x1='x1', y1='y1',
+        source=edge_source,
+        color='color',
+        line_width=2.5,
+        alpha=0.7,
+    )
+
+    edge_hover = HoverTool(
+        renderers=[edge_lines],
+        tooltips=[
+            ("Reaction", "@reaction"),
+        ],
+        line_policy="interp"
+    )
+    p.add_tools(edge_hover)
+
+    # Separate nodes by marker type for drawing
+    circle_indices = [i for i, m in enumerate(markers) if m == 'circle']
+    square_indices = [i for i, m in enumerate(markers) if m == 'square']
+
+    # Create separate data sources for circles and squares
+    if circle_indices:
+        circle_source = ColumnDataSource(data={
+            key: [values[i] for i in circle_indices]
+            for key, values in node_source.data.items()
+        })
+        node_circles = p.scatter(
+            'x', 'y',
+            source=circle_source,
+            size='size',
+            fill_color='color',
+            line_color='#2c3e50',
+            line_width=2,
+            alpha=0.9,
+            marker='circle'
+        )
+
+    if square_indices:
+        square_source = ColumnDataSource(data={
+            key: [values[i] for i in square_indices]
+            for key, values in node_source.data.items()
+        })
+        node_squares = p.scatter(
+            'x', 'y',
+            source=square_source,
+            size='size',
+            fill_color='color',
+            line_color='#2c3e50',
+            line_width=2,
+            alpha=0.9,
+            marker='square'
+        )
+
+    # Node hover tool
+    node_hover_html = """
+    <div style="width: 320px; background-color: white; border: 2px solid #2c3e50; border-radius: 8px; padding: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+        <div style="text-align: center; margin-bottom: 10px;">
+            <img src="@mol_img" style="max-width: 250px; max-height: 250px; border: 1px solid #ddd; border-radius: 4px;">
+        </div>
+        <div style="font-family: monospace; font-size: 12px;">
+            <b style="color: #2c3e50;">Node ID:</b> @node_id<br>
+            <b style="color: #2c3e50;">Depth:</b> @depth<br>
+            <b style="color: #2c3e50;">Provenance:</b> <span style="color: @color; font-weight: bold;">@provenance</span><br>
+            <b style="color: #2c3e50;">PKS Match:</b> @pks_match<br>
+            <b style="color: #2c3e50;">Sink Compound:</b> @sink_compound<br>
+            <b style="color: #2c3e50;">Visits:</b> @visits<br>
+            <b style="color: #2c3e50;">Avg Value:</b> @avg_value<br>
+            <b style="color: #2c3e50;">SMILES:</b><br>
+            <span style="font-size: 10px; word-break: break-all;">@smiles</span>
+        </div>
+    </div>
+    """
+
+    renderers_to_hover = []
+    if circle_indices:
+        renderers_to_hover.append(node_circles)
+    if square_indices:
+        renderers_to_hover.append(node_squares)
+
+    if renderers_to_hover:
+        node_hover = HoverTool(
+            renderers=renderers_to_hover,
+            tooltips=node_hover_html,
+            point_policy="follow_mouse"
+        )
+        p.add_tools(node_hover)
+
+    # Add node ID labels
+    labels = LabelSet(
+        x='x', y='y',
+        text='node_id',
+        source=node_source,
+        text_font_size='9pt',
+        text_align='center',
+        text_baseline='middle',
+        text_color='black'
+    )
+    p.add_layout(labels)
+
+    # Style the plot
+    p.axis.visible = False
+    p.grid.visible = False
+    p.background_fill_color = "#f8f9fa"
+    p.border_fill_color = "#ffffff"
+
+    # Save to HTML
+    output_file(output_path)
+    save(p)
+
+    print(f"[Visualization] Pathways interactive HTML saved to: {output_path}")
+
+    # Auto-open in browser if requested
+    if auto_open:
+        import webbrowser
+        from pathlib import Path
+
+        abs_path = Path(output_path).resolve()
+        webbrowser.open(f"file://{abs_path}")
+        print(f"[Visualization] Opening pathways visualization in your default browser...")
