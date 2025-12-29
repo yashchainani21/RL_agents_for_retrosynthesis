@@ -523,6 +523,7 @@ def create_enhanced_interactive_html(
     output_path: str,
     molecule_img_size: Tuple[int, int] = (250, 250),
     auto_open: bool = False,
+    title: Optional[str] = None,
 ) -> None:
     """
     Create an enhanced interactive HTML visualization with molecule images and reaction info.
@@ -539,6 +540,7 @@ def create_enhanced_interactive_html(
         output_path: Path to save the HTML file.
         molecule_img_size: Size of molecule images in pixels (width, height).
         auto_open: If True, automatically open the HTML file in the default browser.
+        title: Custom title for the plot. If None, uses default title.
     """
     try:
         from bokeh.plotting import figure, save, output_file
@@ -691,8 +693,11 @@ def create_enhanced_interactive_html(
     target_smiles = Chem.MolToSmiles(agent.target_molecule) if agent.target_molecule else "Unknown"
     pks_matches = len([n for n in G.nodes if G.nodes[n].get('is_pks_match', False)])
 
+    # Use custom title if provided, otherwise use default
+    plot_title = title if title else "DORAnet MCTS Interactive Search Tree"
+
     p = figure(
-        title=f"DORAnet MCTS Interactive Search Tree",
+        title=plot_title,
         width=1400,
         height=900,
         tools="pan,wheel_zoom,box_zoom,reset,save",

@@ -237,8 +237,11 @@ class DORAnetMCTS:
         retrotide_kwargs: Optional[Dict] = None,
         enable_visualization: bool = False,
         enable_interactive_viz: bool = False,
+        enable_iteration_visualizations: bool = False,
         auto_open_viz: bool = False,
+        auto_open_iteration_viz: bool = False,
         visualization_output_dir: Optional[str] = None,
+        iteration_viz_interval: int = 1,
     ) -> None:
         """
         Args:
@@ -258,8 +261,11 @@ class DORAnetMCTS:
             retrotide_kwargs: Parameters passed to RetroTide MCTS agents.
             enable_visualization: Whether to automatically generate static visualizations (PNG).
             enable_interactive_viz: Whether to generate interactive HTML visualization.
-            auto_open_viz: If True, automatically open interactive visualization in browser.
+            enable_iteration_visualizations: If True, generate visualizations after each iteration.
+            auto_open_viz: If True, automatically open final interactive visualization in browser.
+            auto_open_iteration_viz: If True, automatically open iteration visualizations in browser.
             visualization_output_dir: Directory to save visualizations (default: current directory).
+            iteration_viz_interval: Generate iteration visualizations every N iterations (default: 1).
         """
         self.root = root
         self.target_molecule = target_molecule
@@ -273,8 +279,11 @@ class DORAnetMCTS:
         self.retrotide_kwargs = retrotide_kwargs or {}
         self.enable_visualization = enable_visualization
         self.enable_interactive_viz = enable_interactive_viz
+        self.enable_iteration_visualizations = enable_iteration_visualizations
         self.auto_open_viz = auto_open_viz
+        self.auto_open_iteration_viz = auto_open_iteration_viz
         self.visualization_output_dir = visualization_output_dir or "."
+        self.iteration_viz_interval = iteration_viz_interval
 
         if spawn_retrotide and not RETROTIDE_AVAILABLE:
             print("[WARN] RetroTide not available - spawning disabled")
@@ -724,6 +733,11 @@ class DORAnetMCTS:
                 # Node already expanded, just backpropagate
                 reward = self.calculate_reward(leaf)
                 self.backpropagate(leaf, reward)
+
+            # Generate iteration visualization if enabled
+            if self.enable_iteration_visualizations:
+                if (iteration + 1) % self.iteration_viz_interval == 0:
+                    self._generate_iteration_visualization(iteration)
 
         # Summary statistics
         if pks_mode:
@@ -1272,3 +1286,61 @@ class DORAnetMCTS:
             print("[DORAnet] Install required packages: pip install networkx matplotlib bokeh")
         except Exception as e:
             print(f"[DORAnet] Error generating visualizations: {e}")
+
+    def _generate_iteration_visualization(self, iteration: int) -> None:
+        """
+        Generate tree visualizations for a specific iteration to show MCTS dynamics.
+
+        This creates iteration-specific visualizations showing the current state of
+        the tree, which nodes have been selected, and how the tree is growing.
+
+        Args:
+            iteration: The current iteration number (0-indexed).
+        """
+        if not self.visualization_output_dir:
+            return
+
+        try:
+            from .visualize import (
+                visualize_doranet_tree,
+                create_enhanced_interactive_html
+            )
+
+            # Create iterations subdirectory
+            viz_dir = Path(self.visualization_output_dir)
+            iterations_dir = viz_dir / "iterations"
+            iterations_dir.mkdir(parents=True, exist_ok=True)
+
+            # Zero-padded iteration number for proper sorting
+            iter_str = f"{iteration:05d}"
+
+            # Generate static tree visualization
+            tree_viz_path = iterations_dir / f"iteration_{iter_str}_tree.png"
+            visualize_doranet_tree(
+                self,
+                output_path=str(tree_viz_path),
+                title=f"DORAnet Tree - Iteration {iteration + 1}/{self.total_iterations}"
+            )
+
+            # Generate interactive HTML visualization if enabled
+            if self.enable_interactive_viz:
+                interactive_path = iterations_dir / f"iteration_{iter_str}_interactive.html"
+                create_enhanced_interactive_html(
+                    self,
+                    output_path=str(interactive_path),
+                    auto_open=self.auto_open_iteration_viz,  # Auto-open iteration visualizations
+                    title=f"DORAnet Tree - Iteration {iteration + 1}/{self.total_iterations}"
+                )
+
+            # Print status every 10 iterations or at specified intervals
+            if (iteration + 1) % max(10, self.iteration_viz_interval) == 0:
+                print(f"[DORAnet] Generated iteration {iteration + 1} visualizations")
+
+        except ImportError as e:
+            # Only print warning once
+            if not hasattr(self, '_viz_warning_shown'):
+                print(f"[DORAnet] Could not generate iteration visualizations: {e}")
+                print("[DORAnet] Install required packages: pip install networkx matplotlib bokeh")
+                self._viz_warning_shown = True
+        except Exception as e:
+            print(f"[DORAnet] Error generating iteration {iteration} visualization: {e}")
