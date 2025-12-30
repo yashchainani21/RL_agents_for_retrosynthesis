@@ -472,6 +472,7 @@ def create_interactive_html(
     provenance_list = []
     pks_match_list = []
     sink_compound_list = []
+    sink_type_list = []
 
     for n in node_ids:
         data = G.nodes[n]
@@ -498,6 +499,7 @@ def create_interactive_html(
         provenance_list.append(prov)
         pks_match_list.append('Yes ✓' if is_pks else 'No')
         sink_compound_list.append('■ Yes' if is_sink else 'No')
+        sink_type_list.append(data.get('sink_compound_type', None) or 'N/A')
 
     # Create Bokeh plot
     output_file(output_path)
@@ -522,6 +524,7 @@ def create_interactive_html(
         provenance=provenance_list,
         pks_match=pks_match_list,
         sink_compound=sink_compound_list,
+        sink_compound_type=sink_type_list,
     ))
 
     # Draw edges
@@ -546,6 +549,7 @@ def create_interactive_html(
         ("Avg Value", "@avg_value"),
         ("PKS Match", "@pks_match"),
         ("Sink Compound", "@sink_compound"),
+        ("Sink Type", "@sink_compound_type"),
     ])
     p.add_tools(hover)
 
@@ -622,6 +626,7 @@ def create_enhanced_interactive_html(
     provenance_list = []
     pks_match_list = []
     sink_compound_list = []
+    sink_type_list = []
     depth_list = []
     mol_images = []
 
@@ -669,6 +674,7 @@ def create_enhanced_interactive_html(
         provenance_list.append(prov.capitalize())
         pks_match_list.append('✓ Yes' if is_pks else '✗ No')
         sink_compound_list.append('■ Yes' if is_sink else '✗ No')
+        sink_type_list.append(data.get('sink_compound_type', None) or 'N/A')
         depth_list.append(depth)
         mol_images.append(mol_img if mol_img else "")
 
@@ -688,6 +694,7 @@ def create_enhanced_interactive_html(
         provenance=provenance_list,
         pks_match=pks_match_list,
         sink_compound=sink_compound_list,
+        sink_compound_type=sink_type_list,
         depth=depth_list,
         mol_img=mol_images,
     ))
@@ -810,6 +817,7 @@ def create_enhanced_interactive_html(
             <b style="color: #2c3e50;">Provenance:</b> <span style="color: @color; font-weight: bold;">@provenance</span><br>
             <b style="color: #2c3e50;">PKS Match:</b> @pks_match<br>
             <b style="color: #00bcd4;">Sink Compound:</b> @sink_compound<br>
+            <b style="color: #00bcd4;">Sink Type:</b> @sink_compound_type<br>
             <b style="color: #2c3e50;">Visits:</b> @visits<br>
             <b style="color: #2c3e50;">Avg Value:</b> @avg_value<br>
             <b style="color: #2c3e50;">SMILES:</b><br>
@@ -957,6 +965,7 @@ def create_pathways_interactive_html(
     provenance_list = []
     pks_match_list = []
     sink_compound_list = []
+    sink_type_list = []
     depth_list = []
     mol_images = []
 
@@ -1003,6 +1012,7 @@ def create_pathways_interactive_html(
         provenance_list.append(prov.capitalize())
         pks_match_list.append('✓ Yes' if is_pks else '✗ No')
         sink_compound_list.append('■ Yes' if is_sink else '✗ No')
+        sink_type_list.append(data.get('sink_compound_type', None) or 'N/A')
         depth_list.append(depth)
         mol_images.append(mol_img if mol_img else "")
 
@@ -1022,6 +1032,7 @@ def create_pathways_interactive_html(
         provenance=provenance_list,
         pks_match=pks_match_list,
         sink_compound=sink_compound_list,
+        sink_compound_type=sink_type_list,
         depth=depth_list,
         mol_img=mol_images,
     ))
@@ -1160,6 +1171,7 @@ def create_pathways_interactive_html(
             <b style="color: #2c3e50;">Provenance:</b> <span style="color: @color; font-weight: bold;">@provenance</span><br>
             <b style="color: #2c3e50;">PKS Match:</b> @pks_match<br>
             <b style="color: #2c3e50;">Sink Compound:</b> @sink_compound<br>
+            <b style="color: #2c3e50;">Sink Type:</b> @sink_compound_type<br>
             <b style="color: #2c3e50;">Visits:</b> @visits<br>
             <b style="color: #2c3e50;">Avg Value:</b> @avg_value<br>
             <b style="color: #2c3e50;">SMILES:</b><br>
