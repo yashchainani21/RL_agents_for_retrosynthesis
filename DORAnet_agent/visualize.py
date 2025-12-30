@@ -706,6 +706,7 @@ def create_enhanced_interactive_html(
     edge_x1 = []
     edge_y1 = []
     edge_reactions = []
+    edge_reaction_equations = []
     edge_colors = []
 
     for parent_id, child_id in agent.edges:
@@ -716,11 +717,19 @@ def create_enhanced_interactive_html(
             # Extract reaction information
             if child_node:
                 rxn_label = child_node.reaction_name or "Unknown reaction"
+                reactants = child_node.reactants_smiles or []
+                products = child_node.products_smiles or []
+                if reactants or products:
+                    rxn_equation = f"{'.'.join(reactants)}>>{'.'.join(products)}"
+                else:
+                    rxn_equation = "N/A"
 
                 # Truncate for tooltip
                 rxn_label_short = rxn_label[:100] + "..." if len(rxn_label) > 100 else rxn_label
+                rxn_equation_short = rxn_equation[:140] + "..." if len(rxn_equation) > 140 else rxn_equation
 
                 reaction_info = rxn_label_short
+                reaction_equation_info = rxn_equation_short
 
                 # Edge color based on provenance
                 if child_node.provenance == 'enzymatic':
@@ -731,6 +740,7 @@ def create_enhanced_interactive_html(
                     edge_color = '#95a5a6'
             else:
                 reaction_info = "No reaction information"
+                reaction_equation_info = "N/A"
                 edge_color = '#95a5a6'
 
             edge_x0.append(pos[parent_id][0])
@@ -738,6 +748,7 @@ def create_enhanced_interactive_html(
             edge_x1.append(pos[child_id][0])
             edge_y1.append(pos[child_id][1])
             edge_reactions.append(reaction_info)
+            edge_reaction_equations.append(reaction_equation_info)
             edge_colors.append(edge_color)
 
     # Create edge data source
@@ -747,6 +758,7 @@ def create_enhanced_interactive_html(
         x1=edge_x1,
         y1=edge_y1,
         reaction=edge_reactions,
+        reaction_equation=edge_reaction_equations,
         color=edge_colors,
     ))
 
@@ -788,6 +800,7 @@ def create_enhanced_interactive_html(
         renderers=[edge_lines],
         tooltips=[
             ("Reaction", "@reaction"),
+            ("Reaction", "@reaction_equation"),
         ],
         point_policy="follow_mouse"
     )
@@ -1043,6 +1056,7 @@ def create_pathways_interactive_html(
     edge_x1 = []
     edge_y1 = []
     edge_reactions = []
+    edge_reaction_equations = []
     edge_colors = []
 
     for parent_id, child_id in agent.edges:
@@ -1053,8 +1067,16 @@ def create_pathways_interactive_html(
 
                 if child_node:
                     rxn_label = child_node.reaction_name or "Unknown reaction"
+                    reactants = child_node.reactants_smiles or []
+                    products = child_node.products_smiles or []
+                    if reactants or products:
+                        rxn_equation = f"{'.'.join(reactants)}>>{'.'.join(products)}"
+                    else:
+                        rxn_equation = "N/A"
                     rxn_label_short = rxn_label[:100] + "..." if len(rxn_label) > 100 else rxn_label
+                    rxn_equation_short = rxn_equation[:140] + "..." if len(rxn_equation) > 140 else rxn_equation
                     reaction_info = rxn_label_short
+                    reaction_equation_info = rxn_equation_short
 
                     if child_node.provenance == 'enzymatic':
                         edge_color = '#3498db'
@@ -1064,6 +1086,7 @@ def create_pathways_interactive_html(
                         edge_color = '#95a5a6'
                 else:
                     reaction_info = "No reaction information"
+                    reaction_equation_info = "N/A"
                     edge_color = '#95a5a6'
 
                 edge_x0.append(pos[parent_id][0])
@@ -1071,6 +1094,7 @@ def create_pathways_interactive_html(
                 edge_x1.append(pos[child_id][0])
                 edge_y1.append(pos[child_id][1])
                 edge_reactions.append(reaction_info)
+                edge_reaction_equations.append(reaction_equation_info)
                 edge_colors.append(edge_color)
 
     edge_source = ColumnDataSource(data=dict(
@@ -1079,6 +1103,7 @@ def create_pathways_interactive_html(
         x1=edge_x1,
         y1=edge_y1,
         reaction=edge_reactions,
+        reaction_equation=edge_reaction_equations,
         color=edge_colors,
     ))
 
@@ -1117,6 +1142,7 @@ def create_pathways_interactive_html(
         renderers=[edge_lines],
         tooltips=[
             ("Reaction", "@reaction"),
+            ("Reaction", "@reaction_equation"),
         ],
         line_policy="interp"
     )
