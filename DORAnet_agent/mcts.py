@@ -1002,6 +1002,36 @@ class DORAnetMCTS:
 
         return "\n".join(lines)
 
+    def format_reaction_pathway(self, node: Node) -> str:
+        """
+        Format the pathway from root to node using reaction equations on edges.
+
+        Returns:
+            Multi-line string showing each reaction step as
+            "reactants>>products" plus node context.
+        """
+        pathway = self.get_pathway_to_node(node)
+        if len(pathway) <= 1:
+            return "  Target molecule (no transformations needed)"
+
+        lines = []
+        for i in range(1, len(pathway)):
+            step_node = pathway[i]
+            rxn_label = step_node.reaction_name or "Unknown reaction"
+            reactants = step_node.reactants_smiles or []
+            products = step_node.products_smiles or []
+
+            if reactants or products:
+                rxn_equation = f"{'.'.join(reactants)}>>{'.'.join(products)}"
+            else:
+                rxn_equation = "N/A"
+
+            lines.append(f"  Step {i} ({step_node.provenance}): {rxn_label}")
+            lines.append(f"           Reaction: {rxn_equation}")
+            lines.append(f"           Node: {step_node.node_id} | Fragment: {step_node.smiles}")
+
+        return "\n".join(lines)
+
     @staticmethod
     def format_pks_module(module, module_num: int) -> str:
         """
@@ -1485,6 +1515,51 @@ class DORAnetMCTS:
         # Generate visualizations if enabled
         if self.enable_visualization:
             self._generate_visualizations(output_path)
+
+    def save_finalized_pathways(self, output_path: str) -> None:
+        """
+        Save reaction-based pathways to a separate file.
+
+        This follows reactions stored on edges rather than only listing nodes.
+
+        Args:
+            output_path: Path to the output file.
+        """
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Prefer sink compounds and PKS matches as terminal nodes
+        terminal_nodes = [
+            n for n in self.nodes
+            if n.is_sink_compound or self.calculate_reward(n) > 0
+        ]
+
+        # Fallback to leaf nodes if no terminal nodes exist
+        if not terminal_nodes:
+            terminal_nodes = [n for n in self.nodes if not n.children]
+
+        with open(path, "w") as f:
+            f.write("=" * 70 + "\n")
+            f.write("FINALIZED REACTION-BASED PATHWAYS\n")
+            f.write("=" * 70 + "\n\n")
+            f.write(f"Total pathways: {len(terminal_nodes)}\n\n")
+
+            for i, node in enumerate(terminal_nodes):
+                f.write(f"PATHWAY #{i + 1}: Node {node.node_id}\n")
+                f.write("-" * 40 + "\n")
+                f.write(f"Terminal Fragment: {node.smiles}\n")
+                f.write(f"Depth: {node.depth}, Provenance: {node.provenance}\n")
+                if node.is_sink_compound:
+                    sink_type = node.sink_compound_type or "unknown"
+                    f.write(f"Sink Compound: Yes ({sink_type})\n")
+                elif self.calculate_reward(node) > 0:
+                    f.write("PKS Match: Yes\n")
+                else:
+                    f.write("Terminal: Leaf\n")
+                f.write("\nReaction Pathway:\n")
+                f.write(self.format_reaction_pathway(node) + "\n\n")
+
+        print(f"[DORAnet] Finalized pathways saved to: {path}")
 
     def _generate_visualizations(self, results_path: str) -> None:
         """
