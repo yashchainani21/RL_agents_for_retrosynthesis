@@ -1008,7 +1008,7 @@ class DORAnetMCTS:
 
         Returns:
             Multi-line string showing each reaction step as
-            "reactants>>products" plus node context.
+            "reactants>>products" plus branched product annotations.
         """
         pathway = self.get_pathway_to_node(node)
         if len(pathway) <= 1:
@@ -1029,6 +1029,19 @@ class DORAnetMCTS:
             lines.append(f"  Step {i} ({step_node.provenance}): {rxn_label}")
             lines.append(f"           Reaction: {rxn_equation}")
             lines.append(f"           Node: {step_node.node_id} | Fragment: {step_node.smiles}")
+
+            # Annotate branched products with sink compound type if available.
+            if products:
+                primary_smiles = step_node.smiles or ""
+                primary_canonical = _canonicalize_smiles(primary_smiles) or primary_smiles
+                lines.append("           Products:")
+                for prod in products:
+                    prod_canonical = _canonicalize_smiles(prod) or prod
+                    is_primary = prod_canonical == primary_canonical
+                    role = "primary" if is_primary else "branch"
+                    sink_type = self._get_sink_compound_type(prod)
+                    sink_label = f"sink={sink_type}" if sink_type else "sink=No"
+                    lines.append(f"             - {prod} [{role}, {sink_label}]")
 
         return "\n".join(lines)
 
