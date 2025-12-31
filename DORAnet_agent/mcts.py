@@ -1625,63 +1625,122 @@ class DORAnetMCTS:
                 f.write(f"Total runtime (seconds): {total_runtime_seconds:.2f}\n\n")
 
             for i, node in enumerate(terminal_nodes):
-                f.write(f"PATHWAY #{i + 1}: Node {node.node_id}\n")
-                f.write("-" * 40 + "\n")
-                f.write(f"Terminal Fragment: {node.smiles}\n")
-                f.write(f"Depth: {node.depth}, Provenance: {node.provenance}\n")
-                if node.is_sink_compound:
-                    sink_type = node.sink_compound_type or "unknown"
-                    f.write(f"Sink Compound: Yes ({sink_type})\n")
-                elif self.calculate_reward(node) > 0:
-                    f.write("PKS Match: Yes\n")
-                else:
-                    f.write("Terminal: Leaf\n")
-                f.write("\nReaction Pathway:\n")
-                f.write(self.format_reaction_pathway(node) + "\n\n")
-
-                # Attach RetroTide PKS designs if available for this node
-                if self.calculate_reward(node) > 0:
-                    results = [r for r in self.retrotide_results if r.doranet_node_id == node.node_id]
-                    if results:
-                        f.write("RetroTide PKS Designs:\n")
-                        f.write("-" * 40 + "\n")
-                        for r in results:
-                            f.write(f"Target: {r.retrotide_target_smiles}\n")
-                            f.write(f"Success: {'Yes' if r.retrotide_successful else 'No'}\n")
-                            f.write(f"Best Score: {r.retrotide_best_score:.4f}\n")
-                            f.write(f"Total Nodes: {r.retrotide_total_nodes}\n")
-
-                            agent = r.retrotide_agent
-                            if agent:
-                                succ_nodes = getattr(agent, 'successful_nodes', set())
-                                if succ_nodes:
-                                    f.write("Exact Match Designs:\n")
-                                    for j, pks_node in enumerate(list(succ_nodes)[:3]):
-                                        f.write(f"  Design #{j + 1}:\n")
-                                        if hasattr(pks_node, 'PKS_product') and pks_node.PKS_product:
-                                            f.write(f"    Product: {Chem.MolToSmiles(pks_node.PKS_product)}\n")
-                                        if hasattr(pks_node, 'PKS_design') and pks_node.PKS_design:
-                                            try:
-                                                cluster, score, _ = pks_node.PKS_design
-                                                f.write(self.format_pks_cluster(cluster, score) + "\n")
-                                            except Exception:
-                                                f.write("    (Could not extract module details)\n")
-
-                                sim_designs = getattr(agent, 'successful_simulated_designs', [])
-                                if sim_designs:
-                                    f.write("Simulated Successful Designs:\n")
-                                    for j, design in enumerate(sim_designs[:3]):
-                                        f.write(f"  Simulated Design #{j + 1}:\n")
-                                        if isinstance(design, (list, tuple)):
-                                            f.write(f"    Number of Modules: {len(design)}\n")
-                                            for k, mod in enumerate(design):
-                                                f.write(self.format_pks_module(mod, k + 1) + "\n")
-                                        else:
-                                            f.write(f"    Modules: {design}\n")
-                            f.write("\n")
+                self._write_pathway_block(f, i + 1, node)
 
         print(f"[DORAnet] Finalized pathways saved to: {path}")
 
+    def save_successful_pathways(self, output_path: str) -> None:
+        """
+        Save pathways where all products are PKS-synthesizable or sink compounds.
+
+        Args:
+            output_path: Path to the output file.
+        """
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        pks_success_smiles: Set[str] = set()
+        for r in self.retrotide_results:
+            if r.retrotide_successful:
+                smi = _canonicalize_smiles(r.doranet_node_smiles or "")
+                if smi:
+                    pks_success_smiles.add(smi)
+
+        def is_product_covered(smiles: str) -> bool:
+            if self._get_sink_compound_type(smiles):
+                return True
+            canonical = _canonicalize_smiles(smiles)
+            return canonical is not None and canonical in pks_success_smiles
+
+        # Use same terminal set as finalized pathways
+        terminal_nodes = [
+            n for n in self.nodes
+            if n.is_sink_compound or self.calculate_reward(n) > 0
+        ]
+        if not terminal_nodes:
+            terminal_nodes = [n for n in self.nodes if not n.children]
+
+        successful_nodes: List[Node] = []
+        for node in terminal_nodes:
+            pathway = self.get_pathway_to_node(node)
+            all_covered = True
+            for step_node in pathway[1:]:
+                for prod in step_node.products_smiles or []:
+                    if not is_product_covered(prod):
+                        all_covered = False
+                        break
+                if not all_covered:
+                    break
+            if all_covered:
+                successful_nodes.append(node)
+
+        with open(path, "w") as f:
+            f.write("=" * 70 + "\n")
+            f.write("SUCCESSFUL PATHWAYS (PKS OR SINK PRODUCTS ONLY)\n")
+            f.write("=" * 70 + "\n\n")
+            f.write(f"Total pathways: {len(successful_nodes)}\n\n")
+
+            for i, node in enumerate(successful_nodes):
+                self._write_pathway_block(f, i + 1, node)
+
+        print(f"[DORAnet] Successful pathways saved to: {path}")
+
+    def _write_pathway_block(self, f, index: int, node: Node) -> None:
+        """Write a single pathway block with reaction and RetroTide details."""
+        f.write(f"PATHWAY #{index}: Node {node.node_id}\n")
+        f.write("-" * 40 + "\n")
+        f.write(f"Terminal Fragment: {node.smiles}\n")
+        f.write(f"Depth: {node.depth}, Provenance: {node.provenance}\n")
+        if node.is_sink_compound:
+            sink_type = node.sink_compound_type or "unknown"
+            f.write(f"Sink Compound: Yes ({sink_type})\n")
+        elif self.calculate_reward(node) > 0:
+            f.write("PKS Match: Yes\n")
+        else:
+            f.write("Terminal: Leaf\n")
+        f.write("\nReaction Pathway:\n")
+        f.write(self.format_reaction_pathway(node) + "\n\n")
+
+        # Attach RetroTide PKS designs if available for this node
+        if self.calculate_reward(node) > 0:
+            results = [r for r in self.retrotide_results if r.doranet_node_id == node.node_id]
+            if results:
+                f.write("RetroTide PKS Designs:\n")
+                f.write("-" * 40 + "\n")
+                for r in results:
+                    f.write(f"Target: {r.retrotide_target_smiles}\n")
+                    f.write(f"Success: {'Yes' if r.retrotide_successful else 'No'}\n")
+                    f.write(f"Best Score: {r.retrotide_best_score:.4f}\n")
+                    f.write(f"Total Nodes: {r.retrotide_total_nodes}\n")
+
+                    agent = r.retrotide_agent
+                    if agent:
+                        succ_nodes = getattr(agent, 'successful_nodes', set())
+                        if succ_nodes:
+                            f.write("Exact Match Designs:\n")
+                            for j, pks_node in enumerate(list(succ_nodes)[:3]):
+                                f.write(f"  Design #{j + 1}:\n")
+                                if hasattr(pks_node, 'PKS_product') and pks_node.PKS_product:
+                                    f.write(f"    Product: {Chem.MolToSmiles(pks_node.PKS_product)}\n")
+                                if hasattr(pks_node, 'PKS_design') and pks_node.PKS_design:
+                                    try:
+                                        cluster, score, _ = pks_node.PKS_design
+                                        f.write(self.format_pks_cluster(cluster, score) + "\n")
+                                    except Exception:
+                                        f.write("    (Could not extract module details)\n")
+
+                        sim_designs = getattr(agent, 'successful_simulated_designs', [])
+                        if sim_designs:
+                            f.write("Simulated Successful Designs:\n")
+                            for j, design in enumerate(sim_designs[:3]):
+                                f.write(f"  Simulated Design #{j + 1}:\n")
+                                if isinstance(design, (list, tuple)):
+                                    f.write(f"    Number of Modules: {len(design)}\n")
+                                    for k, mod in enumerate(design):
+                                        f.write(self.format_pks_module(mod, k + 1) + "\n")
+                                else:
+                                    f.write(f"    Modules: {design}\n")
+                    f.write("\n")
     def _generate_visualizations(self, results_path: str) -> None:
         """
         Generate tree and pathway visualizations.
