@@ -334,6 +334,7 @@ class DORAnetMCTS:
         auto_open_iteration_viz: bool = False,
         visualization_output_dir: Optional[str] = None,
         iteration_viz_interval: int = 1,
+        fragment_cache_dir: Optional[str] = None,
     ) -> None:
         """
         Args:
@@ -380,6 +381,10 @@ class DORAnetMCTS:
         self.auto_open_iteration_viz = auto_open_iteration_viz
         self.visualization_output_dir = visualization_output_dir or "."
         self.iteration_viz_interval = iteration_viz_interval
+        if fragment_cache_dir:
+            self.fragment_cache_dir = Path(fragment_cache_dir)
+        else:
+            self.fragment_cache_dir = Path(self.visualization_output_dir) / ".cache" / "doranet_fragments"
 
         if spawn_retrotide and not RETROTIDE_AVAILABLE:
             print("[WARN] RetroTide not available - spawning disabled")
@@ -493,8 +498,46 @@ class DORAnetMCTS:
         if molecule is None:
             return []
 
+        import hashlib
+        import pickle
+
         starter_smiles = Chem.MolToSmiles(molecule)
         job_name = f"doranet_{mode}_retro_{uuid.uuid4().hex[:8]}"
+
+        # Cache key based on input, mode, and key generation settings.
+        excluded_hash = hashlib.md5(
+            "\n".join(sorted(self.excluded_fragments)).encode()
+        ).hexdigest()[:12]
+        helpers_hash = hashlib.md5(
+            "\n".join(sorted(self.chemistry_helpers)).encode()
+        ).hexdigest()[:12]
+        cache_key = hashlib.md5(
+            f"{starter_smiles}|{mode}|gen={self.generations_per_expand}"
+            f"|max_children={self.max_children_per_expand}"
+            f"|excluded={excluded_hash}|helpers={helpers_hash}".encode()
+        ).hexdigest()[:16]
+        cache_file = self.fragment_cache_dir / f"{cache_key}.pkl"
+
+        if cache_file.exists():
+            try:
+                with open(cache_file, "rb") as f:
+                    cached = pickle.load(f)
+                fragments: List[DORAnetMCTS.FragmentInfo] = []
+                for item in cached:
+                    rd_mol = Chem.MolFromSmiles(item["smiles"])
+                    if rd_mol is None:
+                        continue
+                    fragments.append(DORAnetMCTS.FragmentInfo(
+                        molecule=rd_mol,
+                        smiles=item["smiles"],
+                        reaction_smarts=item.get("reaction_smarts"),
+                        reaction_name=item.get("reaction_name"),
+                        reactants_smiles=item.get("reactants_smiles", []),
+                        products_smiles=item.get("products_smiles", []),
+                    ))
+                return fragments
+            except Exception:
+                pass
 
         module = enzymatic if mode == "enzymatic" else synthetic
         try:
@@ -620,6 +663,23 @@ class DORAnetMCTS:
 
             if len(fragments) >= self.max_children_per_expand:
                 break
+
+        # Cache filtered fragments for future reuse.
+        try:
+            self.fragment_cache_dir.mkdir(parents=True, exist_ok=True)
+            cache_payload = []
+            for frag in fragments:
+                cache_payload.append({
+                    "smiles": frag.smiles,
+                    "reaction_smarts": frag.reaction_smarts,
+                    "reaction_name": frag.reaction_name,
+                    "reactants_smiles": frag.reactants_smiles,
+                    "products_smiles": frag.products_smiles,
+                })
+            with open(cache_file, "wb") as f:
+                pickle.dump(cache_payload, f)
+        except Exception:
+            pass
 
         return fragments
 
@@ -1529,7 +1589,7 @@ class DORAnetMCTS:
         if self.enable_visualization:
             self._generate_visualizations(output_path)
 
-    def save_finalized_pathways(self, output_path: str) -> None:
+    def save_finalized_pathways(self, output_path: str, total_runtime_seconds: Optional[float] = None) -> None:
         """
         Save reaction-based pathways to a separate file.
 
@@ -1537,6 +1597,7 @@ class DORAnetMCTS:
 
         Args:
             output_path: Path to the output file.
+            total_runtime_seconds: Optional total runtime in seconds for the run.
         """
         path = Path(output_path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1556,6 +1617,8 @@ class DORAnetMCTS:
             f.write("FINALIZED REACTION-BASED PATHWAYS\n")
             f.write("=" * 70 + "\n\n")
             f.write(f"Total pathways: {len(terminal_nodes)}\n\n")
+            if total_runtime_seconds is not None:
+                f.write(f"Total runtime (seconds): {total_runtime_seconds:.2f}\n\n")
 
             for i, node in enumerate(terminal_nodes):
                 f.write(f"PATHWAY #{i + 1}: Node {node.node_id}\n")
@@ -1571,6 +1634,47 @@ class DORAnetMCTS:
                     f.write("Terminal: Leaf\n")
                 f.write("\nReaction Pathway:\n")
                 f.write(self.format_reaction_pathway(node) + "\n\n")
+
+                # Attach RetroTide PKS designs if available for this node
+                if self.calculate_reward(node) > 0:
+                    results = [r for r in self.retrotide_results if r.doranet_node_id == node.node_id]
+                    if results:
+                        f.write("RetroTide PKS Designs:\n")
+                        f.write("-" * 40 + "\n")
+                        for r in results:
+                            f.write(f"Target: {r.retrotide_target_smiles}\n")
+                            f.write(f"Success: {'Yes' if r.retrotide_successful else 'No'}\n")
+                            f.write(f"Best Score: {r.retrotide_best_score:.4f}\n")
+                            f.write(f"Total Nodes: {r.retrotide_total_nodes}\n")
+
+                            agent = r.retrotide_agent
+                            if agent:
+                                succ_nodes = getattr(agent, 'successful_nodes', set())
+                                if succ_nodes:
+                                    f.write("Exact Match Designs:\n")
+                                    for j, pks_node in enumerate(list(succ_nodes)[:3]):
+                                        f.write(f"  Design #{j + 1}:\n")
+                                        if hasattr(pks_node, 'PKS_product') and pks_node.PKS_product:
+                                            f.write(f"    Product: {Chem.MolToSmiles(pks_node.PKS_product)}\n")
+                                        if hasattr(pks_node, 'PKS_design') and pks_node.PKS_design:
+                                            try:
+                                                cluster, score, _ = pks_node.PKS_design
+                                                f.write(self.format_pks_cluster(cluster, score) + "\n")
+                                            except Exception:
+                                                f.write("    (Could not extract module details)\n")
+
+                                sim_designs = getattr(agent, 'successful_simulated_designs', [])
+                                if sim_designs:
+                                    f.write("Simulated Successful Designs:\n")
+                                    for j, design in enumerate(sim_designs[:3]):
+                                        f.write(f"  Simulated Design #{j + 1}:\n")
+                                        if isinstance(design, (list, tuple)):
+                                            f.write(f"    Number of Modules: {len(design)}\n")
+                                            for k, mod in enumerate(design):
+                                                f.write(self.format_pks_module(mod, k + 1) + "\n")
+                                        else:
+                                            f.write(f"    Modules: {design}\n")
+                            f.write("\n")
 
         print(f"[DORAnet] Finalized pathways saved to: {path}")
 
