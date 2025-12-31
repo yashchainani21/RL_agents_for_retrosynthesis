@@ -327,6 +327,7 @@ class DORAnetMCTS:
         sink_compounds_files: Optional[List[str]] = None,
         spawn_retrotide: bool = True,
         retrotide_kwargs: Optional[Dict] = None,
+        sink_terminal_reward: float = 1.0,
         enable_visualization: bool = False,
         enable_interactive_viz: bool = False,
         enable_iteration_visualizations: bool = False,
@@ -374,6 +375,7 @@ class DORAnetMCTS:
         self.max_children_per_expand = max_children_per_expand
         self.spawn_retrotide = spawn_retrotide and RETROTIDE_AVAILABLE
         self.retrotide_kwargs = retrotide_kwargs or {}
+        self.sink_terminal_reward = sink_terminal_reward
         self.enable_visualization = enable_visualization
         self.enable_interactive_viz = enable_interactive_viz
         self.enable_iteration_visualizations = enable_iteration_visualizations
@@ -878,11 +880,13 @@ class DORAnetMCTS:
         Calculate reward for a node based on PKS library or sink compound matching.
 
         Returns:
-            1.0 if the fragment is in the PKS library or is a sink compound, 0.0 otherwise.
+            sink_terminal_reward if the fragment is a sink compound,
+            1.0 if the fragment is in the PKS library,
+            0.0 otherwise.
         """
         # Sink compounds are valuable terminal building blocks
         if node.is_sink_compound:
-            return 1.0
+            return self.sink_terminal_reward
 
         if not self.pks_library:
             # No PKS library loaded, return 0 (neutral reward)
