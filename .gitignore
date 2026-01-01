@@ -9,6 +9,7 @@ data/training
 data/testing
 data/validation
 data/raw/Building_Blocks_US.sdf
+data/raw/prohibited_chemicals.json
 data/processed/chemical_building_blocks.txt
 data/processed/biological_building_blocks.txt
 results/
