@@ -12,6 +12,7 @@ Current implementation: Selection + Expansion only (no rollout/backprop yet).
 from __future__ import annotations
 from pathlib import Path
 import sys
+import time
 from rdkit import Chem
 from rdkit import RDLogger
 
@@ -46,8 +47,9 @@ def main(
     # target_smiles = "OCCCC(=O)O"  # 4-hydroxybutyric acid (gamma-hydroxybutyric acid)
     # target_smiles = "OCCCCO"  # 1,4-butanediol
     # target_smiles = "CCCCC(=O)O"  # pentanoic acid (valeric acid)
-    target_smiles = "CCCCCCCCC(=O)O"  # nonanoic acid (known PKS product)
-    #target_smiles = "C1C=CC(=O)OC1C=CCC(CC(C=CC2=CC=CC=C2)O)O"
+    # target_smiles = "CCCCCCCCC(=O)O"  # nonanoic acid (known PKS product)
+    # target_smiles = "C1C=CC(=O)OC1C=CCC(CC(C=CC2=CC=CC=C2)O)O"
+    target_smiles = "OCCCCO"
     target_molecule = Chem.MolFromSmiles(target_smiles)
     if target_molecule is None:
         raise ValueError(f"Could not parse target SMILES: {target_smiles}")
@@ -82,12 +84,12 @@ def main(
     agent = DORAnetMCTS(
         root=root,
         target_molecule=target_molecule,
-        total_iterations=10,        # more iterations for deeper exploration
+        total_iterations=20,        # more iterations for deeper exploration
         max_depth=2,                # deeper retrosynthetic search
         use_enzymatic=True,
         use_synthetic=True,
         generations_per_expand=1,
-        max_children_per_expand=20,  # more children since only PKS matches trigger RetroTide
+        max_children_per_expand=100,  # more children since only PKS matches trigger RetroTide
         cofactors_files=[str(f) for f in cofactors_files],  # exclude cofactors and chemistry helpers
         pks_library_file=str(pks_library_file),  # use PKS library for reward
         sink_compounds_files=[str(f) for f in sink_compounds_files],  # sink compounds (building blocks) that don't need expansion
@@ -97,6 +99,7 @@ def main(
             "total_iterations": 200,  # more iterations to find exact matches
             "maxPKSDesignsRetroTide": 50,
         },
+        sink_terminal_reward=2.0,  # bias selection toward terminal sink compounds
         enable_visualization=True,
         enable_interactive_viz=True,  # enable interactive HTML visualizations
         enable_iteration_visualizations=enable_iteration_viz,  # generate visualizations per iteration
@@ -106,7 +109,9 @@ def main(
     )
 
     # Run the search
+    start_time = time.time()
     agent.run()
+    total_runtime = time.time() - start_time
 
     # Print tree summary
     print("\n" + agent.get_tree_summary())
@@ -166,6 +171,10 @@ def main(
 
     results_path = results_dir / f"doranet_results_{filename_base}_{timestamp}.txt"
     agent.save_results(str(results_path))
+    finalized_pathways_path = results_dir / f"finalized_pathways_{timestamp}.txt"
+    agent.save_finalized_pathways(str(finalized_pathways_path), total_runtime_seconds=total_runtime)
+    successful_pathways_path = results_dir / f"successful_pathways_{timestamp}.txt"
+    agent.save_successful_pathways(str(successful_pathways_path))
 
     # Print summary
     if agent.pks_library:
@@ -264,7 +273,7 @@ if __name__ == "__main__":
     # Run with parsed arguments
     main(
         create_interactive_visualization=args.visualize,
-        molecule_name=args.name or "nonanoic_acid",
+        molecule_name=args.name or "14_butanediol",
         enable_iteration_viz=args.iteration_viz,
         iteration_interval=args.iteration_interval,
         auto_open_iteration_viz=args.auto_open_iteration_viz,
