@@ -208,6 +208,38 @@ def _load_pks_library(pks_file: str) -> Set[str]:
     return pks_smiles
 
 
+def _load_prohibited_chemicals(prohibited_file: str) -> Set[str]:
+    """
+    Load prohibited chemical SMILES from a text file (one SMILES per line).
+
+    Prohibited chemicals are hazardous or controlled substances that should
+    never appear as targets or intermediates in synthesis pathways.
+
+    Args:
+        prohibited_file: Path to text file with prohibited SMILES.
+
+    Returns:
+        Set of canonical SMILES strings for prohibited chemicals.
+    """
+    prohibited_smiles: Set[str] = set()
+    path = Path(prohibited_file)
+
+    if not path.exists():
+        print(f"[WARN] Prohibited chemicals file not found: {prohibited_file}")
+        return prohibited_smiles
+
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            smiles = line.strip()
+            if smiles and not smiles.startswith("#"):
+                canonical = _canonicalize_smiles(smiles)
+                if canonical:
+                    prohibited_smiles.add(canonical)
+
+    print(f"[DORAnet] Loaded {len(prohibited_smiles)} prohibited chemicals from {path.name}")
+    return prohibited_smiles
+
+
 def _load_sink_compounds(
     sink_file: str,
     use_cache: bool = True,
@@ -325,6 +357,7 @@ class DORAnetMCTS:
         pks_library_file: Optional[str] = None,
         sink_compounds_file: Optional[str] = None,
         sink_compounds_files: Optional[List[str]] = None,
+        prohibited_chemicals_file: Optional[str] = None,
         spawn_retrotide: bool = True,
         retrotide_kwargs: Optional[Dict] = None,
         sink_terminal_reward: float = 1.0,
@@ -355,6 +388,9 @@ class DORAnetMCTS:
             sink_compounds_files: List of paths to text files with sink compound SMILES.
                 Sink compounds are commercially available building blocks that don't need
                 further expansion. Supports both biological and chemical building blocks.
+            prohibited_chemicals_file: Path to text file with prohibited chemical SMILES.
+                If the target molecule matches a prohibited chemical, a ValueError is raised.
+                Intermediate fragments matching prohibited chemicals are filtered out.
             spawn_retrotide: Whether to spawn RetroTide searches for each fragment.
             retrotide_kwargs: Parameters passed to RetroTide MCTS agents.
             enable_visualization: Whether to automatically generate static visualizations (PNG).
@@ -461,6 +497,22 @@ class DORAnetMCTS:
             print(f"[DORAnet] Total sink compounds loaded: {len(self.sink_compounds):,} "
                   f"(biological: {len(self.biological_sink_compounds):,}, "
                   f"chemical: {len(self.chemical_sink_compounds):,})")
+
+        # Load prohibited chemicals (hazardous/controlled substances to avoid)
+        self.prohibited_chemicals: Set[str] = set()
+        if prohibited_chemicals_file:
+            self.prohibited_chemicals = _load_prohibited_chemicals(prohibited_chemicals_file)
+
+            # Check if the target molecule is a prohibited chemical
+            target_smiles = Chem.MolToSmiles(target_molecule)
+            target_canonical = _canonicalize_smiles(target_smiles)
+            if target_canonical and target_canonical in self.prohibited_chemicals:
+                raise ValueError(
+                    f"Target molecule is a prohibited chemical and cannot be synthesized.\n"
+                    f"  Target SMILES: {target_smiles}\n"
+                    f"  Canonical SMILES: {target_canonical}\n"
+                    f"Please choose a different target molecule."
+                )
 
         # Load reaction label mappings for human-readable names
         self._enzymatic_labels = _load_enzymatic_rule_labels()
@@ -762,6 +814,24 @@ class DORAnetMCTS:
 
         return None
 
+    def _is_prohibited_chemical(self, smiles: str) -> bool:
+        """
+        Check if a SMILES string is a prohibited chemical.
+
+        Prohibited chemicals are hazardous or controlled substances that should
+        never appear as intermediates in synthesis pathways.
+
+        Args:
+            smiles: SMILES string to check.
+
+        Returns:
+            True if the molecule is prohibited, False otherwise.
+        """
+        if not self.prohibited_chemicals:
+            return False
+        canonical = _canonicalize_smiles(smiles)
+        return canonical is not None and canonical in self.prohibited_chemicals
+
     def expand(self, node: Node) -> List[Node]:
         """
         Expand a node by applying DORAnet retro-transformations.
@@ -786,6 +856,11 @@ class DORAnetMCTS:
         new_children: List[Node] = []
 
         for frag_info, provenance in fragment_infos:
+            # Check if this fragment is a prohibited chemical - skip it entirely
+            if self._is_prohibited_chemical(frag_info.smiles):
+                print(f"[DORAnet] Fragment {frag_info.smiles} is a PROHIBITED CHEMICAL - skipping")
+                continue
+
             # Create child node with reaction information
             child = Node(
                 fragment=frag_info.molecule,
