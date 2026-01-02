@@ -363,6 +363,8 @@ class DORAnetMCTS:
         spawn_retrotide: bool = True,
         retrotide_kwargs: Optional[Dict] = None,
         sink_terminal_reward: float = 1.0,
+        selection_policy: str = "depth_biased",
+        depth_bonus_coefficient: float = 2.0,
         enable_visualization: bool = False,
         enable_interactive_viz: bool = False,
         enable_iteration_visualizations: bool = False,
@@ -399,6 +401,14 @@ class DORAnetMCTS:
                 Default is 1.5 (fragments up to 1.5x the target MW are allowed).
             spawn_retrotide: Whether to spawn RetroTide searches for each fragment.
             retrotide_kwargs: Parameters passed to RetroTide MCTS agents.
+            selection_policy: Node selection policy for MCTS. Options:
+                - "UCB1": Standard UCB1 (breadth-first tendency, explores all nodes at each level)
+                - "depth_biased": Depth-biased UCB1 (depth-first tendency, reaches max_depth faster)
+                Default is "depth_biased" for faster deep exploration.
+            depth_bonus_coefficient: Coefficient for depth-biased selection in UCB1.
+                Higher values encourage deeper exploration before exhaustive breadth search.
+                The selection score becomes: UCB1 + depth_bonus_coefficient * depth.
+                Default is 2.0. Set to 0.0 for standard UCB1 (breadth-first tendency).
             enable_visualization: Whether to automatically generate static visualizations (PNG).
             enable_interactive_viz: Whether to generate interactive HTML visualization.
             enable_iteration_visualizations: If True, generate visualizations after each iteration.
@@ -420,11 +430,24 @@ class DORAnetMCTS:
         self.sink_terminal_reward = sink_terminal_reward
         self.MW_multiple_to_exclude = MW_multiple_to_exclude
 
+        # Selection policy configuration
+        valid_policies = ["UCB1", "depth_biased"]
+        if selection_policy not in valid_policies:
+            raise ValueError(f"Invalid selection_policy '{selection_policy}'. Must be one of: {valid_policies}")
+        self.selection_policy = selection_policy
+        self.depth_bonus_coefficient = depth_bonus_coefficient if selection_policy == "depth_biased" else 0.0
+
         # Calculate target molecule MW for fragment size filtering
         self.target_MW = Descriptors.MolWt(target_molecule)
         self.max_fragment_MW = self.target_MW * MW_multiple_to_exclude
         print(f"[DORAnet] Target MW: {self.target_MW:.2f}, Max fragment MW: {self.max_fragment_MW:.2f} "
               f"(excluding fragments > {MW_multiple_to_exclude}x target)")
+        # Log the selection policy
+        if self.selection_policy == "depth_biased":
+            print(f"[DORAnet] Selection policy: depth_biased (coefficient={self.depth_bonus_coefficient}) - "
+                  f"favoring deeper exploration")
+        else:
+            print(f"[DORAnet] Selection policy: UCB1 (standard breadth-first tendency)")
 
         self.enable_visualization = enable_visualization
         self.enable_interactive_viz = enable_interactive_viz
@@ -753,11 +776,19 @@ class DORAnetMCTS:
 
     def select(self, node: Node) -> Optional[Node]:
         """
-        Traverse tree using UCB1 policy to find a leaf node to expand.
+        Traverse tree to find a leaf node to expand using the configured selection policy.
+
+        Selection policies:
+        - "UCB1": Standard UCB1 with infinite score for unvisited nodes (breadth-first tendency)
+        - "depth_biased": UCB1 + depth_bonus_coefficient * depth (depth-first tendency)
 
         Returns the selected leaf node, or None if no valid node found.
         Sink compounds and PKS terminal nodes are skipped as they are terminal nodes.
         """
+        # Large base score for unvisited nodes in depth_biased mode
+        # (not infinite, so depth bonus can differentiate between unvisited nodes)
+        UNVISITED_BASE_SCORE = 1000.0
+
         while node.children:
             best_node: Optional[Node] = None
             best_score = -math.inf
@@ -769,13 +800,27 @@ class DORAnetMCTS:
                 if child.is_sink_compound or child.is_pks_terminal:
                     continue
 
-                if child.visits == 0:
-                    # Prioritize unvisited nodes
-                    score = math.inf
+                if self.selection_policy == "UCB1":
+                    # Standard UCB1: unvisited nodes get infinite score (pure breadth-first for unvisited)
+                    if child.visits == 0:
+                        score = math.inf
+                    else:
+                        exploit = child.value / child.visits
+                        explore = math.sqrt(2 * log_parent_visits / child.visits)
+                        score = exploit + explore
                 else:
-                    exploit = child.value / child.visits
-                    explore = math.sqrt(2 * log_parent_visits / child.visits)
-                    score = exploit + explore
+                    # Depth-biased UCB1: add depth bonus to encourage deeper exploration
+                    depth_bonus = self.depth_bonus_coefficient * child.depth
+
+                    if child.visits == 0:
+                        # Unvisited nodes get high base score + depth bonus
+                        # Deeper unvisited nodes are preferred over shallower ones
+                        score = UNVISITED_BASE_SCORE + depth_bonus
+                    else:
+                        # Standard UCB1 + depth bonus
+                        exploit = child.value / child.visits
+                        explore = math.sqrt(2 * log_parent_visits / child.visits)
+                        score = exploit + explore + depth_bonus
 
                 child.selection_score = score
 
