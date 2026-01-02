@@ -14,6 +14,7 @@ import math
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
@@ -67,12 +68,34 @@ class RetroTideResult:
     retrotide_agent: Any = field(default=None, repr=False)
 
 
+@lru_cache(maxsize=50000)
 def _canonicalize_smiles(smiles: str) -> Optional[str]:
-    """Convert SMILES to canonical form, returning None on failure."""
+    """Convert SMILES to canonical form, returning None on failure.
+
+    Results are cached using LRU cache to avoid redundant RDKit calls
+    for the same SMILES strings during the search.
+    """
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         return None
     return Chem.MolToSmiles(mol)
+
+
+def clear_smiles_cache() -> None:
+    """Clear the SMILES canonicalization cache.
+
+    Useful for freeing memory between independent runs or for benchmarking.
+    """
+    _canonicalize_smiles.cache_clear()
+
+
+def get_smiles_cache_info():
+    """Get statistics about the SMILES canonicalization cache.
+
+    Returns:
+        A named tuple with hits, misses, maxsize, and currsize fields.
+    """
+    return _canonicalize_smiles.cache_info()
 
 
 def _load_enzymatic_rule_labels() -> List[str]:
@@ -1156,6 +1179,12 @@ class DORAnetMCTS:
             print(f"[DORAnet] MCTS complete. Total nodes: {len(self.nodes)}, "
                   f"RetroTide runs: {len(self.retrotide_runs)}, "
                   f"PKS terminals: {pks_terminal_count}, Sink compounds: {sink_count}")
+
+        # Log SMILES canonicalization cache statistics
+        cache_info = _canonicalize_smiles.cache_info()
+        hit_rate = cache_info.hits / (cache_info.hits + cache_info.misses) * 100 if (cache_info.hits + cache_info.misses) > 0 else 0
+        print(f"[DORAnet] SMILES cache: {cache_info.hits} hits, {cache_info.misses} misses "
+              f"({hit_rate:.1f}% hit rate), {cache_info.currsize}/{cache_info.maxsize} cached")
 
     def get_tree_summary(self) -> str:
         """Return a summary of the search tree."""
