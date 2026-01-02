@@ -19,6 +19,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from rdkit import Chem
 from rdkit import RDLogger
+from rdkit.Chem import Descriptors
 
 import doranet.modules.enzymatic as enzymatic
 import doranet.modules.synthetic as synthetic
@@ -358,6 +359,7 @@ class DORAnetMCTS:
         sink_compounds_file: Optional[str] = None,
         sink_compounds_files: Optional[List[str]] = None,
         prohibited_chemicals_file: Optional[str] = None,
+        MW_multiple_to_exclude: float = 1.5,
         spawn_retrotide: bool = True,
         retrotide_kwargs: Optional[Dict] = None,
         sink_terminal_reward: float = 1.0,
@@ -391,6 +393,10 @@ class DORAnetMCTS:
             prohibited_chemicals_file: Path to text file with prohibited chemical SMILES.
                 If the target molecule matches a prohibited chemical, a ValueError is raised.
                 Intermediate fragments matching prohibited chemicals are filtered out.
+            MW_multiple_to_exclude: Maximum molecular weight ratio for fragments relative to target.
+                Fragments with MW > target_MW * MW_multiple_to_exclude are filtered out.
+                This prevents unrealistic dimerization products from enzymatic operators.
+                Default is 1.5 (fragments up to 1.5x the target MW are allowed).
             spawn_retrotide: Whether to spawn RetroTide searches for each fragment.
             retrotide_kwargs: Parameters passed to RetroTide MCTS agents.
             enable_visualization: Whether to automatically generate static visualizations (PNG).
@@ -412,6 +418,14 @@ class DORAnetMCTS:
         self.spawn_retrotide = spawn_retrotide and RETROTIDE_AVAILABLE
         self.retrotide_kwargs = retrotide_kwargs or {}
         self.sink_terminal_reward = sink_terminal_reward
+        self.MW_multiple_to_exclude = MW_multiple_to_exclude
+
+        # Calculate target molecule MW for fragment size filtering
+        self.target_MW = Descriptors.MolWt(target_molecule)
+        self.max_fragment_MW = self.target_MW * MW_multiple_to_exclude
+        print(f"[DORAnet] Target MW: {self.target_MW:.2f}, Max fragment MW: {self.max_fragment_MW:.2f} "
+              f"(excluding fragments > {MW_multiple_to_exclude}x target)")
+
         self.enable_visualization = enable_visualization
         self.enable_interactive_viz = enable_interactive_viz
         self.enable_iteration_visualizations = enable_iteration_visualizations
@@ -742,7 +756,7 @@ class DORAnetMCTS:
         Traverse tree using UCB1 policy to find a leaf node to expand.
 
         Returns the selected leaf node, or None if no valid node found.
-        Sink compounds are skipped as they are terminal nodes.
+        Sink compounds and PKS terminal nodes are skipped as they are terminal nodes.
         """
         while node.children:
             best_node: Optional[Node] = None
@@ -750,8 +764,9 @@ class DORAnetMCTS:
             log_parent_visits = math.log(max(node.visits, 1))
 
             for child in node.children:
-                # Skip sink compounds - they are terminal building blocks
-                if child.is_sink_compound:
+                # Skip terminal nodes - they don't need further expansion
+                # (sink compounds are commercially available, PKS terminals can be synthesized by PKS)
+                if child.is_sink_compound or child.is_pks_terminal:
                     continue
 
                 if child.visits == 0:
@@ -773,8 +788,8 @@ class DORAnetMCTS:
 
             node = best_node
 
-        # Don't return sink compounds as they can't be expanded
-        if node.is_sink_compound:
+        # Don't return terminal nodes as they can't be expanded
+        if node.is_sink_compound or node.is_pks_terminal:
             return None
 
         return node
@@ -832,6 +847,25 @@ class DORAnetMCTS:
         canonical = _canonicalize_smiles(smiles)
         return canonical is not None and canonical in self.prohibited_chemicals
 
+    def _exceeds_MW_threshold(self, molecule: Chem.Mol) -> bool:
+        """
+        Check if a molecule's MW exceeds the allowed threshold.
+
+        Fragments larger than MW_multiple_to_exclude times the target MW are
+        filtered out. This prevents unrealistic dimerization products from
+        enzymatic operators that cause molecules to grow rather than fragment.
+
+        Args:
+            molecule: RDKit Mol object to check.
+
+        Returns:
+            True if the molecule exceeds the MW threshold, False otherwise.
+        """
+        if molecule is None:
+            return True  # Filter out invalid molecules
+        fragment_MW = Descriptors.MolWt(molecule)
+        return fragment_MW > self.max_fragment_MW
+
     def expand(self, node: Node) -> List[Node]:
         """
         Expand a node by applying DORAnet retro-transformations.
@@ -861,6 +895,13 @@ class DORAnetMCTS:
                 print(f"[DORAnet] Fragment {frag_info.smiles} is a PROHIBITED CHEMICAL - skipping")
                 continue
 
+            # Check if this fragment exceeds the MW threshold (unrealistic dimerization)
+            if self._exceeds_MW_threshold(frag_info.molecule):
+                frag_MW = Descriptors.MolWt(frag_info.molecule) if frag_info.molecule else 0
+                print(f"[DORAnet] Fragment {frag_info.smiles} exceeds MW threshold "
+                      f"({frag_MW:.1f} > {self.max_fragment_MW:.1f}) - skipping")
+                continue
+
             # Create child node with reaction information
             child = Node(
                 fragment=frag_info.molecule,
@@ -887,12 +928,17 @@ class DORAnetMCTS:
                 print(f"[DORAnet] Fragment {frag_info.smiles} is a {type_label} BUILDING BLOCK")
                 continue  # Don't spawn RetroTide for sink compounds
 
-            # Only spawn RetroTide for fragments that match the PKS library
-            if self.spawn_retrotide and self._is_in_pks_library(frag_info.smiles):
-                print(f"[DORAnet] Fragment {frag_info.smiles} matches PKS library - spawning RetroTide")
-                self._launch_retrotide_agent(target=frag_info.molecule, source_node=child)
-            elif self.spawn_retrotide:
-                print(f"[DORAnet] Fragment {frag_info.smiles} not in PKS library - skipping RetroTide")
+            # Check if this fragment matches the PKS library (can be synthesized by PKS)
+            if self._is_in_pks_library(frag_info.smiles):
+                # Mark as PKS terminal - no need to expand further since we know
+                # this fragment can be synthesized by a polyketide synthase
+                child.is_pks_terminal = True
+                child.expanded = True
+                print(f"[DORAnet] Fragment {frag_info.smiles} is a PKS TERMINAL (matches PKS library)")
+
+                # Spawn RetroTide to get the actual PKS design if enabled
+                if self.spawn_retrotide:
+                    self._launch_retrotide_agent(target=frag_info.molecule, source_node=child)
 
         node.expanded = True
         return new_children
@@ -1057,25 +1103,26 @@ class DORAnetMCTS:
 
         # Summary statistics
         sink_count = len(self.get_sink_compounds())
+        pks_terminal_count = len(self.get_pks_terminal_nodes())
         if pks_mode:
-            # Count PKS matches (excluding sink compounds since they're counted separately)
-            pks_only_matches = sum(1 for n in self.nodes
-                                    if self._is_in_pks_library(n.smiles or "") and not n.is_sink_compound)
             print(f"[DORAnet] MCTS complete. Total nodes: {len(self.nodes)}, "
-                  f"PKS matches: {pks_only_matches}, Sink compounds: {sink_count}")
+                  f"PKS terminals: {pks_terminal_count}, Sink compounds: {sink_count}")
         else:
             print(f"[DORAnet] MCTS complete. Total nodes: {len(self.nodes)}, "
-                  f"RetroTide runs: {len(self.retrotide_runs)}, Sink compounds: {sink_count}")
+                  f"RetroTide runs: {len(self.retrotide_runs)}, "
+                  f"PKS terminals: {pks_terminal_count}, Sink compounds: {sink_count}")
 
     def get_tree_summary(self) -> str:
         """Return a summary of the search tree."""
         lines = ["DORAnet MCTS Tree Summary:", "=" * 40]
         for node in self.nodes:
             indent = "  " * node.depth
-            # Indicate node type: sink compound (with type), PKS match, or neither
+            # Indicate node type: sink compound (with type), PKS terminal, or neither
             if node.is_sink_compound:
                 sink_type = node.sink_compound_type or "unknown"
                 marker = f"■SINK({sink_type})"
+            elif node.is_pks_terminal:
+                marker = "✓PKS_TERMINAL"
             elif self._is_in_pks_library(node.smiles or ""):
                 marker = "✓PKS"
             else:
@@ -1101,6 +1148,10 @@ class DORAnetMCTS:
     def get_chemical_sink_compounds(self) -> List[Node]:
         """Return nodes that are chemical building blocks."""
         return [n for n in self.nodes if n.is_sink_compound and n.sink_compound_type == "chemical"]
+
+    def get_pks_terminal_nodes(self) -> List[Node]:
+        """Return nodes that are PKS terminals (can be synthesized by polyketide synthases)."""
+        return [n for n in self.nodes if n.is_pks_terminal]
 
     def get_pathway_to_node(self, node: Node) -> List[Node]:
         """

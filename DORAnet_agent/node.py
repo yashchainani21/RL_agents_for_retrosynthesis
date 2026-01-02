@@ -56,6 +56,10 @@ class Node:
         # Type of sink compound: "biological", "chemical", or None
         self.sink_compound_type: Optional[str] = None
 
+        # PKS terminal flag - indicates fragments that match the PKS library
+        # and can be synthesized by polyketide synthases (don't need further expansion)
+        self.is_pks_terminal: bool = False
+
         # identifiers for logging/visualizing the tree
         self.node_id: int = Node.node_counter
         self.parent_id: Optional[int] = parent.node_id if parent else None
@@ -77,13 +81,14 @@ class Node:
         self.visits += 1
 
     def __repr__(self) -> str:
+        terminal_str = ""
         if self.is_sink_compound:
-            sink_str = f", sink={self.sink_compound_type or 'True'}"
-        else:
-            sink_str = ""
+            terminal_str = f", sink={self.sink_compound_type or 'True'}"
+        elif self.is_pks_terminal:
+            terminal_str = ", pks_terminal=True"
         return (
             f"Node(id={self.node_id}, depth={self.depth}, "
             f"smiles={self.smiles}, provenance={self.provenance}, "
-            f"visits={self.visits}, value={self.value:.3f}{sink_str})"
+            f"visits={self.visits}, value={self.value:.3f}{terminal_str})"
         )
 
