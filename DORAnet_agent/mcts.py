@@ -203,16 +203,29 @@ def _load_cofactors_from_csv(csv_path: str) -> Set[str]:
     return cofactors
 
 
-def _load_pks_library(pks_file: str) -> Set[str]:
+def _load_pks_library(
+    pks_file: str,
+    use_cache: bool = True,
+    show_progress: bool = True
+) -> Set[str]:
     """
     Load PKS product SMILES from a text file (one SMILES per line).
 
+    For large files (>10k entries), this function will:
+    - Show progress during loading
+    - Cache the canonicalized SMILES to a pickle file for faster subsequent loads
+
     Args:
         pks_file: Path to text file with PKS SMILES.
+        use_cache: If True, use cached canonical SMILES if available.
+        show_progress: If True, show progress for large files.
 
     Returns:
         Set of canonical SMILES strings for PKS products.
     """
+    import pickle
+    import hashlib
+
     pks_smiles: Set[str] = set()
     path = Path(pks_file)
 
@@ -220,15 +233,60 @@ def _load_pks_library(pks_file: str) -> Set[str]:
         print(f"[WARN] PKS library file not found: {pks_file}")
         return pks_smiles
 
+    # Check for cached version
+    cache_dir = path.parent / ".cache"
+    # Create cache filename based on file content hash (first 1000 chars + file size + mtime)
     with open(path, "r", encoding="utf-8") as f:
-        for line in f:
+        sample = f.read(1000)
+    file_stat = path.stat()
+    cache_key = hashlib.md5(f"{sample}{file_stat.st_size}{file_stat.st_mtime}".encode()).hexdigest()[:12]
+    cache_file = cache_dir / f"{path.stem}_{cache_key}.pkl"
+
+    if use_cache and cache_file.exists():
+        try:
+            with open(cache_file, "rb") as f:
+                pks_smiles = pickle.load(f)
+            print(f"[DORAnet] Loaded {len(pks_smiles):,} PKS products from cache ({path.name})")
+            return pks_smiles
+        except Exception as e:
+            print(f"[WARN] Could not load PKS cache, will regenerate: {e}")
+
+    # Count lines for progress reporting
+    with open(path, "r", encoding="utf-8") as f:
+        total_lines = sum(1 for _ in f)
+
+    # Determine if we should show progress (for large files)
+    large_file = total_lines > 10000
+    progress_interval = max(total_lines // 20, 1000) if large_file else total_lines + 1
+
+    if large_file:
+        print(f"[DORAnet] Loading {total_lines:,} PKS products from {path.name}...")
+
+    with open(path, "r", encoding="utf-8") as f:
+        for i, line in enumerate(f):
             smiles = line.strip()
             if smiles and not smiles.startswith("#"):
                 canonical = _canonicalize_smiles(smiles)
                 if canonical:
                     pks_smiles.add(canonical)
 
-    print(f"[DORAnet] Loaded {len(pks_smiles)} PKS products from {path.name}")
+            # Show progress for large files
+            if show_progress and large_file and (i + 1) % progress_interval == 0:
+                pct = (i + 1) / total_lines * 100
+                print(f"[DORAnet]   Progress: {i + 1:,}/{total_lines:,} ({pct:.0f}%)")
+
+    print(f"[DORAnet] Loaded {len(pks_smiles):,} PKS products from {path.name}")
+
+    # Cache the result for large files
+    if use_cache and large_file:
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            with open(cache_file, "wb") as f:
+                pickle.dump(pks_smiles, f)
+            print(f"[DORAnet] Cached canonicalized PKS SMILES for faster future loads")
+        except Exception as e:
+            print(f"[WARN] Could not save PKS cache: {e}")
+
     return pks_smiles
 
 
@@ -375,6 +433,7 @@ class DORAnetMCTS:
         use_synthetic: bool = True,
         generations_per_expand: int = 1,
         max_children_per_expand: int = 10,
+        child_downselection_strategy: str = "first_N",
         excluded_fragments: Optional[Iterable[str]] = None,
         cofactors_file: Optional[str] = None,
         cofactors_files: Optional[List[str]] = None,
@@ -407,6 +466,10 @@ class DORAnetMCTS:
             use_synthetic: Whether to use synthetic retro-transformations.
             generations_per_expand: DORAnet generations per expansion step.
             max_children_per_expand: Max fragments to retain per expansion.
+            child_downselection_strategy: Strategy for selecting which fragments to keep
+                when more than max_children_per_expand are generated. Options:
+                - "first_N": Keep the first N fragments in DORAnet's order (default, fastest)
+                - "hybrid": Prioritize sink compounds first, PKS matches second, then smaller MW
             excluded_fragments: SMILES of fragments to ignore (small byproducts).
             cofactors_file: Path to CSV file with cofactor SMILES to exclude (deprecated, use cofactors_files).
             cofactors_files: List of paths to CSV files with cofactor SMILES to exclude.
@@ -448,6 +511,14 @@ class DORAnetMCTS:
         self.use_synthetic = use_synthetic
         self.generations_per_expand = generations_per_expand
         self.max_children_per_expand = max_children_per_expand
+
+        # Child downselection strategy configuration
+        valid_downselection_strategies = ["first_N", "hybrid"]
+        if child_downselection_strategy not in valid_downselection_strategies:
+            raise ValueError(f"Invalid child_downselection_strategy '{child_downselection_strategy}'. "
+                           f"Must be one of: {valid_downselection_strategies}")
+        self.child_downselection_strategy = child_downselection_strategy
+
         self.spawn_retrotide = spawn_retrotide and RETROTIDE_AVAILABLE
         self.retrotide_kwargs = retrotide_kwargs or {}
         self.sink_terminal_reward = sink_terminal_reward
@@ -471,6 +542,12 @@ class DORAnetMCTS:
                   f"favoring deeper exploration")
         else:
             print(f"[DORAnet] Selection policy: UCB1 (standard breadth-first tendency)")
+
+        # Log the child downselection strategy
+        if self.child_downselection_strategy == "hybrid":
+            print(f"[DORAnet] Child downselection: hybrid (sink > PKS > smaller MW)")
+        else:
+            print(f"[DORAnet] Child downselection: first_N (DORAnet order)")
 
         self.enable_visualization = enable_visualization
         self.enable_interactive_viz = enable_interactive_viz
@@ -775,8 +852,14 @@ class DORAnetMCTS:
             )
             fragments.append(frag_info)
 
-            if len(fragments) >= self.max_children_per_expand:
-                break
+            # For first_N strategy, stop early once we have enough fragments
+            if self.child_downselection_strategy == "first_N":
+                if len(fragments) >= self.max_children_per_expand:
+                    break
+
+        # Apply downselection strategy if we have more fragments than the limit
+        if len(fragments) > self.max_children_per_expand:
+            fragments = self._downselect_fragments(fragments)
 
         # Cache filtered fragments for future reuse.
         try:
@@ -796,6 +879,64 @@ class DORAnetMCTS:
             pass
 
         return fragments
+
+    def _downselect_fragments(
+        self, fragments: List["DORAnetMCTS.FragmentInfo"]
+    ) -> List["DORAnetMCTS.FragmentInfo"]:
+        """
+        Downselect fragments to max_children_per_expand using the configured strategy.
+
+        For "hybrid" strategy, fragments are scored and sorted by priority:
+        1. Sink compounds (highest priority) - commercially available building blocks
+        2. PKS library matches (medium priority) - known PKS-synthesizable molecules
+        3. Smaller molecular weight (base priority) - simpler precursors preferred
+
+        Args:
+            fragments: List of all valid fragments from DORAnet expansion.
+
+        Returns:
+            List of top-scoring fragments, limited to max_children_per_expand.
+        """
+        if self.child_downselection_strategy == "first_N":
+            # Simple truncation (shouldn't reach here, but just in case)
+            return fragments[:self.max_children_per_expand]
+
+        elif self.child_downselection_strategy == "hybrid":
+            # Score each fragment based on priority criteria
+            scored_fragments: List[Tuple[float, int, "DORAnetMCTS.FragmentInfo"]] = []
+
+            for idx, frag in enumerate(fragments):
+                score = 0.0
+
+                # Priority 1: Sink compounds get highest score (1000 points)
+                if self._is_sink_compound(frag.smiles):
+                    score += 1000.0
+
+                # Priority 2: PKS library matches get medium score (500 points)
+                elif self._is_in_pks_library(frag.smiles):
+                    score += 500.0
+
+                # Priority 3: Smaller MW gets higher base score
+                # Normalize MW to 0-100 range (smaller = higher score)
+                if frag.molecule is not None:
+                    frag_mw = Descriptors.MolWt(frag.molecule)
+                    # Score inversely proportional to MW, capped at target MW
+                    # Fragments at 0 MW get 100 points, fragments at target_MW get 0 points
+                    mw_score = max(0, 100 * (1 - frag_mw / max(self.target_MW, 1)))
+                    score += mw_score
+
+                # Use negative index as tiebreaker to maintain original order for equal scores
+                scored_fragments.append((score, -idx, frag))
+
+            # Sort by score descending (higher score = higher priority)
+            scored_fragments.sort(key=lambda x: (x[0], x[1]), reverse=True)
+
+            # Return top N fragments
+            return [frag for _, _, frag in scored_fragments[:self.max_children_per_expand]]
+
+        else:
+            # Unknown strategy, fall back to first_N
+            return fragments[:self.max_children_per_expand]
 
     def select(self, node: Node) -> Optional[Node]:
         """
@@ -1154,10 +1295,10 @@ class DORAnetMCTS:
                     self.backpropagate(child, reward)
 
                 if pks_mode:
-                    print(f"[DORAnet] Iteration {iteration}: expanded node {leaf.node_id}, "
+                    print(f"[DORAnet] Iteration {iteration}: expanded node {leaf.node_id} (depth={leaf.depth}), "
                           f"created {len(new_children)} children, {pks_matches} PKS matches")
                 else:
-                    print(f"[DORAnet] Iteration {iteration}: expanded node {leaf.node_id}, "
+                    print(f"[DORAnet] Iteration {iteration}: expanded node {leaf.node_id} (depth={leaf.depth}), "
                           f"created {len(new_children)} children")
             else:
                 # Node already expanded, just backpropagate
@@ -1186,8 +1327,14 @@ class DORAnetMCTS:
         print(f"[DORAnet] SMILES cache: {cache_info.hits} hits, {cache_info.misses} misses "
               f"({hit_rate:.1f}% hit rate), {cache_info.currsize}/{cache_info.maxsize} cached")
 
-    def get_tree_summary(self) -> str:
-        """Return a summary of the search tree."""
+    def get_tree_summary(self, include_iteration_info: bool = False) -> str:
+        """
+        Return a summary of the search tree.
+
+        Args:
+            include_iteration_info: If True, include detailed iteration diagnostics
+                (created_at, selected_at, expanded_at) for each node.
+        """
         lines = ["DORAnet MCTS Tree Summary:", "=" * 40]
         for node in self.nodes:
             indent = "  " * node.depth
@@ -1205,6 +1352,22 @@ class DORAnetMCTS:
             lines.append(f"{indent}Node {node.node_id}: {node.smiles} "
                         f"(depth={node.depth}, visits={node.visits}, value={avg_value}, "
                         f"via={node.provenance}) {marker}")
+
+            # Add iteration diagnostics if requested
+            if include_iteration_info:
+                created = node.created_at_iteration
+                expanded = node.expanded_at_iteration
+                selected = node.selected_at_iterations
+
+                created_str = f"created@iter={created}" if created is not None else "created@iter=0"
+                expanded_str = f"expanded@iter={expanded}" if expanded is not None else "NOT_EXPANDED"
+                if selected:
+                    selected_str = f"selected@iters=[{','.join(map(str, selected))}]"
+                else:
+                    selected_str = "NEVER_SELECTED"
+
+                lines.append(f"{indent}  └─ {created_str}, {expanded_str}, {selected_str}")
+
         return "\n".join(lines)
 
     def get_pks_matches(self) -> List[Node]:
@@ -1494,13 +1657,77 @@ class DORAnetMCTS:
             f.write(f"Use enzymatic: {self.use_enzymatic}\n")
             f.write(f"Use synthetic: {self.use_synthetic}\n")
             f.write(f"Max children per expand: {self.max_children_per_expand}\n")
+            f.write(f"Child downselection strategy: {self.child_downselection_strategy}\n")
             f.write(f"Spawn RetroTide: {self.spawn_retrotide}\n")
             f.write(f"Sink compounds library size: {len(self.sink_compounds)}\n\n")
 
-            # DORAnet tree
-            f.write("DORANET SEARCH TREE\n")
+            # DORAnet tree with iteration diagnostics
+            f.write("DORANET SEARCH TREE (with iteration diagnostics)\n")
             f.write("-" * 70 + "\n")
-            f.write(self.get_tree_summary() + "\n\n")
+            f.write(self.get_tree_summary(include_iteration_info=True) + "\n\n")
+
+            # Selection diagnostics summary
+            f.write("=" * 70 + "\n")
+            f.write("NODE SELECTION DIAGNOSTICS\n")
+            f.write("=" * 70 + "\n\n")
+
+            # Count nodes by selection status
+            never_selected = [n for n in self.nodes if not n.selected_at_iterations]
+            selected_once = [n for n in self.nodes if len(n.selected_at_iterations) == 1]
+            selected_multiple = [n for n in self.nodes if len(n.selected_at_iterations) > 1]
+            expanded_nodes = [n for n in self.nodes if n.expanded_at_iteration is not None]
+            not_expanded = [n for n in self.nodes if n.expanded_at_iteration is None and not n.is_sink_compound and not n.is_pks_terminal]
+
+            f.write("SELECTION SUMMARY:\n")
+            f.write("-" * 70 + "\n")
+            f.write(f"Total nodes: {len(self.nodes)}\n")
+            f.write(f"Nodes never selected: {len(never_selected)} ({100*len(never_selected)/max(len(self.nodes),1):.1f}%)\n")
+            f.write(f"Nodes selected once: {len(selected_once)} ({100*len(selected_once)/max(len(self.nodes),1):.1f}%)\n")
+            f.write(f"Nodes selected multiple times: {len(selected_multiple)} ({100*len(selected_multiple)/max(len(self.nodes),1):.1f}%)\n")
+            f.write(f"Nodes expanded: {len(expanded_nodes)}\n")
+            f.write(f"Nodes NOT expanded (non-terminal): {len(not_expanded)}\n\n")
+
+            # Nodes by depth that were never selected
+            f.write("NODES NEVER SELECTED (by depth):\n")
+            f.write("-" * 70 + "\n")
+            max_depth_found = max((n.depth for n in self.nodes), default=0)
+            for d in range(max_depth_found + 1):
+                nodes_at_depth = [n for n in self.nodes if n.depth == d]
+                never_sel_at_depth = [n for n in never_selected if n.depth == d]
+                f.write(f"  Depth {d}: {len(never_sel_at_depth)}/{len(nodes_at_depth)} never selected\n")
+            f.write("\n")
+
+            # Nodes that could have been expanded but weren't
+            if not_expanded:
+                f.write("NODES NOT EXPANDED (could have deeper exploration):\n")
+                f.write("-" * 70 + "\n")
+                # Group by depth
+                for d in range(max_depth_found + 1):
+                    not_exp_at_depth = [n for n in not_expanded if n.depth == d]
+                    if not_exp_at_depth:
+                        f.write(f"  Depth {d}: {len(not_exp_at_depth)} nodes not expanded\n")
+                        # Show first few examples
+                        for n in not_exp_at_depth[:5]:
+                            smiles_short = n.smiles[:40] + "..." if n.smiles and len(n.smiles) > 40 else n.smiles
+                            f.write(f"    Node {n.node_id}: {smiles_short} (visits={n.visits})\n")
+                        if len(not_exp_at_depth) > 5:
+                            f.write(f"    ... and {len(not_exp_at_depth) - 5} more\n")
+                f.write("\n")
+
+            # Most selected nodes (hotspots)
+            if selected_multiple:
+                f.write("MOST FREQUENTLY SELECTED NODES (hotspots):\n")
+                f.write("-" * 70 + "\n")
+                sorted_by_selections = sorted(selected_multiple, key=lambda n: len(n.selected_at_iterations), reverse=True)
+                for n in sorted_by_selections[:10]:
+                    smiles_short = n.smiles[:40] + "..." if n.smiles and len(n.smiles) > 40 else n.smiles
+                    f.write(f"  Node {n.node_id} (depth={n.depth}): selected {len(n.selected_at_iterations)} times\n")
+                    f.write(f"    SMILES: {smiles_short}\n")
+                    f.write(f"    Selected at iterations: {n.selected_at_iterations[:20]}")
+                    if len(n.selected_at_iterations) > 20:
+                        f.write(f"... (+{len(n.selected_at_iterations) - 20} more)")
+                    f.write("\n")
+                f.write("\n")
 
             # PKS Library match summary for all DORAnet-generated precursors
             f.write("=" * 70 + "\n")
@@ -1847,10 +2074,33 @@ class DORAnetMCTS:
                     pks_success_smiles.add(smi)
 
         def is_product_covered(smiles: str) -> bool:
+            """
+            Check if a product is 'covered' (available as a building block).
+
+            A product is covered if:
+            1. It's a sink compound (commercially available)
+            2. It's in the PKS success list (can be synthesized by PKS)
+            3. It's an excluded fragment (common small molecule like H2, H2O, CO2)
+            """
+            # Check if it's a sink compound
             if self._get_sink_compound_type(smiles):
                 return True
+
             canonical = _canonicalize_smiles(smiles)
-            return canonical is not None and canonical in pks_success_smiles
+            if canonical is None:
+                return False
+
+            # Check if it's a PKS-synthesizable molecule
+            if canonical in pks_success_smiles:
+                return True
+
+            # Check if it's an excluded fragment (common reagent/byproduct)
+            # These are small molecules like H2, H2O, CO2, formaldehyde, etc.
+            # that are readily available and don't need to be synthesized
+            if canonical in self.excluded_fragments:
+                return True
+
+            return False
 
         # Use same terminal set as finalized pathways
         terminal_nodes = [
@@ -1864,13 +2114,28 @@ class DORAnetMCTS:
         for node in terminal_nodes:
             pathway = self.get_pathway_to_node(node)
             all_covered = True
+
             for step_node in pathway[1:]:
+                # The primary product is the step_node's own fragment - it continues along the pathway
+                # Only byproducts (other products) need to be checked for coverage
+                primary_smiles = _canonicalize_smiles(step_node.smiles or "")
+
                 for prod in step_node.products_smiles or []:
+                    prod_canonical = _canonicalize_smiles(prod)
+
+                    # Skip the primary product - it continues along the pathway
+                    # and will be checked at the terminal node
+                    if prod_canonical == primary_smiles:
+                        continue
+
+                    # Check if this byproduct is covered (sink, PKS, or common reagent)
                     if not is_product_covered(prod):
                         all_covered = False
                         break
+
                 if not all_covered:
                     break
+
             if all_covered:
                 successful_nodes.append(node)
 

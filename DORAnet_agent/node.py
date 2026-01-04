@@ -80,6 +80,33 @@ class Node:
         self.value += reward
         self.visits += 1
 
+    def apply_virtual_loss(self, virtual_loss: float = 1.0) -> None:
+        """
+        Apply virtual loss to discourage parallel thread selection.
+
+        This temporarily penalizes the node's statistics to make it appear
+        less attractive to other threads during parallel MCTS. The virtual
+        loss should be removed after expansion completes.
+
+        Args:
+            virtual_loss: The penalty value to subtract from node value.
+        """
+        self.visits += 1
+        self.value -= virtual_loss
+
+    def remove_virtual_loss(self, virtual_loss: float = 1.0) -> None:
+        """
+        Remove virtual loss after expansion completes.
+
+        This restores the node's statistics by reversing the virtual loss
+        penalty, preparing the node for real reward backpropagation.
+
+        Args:
+            virtual_loss: The penalty value that was previously applied.
+        """
+        self.visits -= 1
+        self.value += virtual_loss
+
     def __repr__(self) -> str:
         terminal_str = ""
         if self.is_sink_compound:
