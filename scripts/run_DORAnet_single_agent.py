@@ -21,7 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from DORAnet_agent import DORAnetMCTS, Node
+from DORAnet_agent import DORAnetMCTS, ParallelDORAnetMCTS, Node
 from DORAnet_agent.visualize import create_enhanced_interactive_html, create_pathways_interactive_html
 RDLogger.DisableLog("rdApp.*")
 
@@ -31,7 +31,10 @@ def main(
     enable_iteration_viz: bool = False,
     iteration_interval: int = 1,
     auto_open_iteration_viz: bool = False,
-) -> None:
+    use_parallel: bool = True,
+    num_workers: int = None,  # None means "max available"
+    virtual_loss: float = 1.0,
+    child_downselection_strategy: str = "first_N") -> None:
     """
     Run the DORAnet MCTS agent.
 
@@ -40,17 +43,24 @@ def main(
         molecule_name: Optional name for the target molecule (used in output filenames).
         enable_iteration_viz: If True, generate visualizations after each iteration.
         iteration_interval: How often to generate iteration visualizations (every N iterations).
+        child_downselection_strategy: Strategy for downselecting children ("first_N" or "hybrid").
         auto_open_iteration_viz: If True, automatically open iteration visualizations in browser.
+        use_parallel: If True, use ParallelDORAnetMCTS with virtual loss for faster execution.
+        num_workers: Number of parallel worker threads (only used if use_parallel=True).
+        virtual_loss: Virtual loss penalty for parallel exploration diversity (only used if use_parallel=True).
     """
+
     # Example target molecule
     # target_smiles = "CCCC(C)=O"  # 3-pentanone (simple ketone)
     # target_smiles = "OCCCC(=O)O"  # 4-hydroxybutyric acid (gamma-hydroxybutyric acid)
     # target_smiles = "OCCCCO"  # 1,4-butanediol
     # target_smiles = "CCCCC(=O)O"  # pentanoic acid (valeric acid)
     # target_smiles = "CCCCCCCCC(=O)O"  # nonanoic acid (known PKS product)
+    target_smiles = "COC1=CC(OC(/C=C/C2=CC=CC=C2)C1)=O" # kavain
     # target_smiles = "C1C=CC(=O)OC1C=CCC(CC(C=CC2=CC=CC=C2)O)O"
-    target_smiles = "OCCCCO"
     target_molecule = Chem.MolFromSmiles(target_smiles)
+    
+    
     if target_molecule is None:
         raise ValueError(f"Could not parse target SMILES: {target_smiles}")
 
@@ -67,7 +77,7 @@ def main(
     ]
 
     # Path to PKS library file for reward calculation
-    pks_library_file = REPO_ROOT / "data" / "processed" / "PKS_smiles.txt"
+    pks_library_file = REPO_ROOT / "data" / "processed" / "expanded_PKS_smiles.txt"
 
     # Paths to sink compounds files (commercially available building blocks)
     # Both biological and chemical building blocks are loaded as sink compounds
@@ -76,30 +86,37 @@ def main(
         REPO_ROOT / "data" / "processed" / "chemical_building_blocks.txt",
     ]
 
+    # Path to prohibited chemicals file (hazardous/controlled substances to avoid)
+    prohibited_chemicals_file = REPO_ROOT / "data" / "processed" / "prohibited_chemical_SMILES.txt"
+
     # Create root node with target
     root = Node(fragment=target_molecule, parent=None, depth=0, provenance="target")
 
-    # Configure the DORAnet agent
-    # Enable RetroTide spawning to get PKS designs for PKS library matches
-    agent = DORAnetMCTS(
+    # Common configuration for both sequential and parallel agents
+    agent_kwargs = dict(
         root=root,
         target_molecule=target_molecule,
-        total_iterations=20,        # more iterations for deeper exploration
-        max_depth=2,                # deeper retrosynthetic search
+        total_iterations=200,        # more iterations for deeper exploration
+        max_depth=3,        # deeper retrosynthetic search
         use_enzymatic=True,
         use_synthetic=True,
         generations_per_expand=1,
-        max_children_per_expand=100,  # more children since only PKS matches trigger RetroTide
+        max_children_per_expand=10,  # more children since only PKS matches trigger RetroTide
+        child_downselection_strategy=child_downselection_strategy,  # "first_N" or "hybrid"
         cofactors_files=[str(f) for f in cofactors_files],  # exclude cofactors and chemistry helpers
         pks_library_file=str(pks_library_file),  # use PKS library for reward
         sink_compounds_files=[str(f) for f in sink_compounds_files],  # sink compounds (building blocks) that don't need expansion
+        prohibited_chemicals_file=str(prohibited_chemicals_file),  # hazardous chemicals to avoid
+        MW_multiple_to_exclude=1.0,
         spawn_retrotide=True,       # enable RetroTide for PKS library matches only
         retrotide_kwargs={
             "max_depth": 10,          # more PKS modules to try for exact matches
             "total_iterations": 200,  # more iterations to find exact matches
             "maxPKSDesignsRetroTide": 50,
         },
-        sink_terminal_reward=2.0,  # bias selection toward terminal sink compounds
+        sink_terminal_reward=1.0,  # bias selection toward terminal sink compounds
+        selection_policy="UCB1",  # "UCB1" for standard or "depth_biased" for depth-first
+        depth_bonus_coefficient=4.0,  # only used with depth_biased policy (higher = more depth-first)
         enable_visualization=True,
         enable_interactive_viz=True,  # enable interactive HTML visualizations
         enable_iteration_visualizations=enable_iteration_viz,  # generate visualizations per iteration
@@ -107,6 +124,19 @@ def main(
         auto_open_iteration_viz=auto_open_iteration_viz,  # auto-open iteration visualizations in browser
         visualization_output_dir=str(REPO_ROOT / "results"),
     )
+
+    # Create either parallel or sequential agent based on configuration
+    if use_parallel:
+        workers_str = "max available" if num_workers is None else str(num_workers)
+        print(f"[Runner] Using ParallelDORAnetMCTS with {workers_str} workers, virtual_loss={virtual_loss}")
+        agent = ParallelDORAnetMCTS(
+            num_workers=num_workers,
+            virtual_loss=virtual_loss,
+            **agent_kwargs,
+        )
+    else:
+        print("[Runner] Using sequential DORAnetMCTS")
+        agent = DORAnetMCTS(**agent_kwargs)
 
     # Run the search
     start_time = time.time()
@@ -268,13 +298,52 @@ if __name__ == "__main__":
         default=False,
         help="Automatically open iteration visualizations in browser (WARNING: opens many tabs!)"
     )
+    parser.add_argument(
+        "--parallel", "-p",
+        action="store_true",
+        default=False,
+        help="Use parallel MCTS with virtual loss for faster execution on multi-core systems"
+    )
+    parser.add_argument(
+        "--workers", "-w",
+        type=str,
+        default="max",
+        help="Number of parallel worker threads: integer or 'max' for all available (default: max)"
+    )
+    parser.add_argument(
+        "--virtual-loss",
+        type=float,
+        default=1.0,
+        help="Virtual loss penalty for exploration diversity (default: 1.0, only used with --parallel)"
+    )
+    parser.add_argument(
+        "--downselection",
+        type=str,
+        choices=["first_N", "hybrid"],
+        default="first_N",
+        help="Child node downselection strategy: 'first_N' (DORAnet order) or 'hybrid' (sink > PKS > smaller MW)"
+    )
     args = parser.parse_args()
+
+    # Parse num_workers: "max" -> None, otherwise convert to int
+    if args.workers.lower() == "max":
+        num_workers = None
+    else:
+        try:
+            num_workers = int(args.workers)
+        except ValueError:
+            print(f"[ERROR] Invalid --workers value: '{args.workers}'. Use 'max' or an integer.")
+            sys.exit(1)
 
     # Run with parsed arguments
     main(
         create_interactive_visualization=args.visualize,
-        molecule_name=args.name or "14_butanediol",
+        molecule_name=args.name or "cryptofolione",
         enable_iteration_viz=args.iteration_viz,
         iteration_interval=args.iteration_interval,
         auto_open_iteration_viz=args.auto_open_iteration_viz,
+        use_parallel=args.parallel,
+        num_workers=num_workers,
+        virtual_loss=args.virtual_loss,
+        child_downselection_strategy=args.downselection,
     )
