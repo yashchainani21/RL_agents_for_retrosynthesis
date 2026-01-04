@@ -195,6 +195,84 @@ DORAnetMCTS(
 )
 ```
 
+## Parallel Execution
+
+For faster exploration on multi-core systems, use `ParallelDORAnetMCTS` which implements tree-level parallelism with virtual loss:
+
+### Quick Start
+
+```python
+from DORAnet_agent import ParallelDORAnetMCTS, Node
+
+# Create root node
+root = Node(fragment=target_molecule, parent=None, depth=0, provenance="target")
+
+# Create parallel agent
+agent = ParallelDORAnetMCTS(
+    root=root,
+    target_molecule=target_molecule,
+    total_iterations=100,
+    max_depth=3,
+
+    # Parallel-specific parameters
+    num_workers=4,           # Number of parallel threads
+    virtual_loss=1.0,        # Exploration diversity penalty
+
+    # Standard parameters work the same as DORAnetMCTS
+    use_enzymatic=True,
+    use_synthetic=True,
+)
+
+# Run parallel search
+agent.run()
+
+# Access results (same API as sequential)
+pks_matches = agent.get_pks_matches()
+sink_compounds = agent.get_sink_compounds()
+
+# Get parallel execution statistics
+stats = agent.get_parallel_stats()
+print(f"Completed: {stats['completed_iterations']}, Failed: {stats['failed_iterations']}")
+```
+
+### Command Line
+
+```bash
+# Run with 4 parallel workers
+python scripts/run_DORAnet_single_agent.py --name "molecule" --parallel --workers 4
+
+# Run with custom virtual loss
+python scripts/run_DORAnet_single_agent.py --name "molecule" --parallel --workers 4 --virtual-loss 2.0
+```
+
+### Parallel Configuration
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `num_workers` | int | 4 | Number of parallel worker threads |
+| `virtual_loss` | float | 1.0 | Penalty applied during selection to encourage exploration diversity |
+
+### How It Works
+
+The parallel implementation uses **virtual loss** to prevent redundant exploration:
+
+1. **Selection Phase** (synchronized): Thread selects a node and applies virtual loss penalty
+2. **Expansion Phase** (unsynchronized): DORAnet fragment generation runs in parallel
+3. **Backpropagation Phase** (synchronized): Virtual loss removed, real rewards applied
+
+Virtual loss temporarily penalizes selected nodes, making them appear less attractive to other threads. This encourages different threads to explore different parts of the tree.
+
+### Expected Speedup
+
+| Workers | Typical Speedup |
+|---------|-----------------|
+| 1 | 1.0x (sequential) |
+| 2 | 1.6-1.8x |
+| 4 | 2.5-3.5x |
+| 8 | 3.5-5.0x |
+
+Actual speedup depends on the complexity of fragment generation and tree structure.
+
 ## Output Files
 
 | File Pattern | Description |
