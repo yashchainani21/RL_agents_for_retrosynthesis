@@ -1,0 +1,80 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rl_retrosynthesis"
+version = "0.1.0"
+description = "Multi-agent reinforcement learning system for retrosynthesis pathway design using MCTS"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Yash Chainani", email = "yashchainani2026@u.northwestern.edu"}
+]
+requires-python = ">=3.9"
+keywords = [
+    "retrosynthesis",
+    "mcts",
+    "monte-carlo-tree-search",
+    "polyketide-synthase",
+    "pks",
+    "synthetic-biology",
+    "cheminformatics",
+    "drug-discovery",
+    "pathway-design",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy>=1.20.0",
+    "pandas>=1.3.0",
+    "matplotlib>=3.4.0",
+    "networkx>=2.6.0",
+    "rdkit>=2022.03.1",
+    "plotly>=5.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=3.0.0",
+]
+doranet = [
+    "doranet",
+]
+retrotide = [
+    "retrotide",
+    "bcs",
+]
+all = [
+    "doranet",
+    "retrotide",
+    "bcs",
+    "pytest>=7.0.0",
+    "pytest-cov>=3.0.0",
+]
+
+[project.scripts]
+doranet-mcts = "scripts.run_DORAnet_single_agent:main"
+retrotide-mcts = "scripts.run_RetroTide_single_agent:main"
+
+[project.urls]
+Homepage = "https://github.com/yashchainani/RL_agents_for_retrosynthesis"
+
+[tool.setuptools.packages.find]
+exclude = ["tests", "tests.*", "notebooks", "scripts", "archives"]
+
+[tool.setuptools.package-data]
+"*" = ["*.csv", "*.txt", "*.tsv", "*.json"]
