@@ -55,9 +55,14 @@ def main(
     # target_smiles = "OCCCC(=O)O"  # 4-hydroxybutyric acid (gamma-hydroxybutyric acid)
     # target_smiles = "OCCCCO"  # 1,4-butanediol
     # target_smiles = "CCCCC(=O)O"  # pentanoic acid (valeric acid)
-    # target_smiles = "CCCCCCCCC(=O)O"  # nonanoic acid (known PKS product)
-    target_smiles = "COC1=CC(OC(/C=C/C2=CC=CC=C2)C1)=O" # kavain
-    # target_smiles = "C1C=CC(=O)OC1C=CCC(CC(C=CC2=CC=CC=C2)O)O"
+    target_smiles = "CCCCCCCCC(=O)O"  # nonanoic acid (known PKS product)
+    # target_smiles = "COC1=CC(OC(/C=C/C2=CC=CC=C2)C1)=O" # kavain
+    # target_smiles = "CCCCCC1=CC(=C2C3C=C(CCC3C(OC2=C1)(C)C)C)O" # dronabinol
+    # target_smiles = "CC(CC1=CC=C(C=C1)OC)NCC(C2=CC(=C(C=C2)O)NC=O)O" # arformoterol
+    # target_smiles = "OC1C=CCC(C1)O" # basidalin
+    # target_smiles = "CC1CCCCC(CC1)C" # DMCO
+    # target_smiles = "C1C=CC(=O)OC1C=CCC(CC(C=CC2=CC=CC=C2)O)O" # cryptofolione
+    # taret_smiles = "OC23CCC(C1CC(CCC12C)C3(C)C)C" # patchoul
     target_molecule = Chem.MolFromSmiles(target_smiles)
     
     
@@ -107,7 +112,7 @@ def main(
         pks_library_file=str(pks_library_file),  # use PKS library for reward
         sink_compounds_files=[str(f) for f in sink_compounds_files],  # sink compounds (building blocks) that don't need expansion
         prohibited_chemicals_file=str(prohibited_chemicals_file),  # hazardous chemicals to avoid
-        MW_multiple_to_exclude=1.0,
+        MW_multiple_to_exclude=1.5,
         spawn_retrotide=True,       # enable RetroTide for PKS library matches only
         retrotide_kwargs={
             "max_depth": 10,          # more PKS modules to try for exact matches
@@ -127,13 +132,12 @@ def main(
 
     # Create either parallel or sequential agent based on configuration
     if use_parallel:
-        workers_str = "max available" if num_workers is None else str(num_workers)
-        print(f"[Runner] Using ParallelDORAnetMCTS with {workers_str} workers, virtual_loss={virtual_loss}")
         agent = ParallelDORAnetMCTS(
             num_workers=num_workers,
             virtual_loss=virtual_loss,
             **agent_kwargs,
         )
+        print(f"[Runner] Using ParallelDORAnetMCTS with {agent.num_workers} workers, virtual_loss={virtual_loss}")
     else:
         print("[Runner] Using sequential DORAnetMCTS")
         agent = DORAnetMCTS(**agent_kwargs)
@@ -299,10 +303,10 @@ if __name__ == "__main__":
         help="Automatically open iteration visualizations in browser (WARNING: opens many tabs!)"
     )
     parser.add_argument(
-        "--parallel", "-p",
+        "--sequential", "-s",
         action="store_true",
         default=False,
-        help="Use parallel MCTS with virtual loss for faster execution on multi-core systems"
+        help="Use sequential MCTS instead of parallel (parallel is default)"
     )
     parser.add_argument(
         "--workers", "-w",
@@ -314,7 +318,7 @@ if __name__ == "__main__":
         "--virtual-loss",
         type=float,
         default=1.0,
-        help="Virtual loss penalty for exploration diversity (default: 1.0, only used with --parallel)"
+        help="Virtual loss penalty for exploration diversity (default: 1.0, ignored with --sequential)"
     )
     parser.add_argument(
         "--downselection",
@@ -338,11 +342,11 @@ if __name__ == "__main__":
     # Run with parsed arguments
     main(
         create_interactive_visualization=args.visualize,
-        molecule_name=args.name or "cryptofolione",
+        molecule_name=args.name or "DMCO",
         enable_iteration_viz=args.iteration_viz,
         iteration_interval=args.iteration_interval,
         auto_open_iteration_viz=args.auto_open_iteration_viz,
-        use_parallel=args.parallel,
+        use_parallel=not args.sequential,
         num_workers=num_workers,
         virtual_loss=args.virtual_loss,
         child_downselection_strategy=args.downselection,
