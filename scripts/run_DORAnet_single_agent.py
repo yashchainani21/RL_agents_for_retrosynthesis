@@ -31,7 +31,7 @@ def main(
     enable_iteration_viz: bool = False,
     iteration_interval: int = 1,
     auto_open_iteration_viz: bool = False,
-    use_parallel: bool = True,
+    use_parallel: bool = False,
     num_workers: int = None,  # None means "max available"
     virtual_loss: float = 1.0,
     child_downselection_strategy: str = "first_N") -> None:
@@ -55,7 +55,7 @@ def main(
     # target_smiles = "OCCCC(=O)O"  # 4-hydroxybutyric acid (gamma-hydroxybutyric acid)
     # target_smiles = "OCCCCO"  # 1,4-butanediol
     # target_smiles = "CCCCC(=O)O"  # pentanoic acid (valeric acid)
-    target_smiles = "CCCCCCCCC(=O)O"  # nonanoic acid (known PKS product)
+   # target_smiles = "CCCCCCCCC(=O)O"  # nonanoic acid (known PKS product)
     # target_smiles = "COC1=CC(OC(/C=C/C2=CC=CC=C2)C1)=O" # kavain
     # target_smiles = "CCCCCC1=CC(=C2C3C=C(CCC3C(OC2=C1)(C)C)C)O" # dronabinol
     # target_smiles = "CC(CC1=CC=C(C=C1)OC)NCC(C2=CC(=C(C=C2)O)NC=O)O" # arformoterol
@@ -63,6 +63,7 @@ def main(
     # target_smiles = "CC1CCCCC(CC1)C" # DMCO
     # target_smiles = "C1C=CC(=O)OC1C=CCC(CC(C=CC2=CC=CC=C2)O)O" # cryptofolione
     # taret_smiles = "OC23CCC(C1CC(CCC12C)C3(C)C)C" # patchoul
+    target_smiles = "OC1C=CC=CC1"
     target_molecule = Chem.MolFromSmiles(target_smiles)
     
     
@@ -101,12 +102,12 @@ def main(
     agent_kwargs = dict(
         root=root,
         target_molecule=target_molecule,
-        total_iterations=200,        # more iterations for deeper exploration
+        total_iterations=300,        # more iterations for deeper exploration
         max_depth=3,        # deeper retrosynthetic search
         use_enzymatic=True,
         use_synthetic=True,
         generations_per_expand=1,
-        max_children_per_expand=10,  # more children since only PKS matches trigger RetroTide
+        max_children_per_expand=30,  # more children since only PKS matches trigger RetroTide
         child_downselection_strategy=child_downselection_strategy,  # "first_N" or "hybrid"
         cofactors_files=[str(f) for f in cofactors_files],  # exclude cofactors and chemistry helpers
         pks_library_file=str(pks_library_file),  # use PKS library for reward
@@ -342,7 +343,7 @@ if __name__ == "__main__":
     # Run with parsed arguments
     main(
         create_interactive_visualization=args.visualize,
-        molecule_name=args.name or "DMCO",
+        molecule_name=args.name or "random_fragment",
         enable_iteration_viz=args.iteration_viz,
         iteration_interval=args.iteration_interval,
         auto_open_iteration_viz=args.auto_open_iteration_viz,
