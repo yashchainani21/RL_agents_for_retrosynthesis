@@ -25,44 +25,34 @@ from DORAnet_agent import DORAnetMCTS, ParallelDORAnetMCTS, Node
 from DORAnet_agent.visualize import create_enhanced_interactive_html, create_pathways_interactive_html
 RDLogger.DisableLog("rdApp.*")
 
-def main(
-    create_interactive_visualization: bool = True,
-    molecule_name: str = None,
-    enable_iteration_viz: bool = False,
-    iteration_interval: int = 1,
-    auto_open_iteration_viz: bool = False,
-    use_parallel: bool = False,
-    num_workers: int = None,  # None means "max available"
-    virtual_loss: float = 1.0,
-    child_downselection_strategy: str = "first_N") -> None:
+def main() -> None:
     """
-    Run the DORAnet MCTS agent.
-
-    Args:
-        create_interactive_visualization: If True, generate interactive HTML visualization.
-        molecule_name: Optional name for the target molecule (used in output filenames).
-        enable_iteration_viz: If True, generate visualizations after each iteration.
-        iteration_interval: How often to generate iteration visualizations (every N iterations).
-        child_downselection_strategy: Strategy for downselecting children ("first_N" or "hybrid").
-        auto_open_iteration_viz: If True, automatically open iteration visualizations in browser.
-        use_parallel: If True, use ParallelDORAnetMCTS with virtual loss for faster execution.
-        num_workers: Number of parallel worker threads (only used if use_parallel=True).
-        virtual_loss: Virtual loss penalty for parallel exploration diversity (only used if use_parallel=True).
+    Run the DORAnet MCTS agent with IDE-friendly configuration.
     """
+    # ---- Runner configuration (edit these in your IDE) ----
+    create_interactive_visualization = True
+    molecule_name = None  # e.g., "cryptofolione"
+    enable_iteration_viz = False
+    iteration_interval = 1
+    auto_open_iteration_viz = False
+    use_parallel = True
+    num_workers = None  # None means "max available"
+    virtual_loss = 1.0
+    child_downselection_strategy = "first_N"  # "first_N" or "hybrid"
 
     # Example target molecule
     # target_smiles = "CCCC(C)=O"  # 3-pentanone (simple ketone)
     # target_smiles = "OCCCC(=O)O"  # 4-hydroxybutyric acid (gamma-hydroxybutyric acid)
     # target_smiles = "OCCCCO"  # 1,4-butanediol
     # target_smiles = "CCCCC(=O)O"  # pentanoic acid (valeric acid)
-   # target_smiles = "CCCCCCCCC(=O)O"  # nonanoic acid (known PKS product)
+    # target_smiles = "CCCCCCCCC(=O)O"  # nonanoic acid (known PKS product)
     # target_smiles = "COC1=CC(OC(/C=C/C2=CC=CC=C2)C1)=O" # kavain
     # target_smiles = "CCCCCC1=CC(=C2C3C=C(CCC3C(OC2=C1)(C)C)C)O" # dronabinol
     # target_smiles = "CC(CC1=CC=C(C=C1)OC)NCC(C2=CC(=C(C=C2)O)NC=O)O" # arformoterol
     # target_smiles = "OC1C=CCC(C1)O" # basidalin
     # target_smiles = "CC1CCCCC(CC1)C" # DMCO
     # target_smiles = "C1C=CC(=O)OC1C=CCC(CC(C=CC2=CC=CC=C2)O)O" # cryptofolione
-    # taret_smiles = "OC23CCC(C1CC(CCC12C)C3(C)C)C" # patchoul
+    # target_smiles = "OC23CCC(C1CC(CCC12C)C3(C)C)C" # patchoul
     target_smiles = "OC1C=CC=CC1"
     target_molecule = Chem.MolFromSmiles(target_smiles)
     
@@ -269,86 +259,4 @@ def main(
         print("\nPathways view shows ONLY paths that lead to PKS matches or sink compounds.")
 
 if __name__ == "__main__":
-
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Run DORAnet MCTS agent for retrosynthesis")
-    parser.add_argument(
-        "--visualize", "-v",
-        action="store_true",
-        default=True,
-        help="Generate interactive visualization (default: True)"
-    )
-    parser.add_argument(
-        "--name", "-n",
-        type=str,
-        default=None,
-        help="Name for the target molecule (used in output filenames). Example: --name nonanoic_acid"
-    )
-    parser.add_argument(
-        "--iteration-viz",
-        action="store_true",
-        default=False,
-        help="Generate visualizations after each iteration (WARNING: creates many files!)"
-    )
-    parser.add_argument(
-        "--iteration-interval",
-        type=int,
-        default=1,
-        help="Generate iteration visualizations every N iterations (default: 1)"
-    )
-    parser.add_argument(
-        "--auto-open-iteration-viz",
-        action="store_true",
-        default=False,
-        help="Automatically open iteration visualizations in browser (WARNING: opens many tabs!)"
-    )
-    parser.add_argument(
-        "--sequential", "-s",
-        action="store_true",
-        default=False,
-        help="Use sequential MCTS instead of parallel (parallel is default)"
-    )
-    parser.add_argument(
-        "--workers", "-w",
-        type=str,
-        default="max",
-        help="Number of parallel worker threads: integer or 'max' for all available (default: max)"
-    )
-    parser.add_argument(
-        "--virtual-loss",
-        type=float,
-        default=1.0,
-        help="Virtual loss penalty for exploration diversity (default: 1.0, ignored with --sequential)"
-    )
-    parser.add_argument(
-        "--downselection",
-        type=str,
-        choices=["first_N", "hybrid"],
-        default="first_N",
-        help="Child node downselection strategy: 'first_N' (DORAnet order) or 'hybrid' (sink > PKS > smaller MW)"
-    )
-    args = parser.parse_args()
-
-    # Parse num_workers: "max" -> None, otherwise convert to int
-    if args.workers.lower() == "max":
-        num_workers = None
-    else:
-        try:
-            num_workers = int(args.workers)
-        except ValueError:
-            print(f"[ERROR] Invalid --workers value: '{args.workers}'. Use 'max' or an integer.")
-            sys.exit(1)
-
-    # Run with parsed arguments
-    main(
-        create_interactive_visualization=args.visualize,
-        molecule_name=args.name or "random_fragment",
-        enable_iteration_viz=args.iteration_viz,
-        iteration_interval=args.iteration_interval,
-        auto_open_iteration_viz=args.auto_open_iteration_viz,
-        use_parallel=not args.sequential,
-        num_workers=num_workers,
-        virtual_loss=args.virtual_loss,
-        child_downselection_strategy=args.downselection,
-    )
+    main()
