@@ -195,28 +195,28 @@ DORAnetMCTS(
 )
 ```
 
-## Parallel Execution
+## Async Expansion
 
-For faster exploration on multi-core systems, use `ParallelDORAnetMCTS` which implements tree-level parallelism with virtual loss:
+For faster exploration on multi-core systems, use `AsyncExpansionDORAnetMCTS` which offloads expansion to multiprocessing workers:
 
 ### Quick Start
 
 ```python
-from DORAnet_agent import ParallelDORAnetMCTS, Node
+from DORAnet_agent import AsyncExpansionDORAnetMCTS, Node
 
 # Create root node
 root = Node(fragment=target_molecule, parent=None, depth=0, provenance="target")
 
-# Create parallel agent
-agent = ParallelDORAnetMCTS(
+# Create async expansion agent
+agent = AsyncExpansionDORAnetMCTS(
     root=root,
     target_molecule=target_molecule,
     total_iterations=100,
     max_depth=3,
 
-    # Parallel-specific parameters
-    num_workers=4,           # Number of parallel threads
-    virtual_loss=1.0,        # Exploration diversity penalty
+    # Async expansion parameters
+    num_workers=4,                 # Number of worker processes
+    max_inflight_expansions=4,     # Cap in-flight expansions
 
     # Standard parameters work the same as DORAnetMCTS
     use_enzymatic=True,
@@ -230,34 +230,33 @@ agent.run()
 pks_matches = agent.get_pks_matches()
 sink_compounds = agent.get_sink_compounds()
 
-# Get parallel execution statistics
-stats = agent.get_parallel_stats()
-print(f"Completed: {stats['completed_iterations']}, Failed: {stats['failed_iterations']}")
+# Results are available on the agent as usual
+pks_matches = agent.get_pks_matches()
+sink_compounds = agent.get_sink_compounds()
 ```
 
-### Command Line
+### Scripts
 
-```bash
-# Run with 4 parallel workers
-python scripts/run_DORAnet_single_agent.py --name "molecule" --parallel --workers 4
+The runner scripts are designed to be edited and run from your IDE:
 
-# Run with custom virtual loss
-python scripts/run_DORAnet_single_agent.py --name "molecule" --parallel --workers 4 --virtual-loss 2.0
-```
+- `scripts/run_DORAnet_single_agent.py` for the sequential run
+- `scripts/run_DORAnet_Async.py` for async expansion
 
-### Parallel Configuration
+### Async Configuration
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `num_workers` | int | 4 | Number of parallel worker threads |
-| `virtual_loss` | float | 1.0 | Penalty applied during selection to encourage exploration diversity |
+| `num_workers` | int | CPU-1 | Number of worker processes |
+| `max_inflight_expansions` | int | `num_workers` | Maximum number of expansions queued at once |
+| `reward_fn` | callable | None | Optional override for rollout reward scoring |
 
 ### How It Works
 
-The parallel implementation uses **virtual loss** to prevent redundant exploration:
+Async expansion lets the main thread keep selecting while expansions run in worker processes:
 
-1. **Selection Phase** (synchronized): Thread selects a node and applies virtual loss penalty
-2. **Expansion Phase** (unsynchronized): DORAnet fragment generation runs in parallel
+1. **Selection Phase** (main thread): select a leaf as usual, skip nodes already pending expansion
+2. **Expansion Phase** (workers): DORAnet fragment generation runs in parallel
+3. **Integration Phase** (main thread): returned fragments are attached to the tree and backpropagated
 3. **Backpropagation Phase** (synchronized): Virtual loss removed, real rewards applied
 
 Virtual loss temporarily penalizes selected nodes, making them appear less attractive to other threads. This encourages different threads to explore different parts of the tree.
