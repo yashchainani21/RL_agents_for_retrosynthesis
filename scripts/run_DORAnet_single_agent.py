@@ -21,23 +21,19 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from DORAnet_agent import DORAnetMCTS, ParallelDORAnetMCTS, Node
+from DORAnet_agent import DORAnetMCTS, Node
 from DORAnet_agent.visualize import create_enhanced_interactive_html, create_pathways_interactive_html
 RDLogger.DisableLog("rdApp.*")
 
 def main() -> None:
     """
-    Run the DORAnet MCTS agent with IDE-friendly configuration.
+    Run the DORAnet MCTS agent 
     """
-    # ---- Runner configuration (edit these in your IDE) ----
     create_interactive_visualization = True
-    molecule_name = None  # e.g., "cryptofolione"
+    molecule_name = "target"  # e.g., "cryptofolione"
     enable_iteration_viz = False
     iteration_interval = 1
     auto_open_iteration_viz = False
-    use_parallel = True
-    num_workers = None  # None means "max available"
-    virtual_loss = 1.0
     child_downselection_strategy = "first_N"  # "first_N" or "hybrid"
 
     # Example target molecule
@@ -56,43 +52,41 @@ def main() -> None:
     target_smiles = "OC1C=CC=CC1"
     target_molecule = Chem.MolFromSmiles(target_smiles)
     
-    
     if target_molecule is None:
         raise ValueError(f"Could not parse target SMILES: {target_smiles}")
 
-    # Use molecule name if provided, otherwise show SMILES
     if molecule_name:
         print(f"Target molecule: {molecule_name} ({target_smiles})")
     else:
         print(f"Target molecule: {target_smiles}")
 
-    # Paths to cofactor files (metabolites and chemistry helpers to exclude from the network)
+    # specify paths to cofactor files (metabolites and chemistry helpers to exclude from the network)
     cofactors_files = [
         REPO_ROOT / "data" / "raw" / "all_cofactors.csv",
         REPO_ROOT / "data" / "raw" / "chemistry_helpers.csv",
     ]
 
-    # Path to PKS library file for reward calculation
+    # specify path to PKS library file for reward calculation
     pks_library_file = REPO_ROOT / "data" / "processed" / "expanded_PKS_smiles.txt"
 
-    # Paths to sink compounds files (commercially available building blocks)
-    # Both biological and chemical building blocks are loaded as sink compounds
+    # specify paths to sink compounds files (commercially available building blocks)
+    # both biological and chemical building blocks are loaded as sink compounds
     sink_compounds_files = [
         REPO_ROOT / "data" / "processed" / "biological_building_blocks.txt",
         REPO_ROOT / "data" / "processed" / "chemical_building_blocks.txt",
     ]
 
-    # Path to prohibited chemicals file (hazardous/controlled substances to avoid)
+    # specify path to prohibited chemicals file (hazardous/controlled substances to avoid)
     prohibited_chemicals_file = REPO_ROOT / "data" / "processed" / "prohibited_chemical_SMILES.txt"
 
-    # Create root node with target
+    # create root node with target
     root = Node(fragment=target_molecule, parent=None, depth=0, provenance="target")
 
     # Common configuration for both sequential and parallel agents
     agent_kwargs = dict(
         root=root,
         target_molecule=target_molecule,
-        total_iterations=300,        # more iterations for deeper exploration
+        total_iterations=10,        # more iterations for deeper exploration
         max_depth=3,        # deeper retrosynthetic search
         use_enzymatic=True,
         use_synthetic=True,
@@ -106,9 +100,9 @@ def main() -> None:
         MW_multiple_to_exclude=1.5,
         spawn_retrotide=True,       # enable RetroTide for PKS library matches only
         retrotide_kwargs={
-            "max_depth": 10,          # more PKS modules to try for exact matches
-            "total_iterations": 200,  # more iterations to find exact matches
-            "maxPKSDesignsRetroTide": 50,
+            "max_depth": 5,          # more PKS modules to try for exact matches
+            "total_iterations": 50,  # more iterations to find exact matches
+            "maxPKSDesignsRetroTide": 500,
         },
         sink_terminal_reward=1.0,  # bias selection toward terminal sink compounds
         selection_policy="UCB1",  # "UCB1" for standard or "depth_biased" for depth-first
@@ -121,17 +115,8 @@ def main() -> None:
         visualization_output_dir=str(REPO_ROOT / "results"),
     )
 
-    # Create either parallel or sequential agent based on configuration
-    if use_parallel:
-        agent = ParallelDORAnetMCTS(
-            num_workers=num_workers,
-            virtual_loss=virtual_loss,
-            **agent_kwargs,
-        )
-        print(f"[Runner] Using ParallelDORAnetMCTS with {agent.num_workers} workers, virtual_loss={virtual_loss}")
-    else:
-        print("[Runner] Using sequential DORAnetMCTS")
-        agent = DORAnetMCTS(**agent_kwargs)
+    print("[Runner] Using sequential DORAnetMCTS")
+    agent = DORAnetMCTS(**agent_kwargs)
 
     # Run the search
     start_time = time.time()
@@ -189,16 +174,16 @@ def main() -> None:
         # Sanitize molecule name for filename
         safe_name = molecule_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
         safe_name = "".join(c for c in safe_name if c.isalnum() or c in "_-")
-        filename_base = safe_name
+        filename_base = f"{safe_name}_sequential"
     else:
         safe_smiles = target_smiles.replace("/", "_").replace("\\", "_")[:20]
-        filename_base = safe_smiles
+        filename_base = f"{safe_smiles}_sequential"
 
     results_path = results_dir / f"doranet_results_{filename_base}_{timestamp}.txt"
     agent.save_results(str(results_path))
-    finalized_pathways_path = results_dir / f"finalized_pathways_{timestamp}.txt"
+    finalized_pathways_path = results_dir / f"finalized_pathways_{filename_base}_{timestamp}.txt"
     agent.save_finalized_pathways(str(finalized_pathways_path), total_runtime_seconds=total_runtime)
-    successful_pathways_path = results_dir / f"successful_pathways_{timestamp}.txt"
+    successful_pathways_path = results_dir / f"successful_pathways_{filename_base}_{timestamp}.txt"
     agent.save_successful_pathways(str(successful_pathways_path))
 
     # Print summary
