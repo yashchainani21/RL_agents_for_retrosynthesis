@@ -1,11 +1,11 @@
 from .node import Node
 from .mcts import DORAnetMCTS, RetroTideResult, clear_smiles_cache, get_smiles_cache_info
-from .parallel_mcts import ParallelDORAnetMCTS
+from .async_expansion_mcts import AsyncExpansionDORAnetMCTS
 
 __all__ = [
     "Node",
     "DORAnetMCTS",
-    "ParallelDORAnetMCTS",
+    "AsyncExpansionDORAnetMCTS",
     "RetroTideResult",
     "clear_smiles_cache",
     "get_smiles_cache_info",
