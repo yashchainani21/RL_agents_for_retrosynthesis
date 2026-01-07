@@ -59,6 +59,10 @@ class Node:
         # PKS terminal flag - indicates fragments that match the PKS library
         # and can be synthesized by polyketide synthases (don't need further expansion)
         self.is_pks_terminal: bool = False
+        # Tracks whether RetroTide was already attempted for this node
+        self.retrotide_attempted: bool = False
+        # Async expansion flag to prevent reselection while expansion is in-flight
+        self.is_expansion_pending: bool = False
 
         # identifiers for logging/visualizing the tree
         self.node_id: int = Node.node_counter
@@ -118,4 +122,3 @@ class Node:
             f"smiles={self.smiles}, provenance={self.provenance}, "
             f"visits={self.visits}, value={self.value:.3f}{terminal_str})"
         )
-
