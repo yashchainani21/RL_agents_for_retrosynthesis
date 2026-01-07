@@ -1,7 +1,7 @@
 """
 Benchmark script comparing sequential vs parallel MCTS implementations.
 
-This script runs both DORAnetMCTS and ParallelDORAnetMCTS against a test set
+This script runs both DORAnetMCTS and AsyncExpansionDORAnetMCTS against a test set
 of molecules to measure runtime improvements and verify result consistency.
 
 Usage:
@@ -31,7 +31,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from DORAnet_agent import DORAnetMCTS, ParallelDORAnetMCTS, Node, clear_smiles_cache
+from DORAnet_agent import DORAnetMCTS, AsyncExpansionDORAnetMCTS, Node, clear_smiles_cache
 
 # Silence RDKit logs
 RDLogger.DisableLog("rdApp.*")
@@ -278,7 +278,7 @@ class BenchmarkRunner:
         agent_kwargs = self._create_agent_kwargs()
 
         try:
-            agent = ParallelDORAnetMCTS(
+            agent = AsyncExpansionDORAnetMCTS(
                 root=root,
                 target_molecule=molecule,
                 num_workers=num_workers,
