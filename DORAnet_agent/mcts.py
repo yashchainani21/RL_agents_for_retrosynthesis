@@ -1152,7 +1152,7 @@ class DORAnetMCTS:
         node.expanded = True
         return new_children
 
-    def _launch_retrotide_agent(self, target: Chem.Mol, source_node: Node) -> None:
+    def _launch_retrotide_agent(self, target: Chem.Mol, source_node: Node) -> RetroTideResult:
         """
         Spawn a RetroTide MCTS search to synthesize the given fragment.
 
@@ -1163,6 +1163,7 @@ class DORAnetMCTS:
         target_smiles = Chem.MolToSmiles(target)
         print(f"[DORAnet] Spawning RetroTide search for: {target_smiles}")
 
+        source_node.retrotide_attempted = True
         root = RetroTideNode(PKS_product=None, PKS_design=None, parent=None, depth=0)
         agent = RetroTideMCTS(
             root=root,
@@ -1173,7 +1174,9 @@ class DORAnetMCTS:
 
         # Extract results from the RetroTide agent
         successful_nodes = getattr(agent, 'successful_nodes', set())
+        simulated_successes = getattr(agent, 'successful_simulated_designs', [])
         num_successful = len(successful_nodes)
+        num_sim_success = len(simulated_successes)
 
         # Get best score from successful nodes or from all nodes
         best_score = 0.0
@@ -1197,13 +1200,14 @@ class DORAnetMCTS:
             doranet_reactants_smiles=source_node.reactants_smiles or [],
             doranet_products_smiles=source_node.products_smiles or [],
             retrotide_target_smiles=target_smiles,
-            retrotide_successful=(num_successful > 0),
-            retrotide_num_successful_nodes=num_successful,
+            retrotide_successful=(num_successful > 0 or num_sim_success > 0),
+            retrotide_num_successful_nodes=num_successful + num_sim_success,
             retrotide_best_score=best_score,
             retrotide_total_nodes=len(getattr(agent, 'nodes', [])),
             retrotide_agent=agent,
         )
         self.retrotide_results.append(result)
+        return result
 
     def calculate_reward(self, node: Node) -> float:
         """
