@@ -1,5 +1,6 @@
 *.pyc
 *.html
+*.egg-info/
 scripts/*.txt
 notebooks/.ipynb_checkpoints/
 .DS_store
