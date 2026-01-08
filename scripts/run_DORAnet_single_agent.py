@@ -6,7 +6,19 @@ using retro-enzymatic and retro-synthetic transformations. For each fragment
 discovered, a RetroTide forward MCTS search is spawned to attempt synthesis
 from PKS building blocks.
 
-Current implementation: Selection + Expansion only (no rollout/backprop yet).
+Policy System:
+- rollout_policy: Controls what happens after expansion (default: NoOpRolloutPolicy)
+  - NoOpRolloutPolicy: No additional work after expansion (just returns 0 reward)
+  - SpawnRetroTideOnDatabaseCheck: Spawns RetroTide for PKS library matches (sparse rewards)
+  - SAScore_and_SpawnRetroTideOnDatabaseCheck: SA Score rewards + RetroTide spawning (dense rewards)
+- reward_policy: Controls how terminal rewards are calculated (default: SparseTerminalRewardPolicy)
+  - SparseTerminalRewardPolicy: 1.0 for sink compounds, 1.0 for PKS matches, 0.0 otherwise
+  - SinkCompoundRewardPolicy: Only rewards sink compounds
+  - ComposedRewardPolicy: Combine multiple reward policies with weights
+
+Backward Compatibility:
+- spawn_retrotide=True creates SpawnRetroTideOnDatabaseCheck automatically
+- Explicit rollout_policy/reward_policy override spawn_retrotide
 """
 
 from __future__ import annotations
@@ -23,6 +35,15 @@ if str(REPO_ROOT) not in sys.path:
 
 from DORAnet_agent import DORAnetMCTS, Node
 from DORAnet_agent.visualize import create_enhanced_interactive_html, create_pathways_interactive_html
+from DORAnet_agent.policies import (
+    NoOpRolloutPolicy,
+    SpawnRetroTideOnDatabaseCheck,
+    SAScore_and_SpawnRetroTideOnDatabaseCheck,
+    SparseTerminalRewardPolicy,
+    SinkCompoundRewardPolicy,
+    PKSLibraryRewardPolicy,
+    ComposedRewardPolicy,
+)
 RDLogger.DisableLog("rdApp.*")
 
 def main() -> None:
@@ -30,7 +51,7 @@ def main() -> None:
     Run the DORAnet MCTS agent 
     """
     create_interactive_visualization = True
-    molecule_name = "target"  # e.g., "cryptofolione"
+    molecule_name = "cryptofolione"  # e.g., "cryptofolione"
     enable_iteration_viz = False
     iteration_interval = 1
     auto_open_iteration_viz = False
@@ -47,9 +68,9 @@ def main() -> None:
     # target_smiles = "CC(CC1=CC=C(C=C1)OC)NCC(C2=CC(=C(C=C2)O)NC=O)O" # arformoterol
     # target_smiles = "OC1C=CCC(C1)O" # basidalin
     # target_smiles = "CC1CCCCC(CC1)C" # DMCO
-    # target_smiles = "C1C=CC(=O)OC1C=CCC(CC(C=CC2=CC=CC=C2)O)O" # cryptofolione
+    target_smiles = "C1C=CC(=O)OC1C=CCC(CC(C=CC2=CC=CC=C2)O)O" # cryptofolione
     # target_smiles = "OC23CCC(C1CC(CCC12C)C3(C)C)C" # patchoul
-    target_smiles = "OC1C=CC=CC1"
+    # target_smiles = "CCCCCCCCC(=O)O"
     target_molecule = Chem.MolFromSmiles(target_smiles)
     
     if target_molecule is None:
@@ -86,7 +107,7 @@ def main() -> None:
     agent_kwargs = dict(
         root=root,
         target_molecule=target_molecule,
-        total_iterations=10,        # more iterations for deeper exploration
+        total_iterations=50,        # more iterations for deeper exploration
         max_depth=3,        # deeper retrosynthetic search
         use_enzymatic=True,
         use_synthetic=True,
@@ -98,15 +119,51 @@ def main() -> None:
         sink_compounds_files=[str(f) for f in sink_compounds_files],  # sink compounds (building blocks) that don't need expansion
         prohibited_chemicals_file=str(prohibited_chemicals_file),  # hazardous chemicals to avoid
         MW_multiple_to_exclude=1.5,
-        spawn_retrotide=True,       # enable RetroTide for PKS library matches only
+        
+        # ---- Policy Configuration ----
+        # Option 1: Use spawn_retrotide for backward compatibility (creates SpawnRetroTideOnDatabaseCheck)
+        # spawn_retrotide=True,       # enable RetroTide for PKS library matches only
+        
+        # Option 2: Sparse rewards - Explicitly configured SpawnRetroTideOnDatabaseCheck
+        # rollout_policy=SpawnRetroTideOnDatabaseCheck(
+        #     success_reward=1.0,
+        #     failure_reward=0.0,
+        # ),
+        # reward_policy=SparseTerminalRewardPolicy(sink_terminal_reward=1.0),
+        
+        # Option 3: Dense rewards - SA Score + RetroTide (RECOMMENDED for better training signals)
+        # Uses SA Score (synthetic accessibility) as intermediate reward for all nodes,
+        # while still spawning RetroTide for PKS library matches.
+        # SA Score rewards range from 0.0-0.9, with higher rewards for easier-to-synthesize molecules.
+        rollout_policy=SAScore_and_SpawnRetroTideOnDatabaseCheck(
+            success_reward=1.0,   # Reward for successful RetroTide PKS designs
+            sa_max_reward=1.0,    # Optional cap on SA rewards (default 1.0, no cap)
+        ),
+        reward_policy=SparseTerminalRewardPolicy(sink_terminal_reward=1.0),
+        
+        # Option 4: No rollout (just expand, no RetroTide spawning)
+        # rollout_policy=NoOpRolloutPolicy(),
+        # reward_policy=SparseTerminalRewardPolicy(sink_terminal_reward=1.0),
+        
+        # Option 5: Composed reward policy (combine multiple strategies)
+        # reward_policy=ComposedRewardPolicy([
+        #     (SinkCompoundRewardPolicy(reward_value=1.0), 0.5),
+        #     (PKSLibraryRewardPolicy(), 0.5),
+        # ]),
+        
+        # RetroTide configuration (used when spawn_retrotide=True or SpawnRetroTideOnDatabaseCheck)
         retrotide_kwargs={
             "max_depth": 5,          # more PKS modules to try for exact matches
             "total_iterations": 50,  # more iterations to find exact matches
             "maxPKSDesignsRetroTide": 500,
         },
+        
+        # ---- Selection & Reward Configuration ----
         sink_terminal_reward=1.0,  # bias selection toward terminal sink compounds
         selection_policy="UCB1",  # "UCB1" for standard or "depth_biased" for depth-first
         depth_bonus_coefficient=4.0,  # only used with depth_biased policy (higher = more depth-first)
+        
+        # ---- Visualization Configuration ----
         enable_visualization=True,
         enable_interactive_viz=True,  # enable interactive HTML visualizations
         enable_iteration_visualizations=enable_iteration_viz,  # generate visualizations per iteration

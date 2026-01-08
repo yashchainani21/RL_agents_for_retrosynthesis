@@ -1,5 +1,23 @@
 """
 Runner for AsyncExpansionDORAnetMCTS (multiprocessing expansion).
+
+This script runs DORAnet MCTS with parallel expansion using multiprocessing,
+significantly speeding up search on multi-core systems.
+
+Policy System:
+- rollout_policy: Controls what happens after expansion (default: NoOpRolloutPolicy)
+  - NoOpRolloutPolicy: No additional work after expansion (just returns 0 reward)
+  - SpawnRetroTideOnDatabaseCheck: Spawns RetroTide for PKS library matches (sparse rewards)
+  - SAScore_and_SpawnRetroTideOnDatabaseCheck: SA Score rewards + RetroTide spawning (dense rewards)
+- reward_policy: Controls how terminal rewards are calculated (default: SparseTerminalRewardPolicy)
+  - SparseTerminalRewardPolicy: 1.0 for sink compounds, 1.0 for PKS matches, 0.0 otherwise
+  - SinkCompoundRewardPolicy: Only rewards sink compounds
+  - ComposedRewardPolicy: Combine multiple reward policies with weights
+
+Backward Compatibility:
+- spawn_retrotide=True creates SpawnRetroTideOnDatabaseCheck automatically
+- Explicit rollout_policy/reward_policy override spawn_retrotide
+- reward_fn parameter is deprecated (use reward_policy instead)
 """
 
 from __future__ import annotations
@@ -17,6 +35,15 @@ if str(REPO_ROOT) not in sys.path:
 
 from DORAnet_agent import AsyncExpansionDORAnetMCTS, Node
 from DORAnet_agent.visualize import create_enhanced_interactive_html, create_pathways_interactive_html
+from DORAnet_agent.policies import (
+    NoOpRolloutPolicy,
+    SpawnRetroTideOnDatabaseCheck,
+    SAScore_and_SpawnRetroTideOnDatabaseCheck,
+    SparseTerminalRewardPolicy,
+    SinkCompoundRewardPolicy,
+    PKSLibraryRewardPolicy,
+    ComposedRewardPolicy,
+)
 
 RDLogger.DisableLog("rdApp.*")
 
@@ -80,21 +107,59 @@ def main() -> None:
         sink_compounds_files=[str(f) for f in sink_compounds_files],
         prohibited_chemicals_file=str(prohibited_chemicals_file),
         MW_multiple_to_exclude=1.5,
-        spawn_retrotide=True,
+        
+        # ---- Policy Configuration ----
+        # Option 1: Use spawn_retrotide for backward compatibility (creates SpawnRetroTideOnDatabaseCheck)
+        # spawn_retrotide=True,
+        
+        # Option 2: Sparse rewards - Explicitly configured SpawnRetroTideOnDatabaseCheck
+        # rollout_policy=SpawnRetroTideOnDatabaseCheck(
+        #     success_reward=1.0,
+        #     failure_reward=0.0,
+        # ),
+        # reward_policy=SparseTerminalRewardPolicy(sink_terminal_reward=1.0),
+        
+        # Option 3: Dense rewards - SA Score + RetroTide (RECOMMENDED for better training signals)
+        # Uses SA Score (synthetic accessibility) as intermediate reward for all nodes,
+        # while still spawning RetroTide for PKS library matches.
+        # SA Score rewards range from 0.0-0.9, with higher rewards for easier-to-synthesize molecules.
+        rollout_policy=SAScore_and_SpawnRetroTideOnDatabaseCheck(
+            success_reward=1.0,   # Reward for successful RetroTide PKS designs
+            sa_max_reward=1.0,    # Optional cap on SA rewards (default 1.0, no cap)
+        ),
+        reward_policy=SparseTerminalRewardPolicy(sink_terminal_reward=1.0),
+        
+        # Option 4: No rollout (just expand, no RetroTide spawning)
+        # rollout_policy=NoOpRolloutPolicy(),
+        # reward_policy=SparseTerminalRewardPolicy(sink_terminal_reward=1.0),
+        
+        # Option 5: Composed reward policy (combine multiple strategies)
+        # reward_policy=ComposedRewardPolicy([
+        #     (SinkCompoundRewardPolicy(reward_value=1.0), 0.5),
+        #     (PKSLibraryRewardPolicy(), 0.5),
+        # ]),
+        
+        # RetroTide configuration (used when spawn_retrotide=True or SpawnRetroTideOnDatabaseCheck)
         retrotide_kwargs={
             "max_depth": 5,
             "total_iterations": 50,
             "maxPKSDesignsRetroTide": 500,
         },
+        
+        # ---- Selection & Reward Configuration ----
         sink_terminal_reward=1.0,
         selection_policy="UCB1",
         depth_bonus_coefficient=4.0,
+        
+        # ---- Visualization Configuration ----
         enable_visualization=True,
         enable_interactive_viz=True,
         enable_iteration_visualizations=enable_iteration_viz,
         iteration_viz_interval=iteration_interval,
         auto_open_iteration_viz=auto_open_iteration_viz,
         visualization_output_dir=str(REPO_ROOT / "results"),
+        
+        # ---- Async Configuration ----
         num_workers=num_workers,
         max_inflight_expansions=max_inflight_expansions,
     )

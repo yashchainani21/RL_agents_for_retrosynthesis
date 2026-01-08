@@ -1,5 +1,16 @@
 """
 Benchmark sequential vs async-expansion DORAnet MCTS variants.
+
+This script compares the performance of:
+- DORAnetMCTS (sequential expansion)
+- AsyncExpansionDORAnetMCTS (parallel multiprocessing expansion)
+
+Policy System:
+By default, this benchmark uses SAScore_and_SpawnRetroTideOnDatabaseCheck for
+dense reward signals. Alternative policies:
+- spawn_retrotide=True → SpawnRetroTideOnDatabaseCheck (sparse rewards)
+- spawn_retrotide=False → NoOpRolloutPolicy (no rewards, fastest)
+- rollout_policy=SpawnRetroTideOnDatabaseCheck(...) → explicit sparse policy
 """
 
 from __future__ import annotations
@@ -16,11 +27,18 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from DORAnet_agent import DORAnetMCTS, AsyncExpansionDORAnetMCTS, Node
+from DORAnet_agent.policies import (
+    NoOpRolloutPolicy,
+    SpawnRetroTideOnDatabaseCheck,
+    SAScore_and_SpawnRetroTideOnDatabaseCheck,
+    SparseTerminalRewardPolicy,
+)
 
 RDLogger.DisableLog("rdApp.*")
 
 
 def _build_common_kwargs(target_molecule: Chem.Mol, total_iterations: int) -> dict:
+    """Build common kwargs shared by sequential and async agents."""
     cofactors_files = [
         REPO_ROOT / "data" / "raw" / "all_cofactors.csv",
         REPO_ROOT / "data" / "raw" / "chemistry_helpers.csv",
@@ -46,15 +64,35 @@ def _build_common_kwargs(target_molecule: Chem.Mol, total_iterations: int) -> di
         sink_compounds_files=[str(f) for f in sink_compounds_files],
         prohibited_chemicals_file=str(prohibited_chemicals_file),
         MW_multiple_to_exclude=1.5,
-        spawn_retrotide=False,
+        
+        # ---- Policy Configuration ----
+        # Option 1: Dense rewards - SA Score + RetroTide (RECOMMENDED)
+        rollout_policy=SAScore_and_SpawnRetroTideOnDatabaseCheck(
+            success_reward=1.0,
+            sa_max_reward=1.0,
+        ),
+        reward_policy=SparseTerminalRewardPolicy(sink_terminal_reward=1.0),
+        
+        # Option 2: Sparse rewards - SpawnRetroTideOnDatabaseCheck
+        # rollout_policy=SpawnRetroTideOnDatabaseCheck(success_reward=1.0, failure_reward=0.0),
+        # reward_policy=SparseTerminalRewardPolicy(sink_terminal_reward=1.0),
+        
+        # Option 3: No rollout (fastest, for pure timing benchmarks)
+        # spawn_retrotide=False,
+        
+        # RetroTide kwargs (used by SA Score and SpawnRetroTide policies)
         retrotide_kwargs={
             "max_depth": 6,
             "total_iterations": 100,
             "maxPKSDesignsRetroTide": 25,
         },
+        
+        # ---- Selection & Reward ----
         sink_terminal_reward=1.0,
         selection_policy="UCB1",
         depth_bonus_coefficient=4.0,
+        
+        # ---- Visualization (disabled for benchmarking) ----
         enable_visualization=False,
         enable_interactive_viz=False,
         enable_iteration_visualizations=False,
@@ -70,7 +108,7 @@ def _run_agent(agent) -> float:
 
 def main() -> None:
     # ---- Benchmark configuration ----
-    target_smiles = "OC1C=CC=CC1"
+    target_smiles = "C1C=CC(=O)OC1C=CCC(CC(C=CC2=CC=CC=C2)O)O"
     total_iterations = 100
     num_workers = None  # None = max available
     max_inflight_expansions = None  # None = same as num_workers
