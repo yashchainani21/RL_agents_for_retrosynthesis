@@ -28,6 +28,13 @@ from .mcts import (
     _load_synthetic_reaction_labels,
 )
 from .node import Node
+from .policies import (
+    RolloutPolicy,
+    RewardPolicy,
+    NoOpRolloutPolicy,
+    SpawnRetroTideOnDatabaseCheck,
+    SparseTerminalRewardPolicy,
+)
 
 
 RDLogger.DisableLog("rdApp.*")
@@ -245,6 +252,13 @@ def _expand_worker(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
 class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
     """
     DORAnet MCTS with asynchronous expansion using multiprocessing.
+
+    Expansion is offloaded to worker processes while selection, rollout,
+    reward calculation, and backpropagation happen on the main process.
+
+    Supports the same rollout_policy and reward_policy parameters as
+    DORAnetMCTS. Rollouts are performed on the main process after
+    expansion results are integrated (Option B architecture).
     """
 
     def __init__(
@@ -253,14 +267,29 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
         target_molecule: Chem.Mol,
         num_workers: Optional[int] = None,
         max_inflight_expansions: Optional[int] = None,
-        reward_fn: Optional[Callable[[Node], float]] = None,
+        reward_fn: Optional[Callable[[Node], float]] = None,  # Deprecated
         **kwargs,
     ) -> None:
+        """
+        Args:
+            root: Starting node containing the target molecule.
+            target_molecule: The molecule to fragment.
+            num_workers: Number of worker processes. Defaults to CPU count - 1.
+            max_inflight_expansions: Max concurrent expansions. Defaults to num_workers.
+            reward_fn: DEPRECATED. Use reward_policy instead via kwargs.
+            **kwargs: Additional arguments passed to DORAnetMCTS.__init__().
+        """
         super().__init__(root=root, target_molecule=target_molecule, **kwargs)
         self.num_workers = self._get_optimal_workers(num_workers)
         self.max_inflight_expansions = max_inflight_expansions or self.num_workers
-        self.reward_fn = reward_fn
         self._pending: Dict[Any, Dict[str, Any]] = {}
+
+        # Handle deprecated reward_fn parameter
+        if reward_fn is not None:
+            print("[DEPRECATED] reward_fn parameter is deprecated. Use reward_policy instead.")
+            self._legacy_reward_fn = reward_fn
+        else:
+            self._legacy_reward_fn = None
 
     def _get_optimal_workers(self, requested_workers: Optional[int]) -> int:
         cpu_count = os.cpu_count() or 4
@@ -349,7 +378,19 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
     def _integrate_expansion_results(
         self, leaf: Node, fragments: List[Dict[str, Any]], iteration: int
     ) -> None:
+        """
+        Integrate expansion results from a worker process.
+
+        Creates child nodes from fragments, then applies rollout and reward
+        policies on the main process.
+
+        Args:
+            leaf: The parent node that was expanded.
+            fragments: List of fragment dictionaries from the worker.
+            iteration: The iteration number when expansion was submitted.
+        """
         new_children: List[Node] = []
+        context = self._build_rollout_context()
 
         for frag in fragments:
             smiles = frag["smiles"]
@@ -382,6 +423,7 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
             self.edges.append((leaf.node_id, child.node_id))
             new_children.append(child)
 
+            # Check if this fragment is a sink compound (known terminal)
             sink_type = self._get_sink_compound_type(smiles)
             if sink_type:
                 child.is_sink_compound = True
@@ -389,28 +431,32 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
                 child.expanded = True
                 type_label = "BIOLOGICAL" if sink_type == "biological" else "CHEMICAL"
                 print(f"[DORAnet] Fragment {smiles} is a {type_label} BUILDING BLOCK")
-                continue
-
-            if self._is_in_pks_library(smiles):
-                child.is_pks_terminal = True
-                child.expanded = True
-                print(f"[DORAnet] Fragment {smiles} is a PKS TERMINAL (matches PKS library)")
-                if self.spawn_retrotide:
-                    result = self._launch_retrotide_agent(target=mol, source_node=child)
-                    if result and result.retrotide_successful:
-                        child.is_pks_terminal = True
-                        child.expanded = True
-                        if self.reward_fn is None:
-                            self.backpropagate(child, 1.0)
+                # Note: reward calculated below via policy
 
         leaf.expanded = True
         leaf.expanded_at_iteration = iteration
         leaf.is_expansion_pending = False
 
-        if self.reward_fn is None:
-            for child in new_children:
-                reward = self.calculate_reward(child)
-                self.backpropagate(child, reward)
+        # Apply rollout and reward policies to each child (on main process)
+        for child in new_children:
+            if child.is_sink_compound:
+                # Sink compounds: use reward policy directly (known terminal)
+                reward = self.reward_policy.calculate_reward(child, context)
+            else:
+                # Non-sink: run rollout policy to simulate and get reward
+                result = self.rollout_policy.rollout(child, context)
+                
+                if result.terminal:
+                    child.is_pks_terminal = True
+                    child.expanded = True
+                    
+                    # Store RetroTide results for traceability
+                    if "retrotide_agent" in result.metadata:
+                        self._store_retrotide_result_from_rollout(child, result)
+                
+                reward = result.reward
+
+            self.backpropagate(child, reward)
 
     def _drain_completed(self, block: bool) -> None:
         if not self._pending:
@@ -440,12 +486,13 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
     def run(self) -> None:
         """
         Execute async-expansion MCTS using a multiprocessing pool.
+
+        Expansion is offloaded to worker processes. Rollouts and reward
+        calculations happen on the main process after integration.
         """
-        pks_mode = bool(self.pks_library)
-        mode_str = "PKS library lookup" if pks_mode else "RetroTide spawning"
         print(f"[AsyncExpansion] Starting async MCTS with {self.num_workers} workers, "
               f"{self.total_iterations} iterations, max_inflight={self.max_inflight_expansions}")
-        print(f"[AsyncExpansion] Mode: {mode_str}, max_depth={self.max_depth}")
+        print(f"[AsyncExpansion] max_depth={self.max_depth}")
 
         self.current_iteration = 0
 
@@ -470,15 +517,16 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
 
                 leaf.selected_at_iterations.append(iteration)
 
-                # Rollout reward on selected leaf (if provided)
-                if self.reward_fn is not None:
-                    reward = self.reward_fn(leaf)
+                # Handle legacy reward_fn if provided (deprecated)
+                if self._legacy_reward_fn is not None:
+                    reward = self._legacy_reward_fn(leaf)
                     self.backpropagate(leaf, reward)
+                    # When using legacy reward_fn, skip normal depth check
+                    continue
 
                 if leaf.depth >= self.max_depth:
-                    if self.reward_fn is None:
-                        reward = self.calculate_reward(leaf)
-                        self.backpropagate(leaf, reward)
+                    reward = self.calculate_reward(leaf)
+                    self.backpropagate(leaf, reward)
                     continue
 
                 if not leaf.expanded and not leaf.is_expansion_pending:
@@ -491,4 +539,5 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
         sink_count = len(self.get_sink_compounds())
         pks_terminal_count = len(self.get_pks_terminal_nodes())
         print(f"[AsyncExpansion] MCTS complete. Total nodes: {len(self.nodes)}, "
-              f"PKS terminals: {pks_terminal_count}, Sink compounds: {sink_count}")
+              f"PKS terminals: {pks_terminal_count}, Sink compounds: {sink_count}, "
+              f"RetroTide results: {len(self.retrotide_results)}")
