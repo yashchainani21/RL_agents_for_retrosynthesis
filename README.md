@@ -49,13 +49,20 @@ Target Molecule (SMILES)
 RL_agents_for_retrosynthesis/
 ├── DORAnet_agent/              # DORAnet MCTS implementation
 │   ├── mcts.py                 # Main MCTS driver
+│   ├── async_expansion_mcts.py # Async multiprocessing MCTS
 │   ├── node.py                 # Tree node representation
-│   └── visualize.py            # Interactive HTML visualization
+│   ├── visualize.py            # Interactive HTML visualization
+│   └── policies/               # Modular rollout/reward policies
+│       ├── __init__.py
+│       ├── base.py             # RolloutPolicy, RewardPolicy ABCs
+│       ├── rollout.py          # Rollout policy implementations
+│       └── reward.py           # Reward policy implementations
 ├── RetroTide_agent/            # RetroTide MCTS for PKS design
 │   ├── mcts.py                 # RetroTide MCTS implementation
 │   └── node.py                 # PKS design node representation
 ├── scripts/                    # Executable scripts
 │   ├── run_DORAnet_single_agent.py
+│   ├── run_DORAnet_Async.py
 │   └── run_RetroTide_single_agent.py
 ├── data/
 │   ├── raw/                    # Source data files
@@ -248,7 +255,160 @@ The runner scripts are designed to be edited and run from your IDE:
 |-----------|------|---------|-------------|
 | `num_workers` | int | CPU-1 | Number of worker processes |
 | `max_inflight_expansions` | int | `num_workers` | Maximum number of expansions queued at once |
-| `reward_fn` | callable | None | Optional override for rollout reward scoring |
+
+## Modular Policy System
+
+The MCTS implementation uses a **modular policy architecture** that allows swapping rollout and reward strategies without modifying core MCTS logic.
+
+### Policy Types
+
+| Policy Type | Purpose | Default |
+|-------------|---------|---------|
+| `RolloutPolicy` | Determines what happens after expansion (e.g., spawn RetroTide) | `NoOpRolloutPolicy` |
+| `RewardPolicy` | Computes reward for terminal/sink nodes | `SparseTerminalRewardPolicy` |
+
+### Built-in Policies
+
+**Rollout Policies:**
+- `NoOpRolloutPolicy`: Returns zero reward, no side effects (default)
+- `SpawnRetroTideOnDatabaseCheck`: Spawns RetroTide MCTS when fragment matches PKS library (sparse rewards)
+- `SAScore_and_SpawnRetroTideOnDatabaseCheck`: Dense rewards based on synthetic accessibility (SA Score) + RetroTide spawning for PKS matches (RECOMMENDED for better training signals)
+
+**Reward Policies:**
+- `SparseTerminalRewardPolicy`: Returns reward for sink compounds and PKS matches
+- `SinkCompoundRewardPolicy`: Returns reward only for sink compounds  
+- `PKSLibraryRewardPolicy`: Returns reward for PKS library matches
+- `ComposedRewardPolicy`: Weighted combination of multiple reward policies
+
+### SA Score Rewards (Dense Signals)
+
+The `SAScore_and_SpawnRetroTideOnDatabaseCheck` policy provides dense intermediate rewards based on synthetic accessibility:
+
+- **SA Score Formula**: `reward = (10 - sa_score) / 10`
+- **Reward Range**: 0.0-0.9 (simple molecules get ~0.8-0.9, complex molecules get ~0.2-0.4)
+- **Logic**:
+  1. Terminal nodes (sink/PKS designs): `success_reward` (default 1.0)
+  2. PKS library match + RetroTide succeeds: `success_reward` (1.0)
+  3. PKS library match + RetroTide fails: SA Score reward (dense signal!)
+  4. Non-PKS nodes: SA Score reward (dense signal!)
+
+This provides valuable training signal for all nodes, not just terminal states.
+
+### Using Custom Policies
+
+```python
+from DORAnet_agent import DORAnetMCTS
+from DORAnet_agent.policies import (
+    SpawnRetroTideOnDatabaseCheck,
+    SAScore_and_SpawnRetroTideOnDatabaseCheck,
+    SparseTerminalRewardPolicy,
+    ComposedRewardPolicy,
+    SinkCompoundRewardPolicy,
+    PKSLibraryRewardPolicy,
+)
+
+# Option 1: Use backward-compatible spawn_retrotide flag
+agent = DORAnetMCTS(
+    root=root,
+    target_molecule=target_molecule,
+    spawn_retrotide=True,  # Creates SpawnRetroTideOnDatabaseCheck automatically
+    # ... other parameters
+)
+
+# Option 2: Sparse rewards - Explicit SpawnRetroTideOnDatabaseCheck
+rollout = SpawnRetroTideOnDatabaseCheck(
+    pks_library=pks_smiles,
+    retrotide_kwargs={"max_depth": 10, "total_iterations": 200},
+    success_reward=1.0,
+    failure_reward=0.0,
+)
+reward = SparseTerminalRewardPolicy(sink_terminal_reward=2.0)
+
+agent = DORAnetMCTS(
+    root=root,
+    target_molecule=target_molecule,
+    rollout_policy=rollout,
+    reward_policy=reward,
+    # ... other parameters
+)
+
+# Option 3: Dense rewards - SA Score + RetroTide (RECOMMENDED)
+rollout = SAScore_and_SpawnRetroTideOnDatabaseCheck(
+    success_reward=1.0,   # Reward for successful PKS designs
+    sa_max_reward=1.0,    # Optional cap on SA rewards (default 1.0)
+)
+reward = SparseTerminalRewardPolicy(sink_terminal_reward=1.0)
+
+agent = DORAnetMCTS(
+    root=root,
+    target_molecule=target_molecule,
+    rollout_policy=rollout,
+    reward_policy=reward,
+    # ... other parameters
+)
+
+# Option 4: Composed reward policy for custom weighting
+composed_reward = ComposedRewardPolicy([
+    (SinkCompoundRewardPolicy(reward_value=2.0), 0.7),  # 70% weight
+    (PKSLibraryRewardPolicy(), 0.3),                     # 30% weight
+])
+
+agent = DORAnetMCTS(
+    root=root,
+    target_molecule=target_molecule,
+    reward_policy=composed_reward,
+)
+```
+
+### Creating Custom Policies
+
+Implement the abstract base classes to create custom policies:
+
+```python
+from DORAnet_agent.policies import RolloutPolicy, RewardPolicy, RolloutResult
+
+class MyRolloutPolicy(RolloutPolicy):
+    @property
+    def name(self) -> str:
+        return "MyCustomRollout"
+    
+    def rollout(self, node, context):
+        # Custom simulation/evaluation logic
+        reward = evaluate_node(node)
+        return RolloutResult(
+            reward=reward,
+            terminal=is_terminal(node),
+            terminal_type="custom",
+            metadata={"custom_data": "value"}
+        )
+
+class MyRewardPolicy(RewardPolicy):
+    @property  
+    def name(self) -> str:
+        return "MyCustomReward"
+    
+    def calculate_reward(self, node, context):
+        # Custom reward calculation
+        return compute_reward(node, context)
+```
+
+### Deprecation Notice
+
+The `reward_fn` parameter in `AsyncExpansionDORAnetMCTS` is deprecated. Use `reward_policy` instead:
+
+```python
+# Deprecated (still works but not recommended)
+agent = AsyncExpansionDORAnetMCTS(
+    reward_fn=lambda node: my_reward(node),  # Deprecated
+    ...
+)
+
+# Recommended
+agent = AsyncExpansionDORAnetMCTS(
+    reward_policy=MyRewardPolicy(),
+    ...
+)
+```
 
 ### How It Works
 
