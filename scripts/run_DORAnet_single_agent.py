@@ -51,7 +51,7 @@ def main() -> None:
     Run the DORAnet MCTS agent 
     """
     create_interactive_visualization = True
-    molecule_name = "cryptofolione"  # e.g., "cryptofolione"
+    molecule_name = "kavain"  # e.g., "cryptofolione"
     enable_iteration_viz = False
     iteration_interval = 1
     auto_open_iteration_viz = False
@@ -63,12 +63,12 @@ def main() -> None:
     # target_smiles = "OCCCCO"  # 1,4-butanediol
     # target_smiles = "CCCCC(=O)O"  # pentanoic acid (valeric acid)
     # target_smiles = "CCCCCCCCC(=O)O"  # nonanoic acid (known PKS product)
-    # target_smiles = "COC1=CC(OC(/C=C/C2=CC=CC=C2)C1)=O" # kavain
+    target_smiles = "COC1=CC(OC(/C=C/C2=CC=CC=C2)C1)=O" # kavain
     # target_smiles = "CCCCCC1=CC(=C2C3C=C(CCC3C(OC2=C1)(C)C)C)O" # dronabinol
     # target_smiles = "CC(CC1=CC=C(C=C1)OC)NCC(C2=CC(=C(C=C2)O)NC=O)O" # arformoterol
     # target_smiles = "OC1C=CCC(C1)O" # basidalin
     # target_smiles = "CC1CCCCC(CC1)C" # DMCO
-    target_smiles = "C1C=CC(=O)OC1C=CCC(CC(C=CC2=CC=CC=C2)O)O" # cryptofolione
+    # target_smiles = "C1C=CC(=O)OC1C=CCC(CC(C=CC2=CC=CC=C2)O)O" # cryptofolione
     # target_smiles = "OC23CCC(C1CC(CCC12C)C3(C)C)C" # patchoul
     # target_smiles = "CCCCCCCCC(=O)O"
     target_molecule = Chem.MolFromSmiles(target_smiles)

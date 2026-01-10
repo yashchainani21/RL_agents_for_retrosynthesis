@@ -51,7 +51,7 @@ RDLogger.DisableLog("rdApp.*")
 def main() -> None:
     # ---- Runner configuration (edit these in your IDE) ----
     create_interactive_visualization = True
-    molecule_name = "nonanoic_acid"  # e.g., "cryptofolione"
+    molecule_name = "kavain"  # e.g., "cryptofolione"
     enable_iteration_viz = False
     iteration_interval = 1
     auto_open_iteration_viz = False
@@ -60,8 +60,8 @@ def main() -> None:
     child_downselection_strategy = "first_N"  # "first_N" or "hybrid"
 
     # Example target molecule
-    # target_smiles = "C1C=CC(=O)OC1C=CCC(CC(C=CC2=CC=CC=C2)O)O" # cryptofolione
-    target_smiles = "CCCCCCCCC(=O)O"
+    target_smiles = "COC1=CC(OC(/C=C/C2=CC=CC=C2)C1)=O" # cryptofolione
+    # target_smiles = "CCCCCCCCC(=O)O"
     target_molecule = Chem.MolFromSmiles(target_smiles)
 
     if target_molecule is None:
@@ -95,7 +95,7 @@ def main() -> None:
     agent = AsyncExpansionDORAnetMCTS(
         root=root,
         target_molecule=target_molecule,
-        total_iterations=100,
+        total_iterations=200,
         max_depth=3,
         use_enzymatic=True,
         use_synthetic=True,
