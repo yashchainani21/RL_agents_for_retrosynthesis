@@ -1,6 +1,7 @@
 *.pyc
 *.html
 *.egg-info/
+scripts/submit_p30041.sh
 scripts/*.txt
 notebooks/.ipynb_checkpoints/
 .DS_store
