@@ -23,6 +23,7 @@ Backward Compatibility:
 
 from __future__ import annotations
 from pathlib import Path
+import subprocess
 import sys
 import time
 from rdkit import Chem
@@ -46,24 +47,13 @@ from DORAnet_agent.policies import (
 )
 RDLogger.DisableLog("rdApp.*")
 
-def main() -> None:
-    """
-    Run the DORAnet MCTS agent 
-    """
-    create_interactive_visualization = True
-    molecule_name = "kavain"  # e.g., "cryptofolione"
-    enable_iteration_viz = False
-    iteration_interval = 1
-    auto_open_iteration_viz = False
-    child_downselection_strategy = "first_N"  # "first_N" or "hybrid"
-
     # Example target molecule
     # target_smiles = "CCCC(C)=O"  # 3-pentanone (simple ketone)
     # target_smiles = "OCCCC(=O)O"  # 4-hydroxybutyric acid (gamma-hydroxybutyric acid)
     # target_smiles = "OCCCCO"  # 1,4-butanediol
     # target_smiles = "CCCCC(=O)O"  # pentanoic acid (valeric acid)
     # target_smiles = "CCCCCCCCC(=O)O"  # nonanoic acid (known PKS product)
-    target_smiles = "COC1=CC(OC(/C=C/C2=CC=CC=C2)C1)=O" # kavain
+    # target_smiles = "COC1=CC(OC(C=CC2=CC=CC=C2)C1)=O" # kavain
     # target_smiles = "CCCCCC1=CC(=C2C3C=C(CCC3C(OC2=C1)(C)C)C)O" # dronabinol
     # target_smiles = "CC(CC1=CC=C(C=C1)OC)NCC(C2=CC(=C(C=C2)O)NC=O)O" # arformoterol
     # target_smiles = "OC1C=CCC(C1)O" # basidalin
@@ -71,6 +61,18 @@ def main() -> None:
     # target_smiles = "C1C=CC(=O)OC1C=CCC(CC(C=CC2=CC=CC=C2)O)O" # cryptofolione
     # target_smiles = "OC23CCC(C1CC(CCC12C)C3(C)C)C" # patchoul
     # target_smiles = "CCCCCCCCC(=O)O"
+
+def main(target_smiles: str,
+         molecule_name: str) -> None:
+    """
+    Run the DORAnet MCTS agent 
+    """
+    create_interactive_visualization = False
+    enable_iteration_viz = False
+    iteration_interval = 1
+    auto_open_iteration_viz = False
+    auto_cleanup_pgnet_files = True
+    child_downselection_strategy = "first_N"  # "first_N" or "hybrid"
     target_molecule = Chem.MolFromSmiles(target_smiles)
     
     if target_molecule is None:
@@ -107,12 +109,12 @@ def main() -> None:
     agent_kwargs = dict(
         root=root,
         target_molecule=target_molecule,
-        total_iterations=50,        # more iterations for deeper exploration
+        total_iterations=200,        # more iterations for deeper exploration
         max_depth=3,        # deeper retrosynthetic search
         use_enzymatic=True,
         use_synthetic=True,
         generations_per_expand=1,
-        max_children_per_expand=30,  # more children since only PKS matches trigger RetroTide
+        max_children_per_expand=50,  # more children since only PKS matches trigger RetroTide
         child_downselection_strategy=child_downselection_strategy,  # "first_N" or "hybrid"
         cofactors_files=[str(f) for f in cofactors_files],  # exclude cofactors and chemistry helpers
         pks_library_file=str(pks_library_file),  # use PKS library for reward
@@ -164,8 +166,8 @@ def main() -> None:
         depth_bonus_coefficient=4.0,  # only used with depth_biased policy (higher = more depth-first)
         
         # ---- Visualization Configuration ----
-        enable_visualization=True,
-        enable_interactive_viz=True,  # enable interactive HTML visualizations
+        enable_visualization=False,
+        enable_interactive_viz=False,  # enable interactive HTML visualizations
         enable_iteration_visualizations=enable_iteration_viz,  # generate visualizations per iteration
         iteration_viz_interval=iteration_interval,   # how often to generate iteration visualizations
         auto_open_iteration_viz=auto_open_iteration_viz,  # auto-open iteration visualizations in browser
@@ -300,5 +302,13 @@ def main() -> None:
         print("  ■ Square = Sink compound (building block)")
         print("\nPathways view shows ONLY paths that lead to PKS matches or sink compounds.")
 
+    if auto_cleanup_pgnet_files:
+        cleanup_script = REPO_ROOT / "scripts" / "cleanup_pgnet_files.py"
+        try:
+            subprocess.run([sys.executable, str(cleanup_script), "-y"], check=True)
+        except subprocess.CalledProcessError as exc:
+            print(f"[Runner] Warning: .pgnet cleanup failed ({exc}).")
+
 if __name__ == "__main__":
-    main()
+    main(target_smiles = "COC1=CC(OC(C=CC2=CC=CC=C2)C1)=O",
+         molecule_name = "kavain")
