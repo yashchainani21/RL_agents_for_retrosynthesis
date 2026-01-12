@@ -50,7 +50,11 @@ RDLogger.DisableLog("rdApp.*")
 
 
 ### ---- Molecules ---- 
+
 # cryptofolione # O=C1C=CCC(C=CCC(O)CC(O)C=Cc2ccccc2)O1
+
+## Kavalactones ##
+
 # kavain # COC1=CC(OC(C=CC2=CC=CC=C2)C1)=O
 # Yangonin # COC1=CC=C(C=CC2=CC(OC)=CC(O2)=O)C=C1
 # 10-methoxyyangonin # COC1=CC(OC)=C(C=CC2=CC(OC)=CC(O2)=O)C=C1
@@ -59,7 +63,8 @@ RDLogger.DisableLog("rdApp.*")
 # 5,6-dihydroyangoin # COC1=CC(OC(C=CC2=CC=C(OC)C=C2)C1)=O
 # 5,6,7,8-tetrahydroyangonin # COC1=CC(OC(CCC2=CC=C(OC)C=C2)C1)=O
 # desmethoxyyangonin # COC1=CC(OC(C=CC2=CC=CC=C2)=C1)=O
-# 
+# 11_methoxy_12_hydroxydehydrokavain # COC1=CC=C(C=CC2=CC(OC)=CC(O2)=O)C=C1O
+# 7,8-dihydroyangonin # COC1=CC=C(CCC2=CC(OC)=CC(O2)=O)C=C1
 
 def main(target_smiles: str, molecule_name: str) -> None:
     
@@ -230,5 +235,5 @@ def main(target_smiles: str, molecule_name: str) -> None:
 
 
 if __name__ == "__main__":
-    main(target_smiles="COC1=CC(OC(C=CC2=CC=CC=C2)=C1)=O",
-         molecule_name="desmethoxyyangonin")
+    main(target_smiles="COC1=CC=C(CCC2=CC(OC)=CC(O2)=O)C=C1",
+         molecule_name="7_8_dihydroyangonin")
