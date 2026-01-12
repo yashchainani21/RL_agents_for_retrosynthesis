@@ -53,8 +53,7 @@ RDLogger.DisableLog("rdApp.*")
 # Yangonin # COC1=CC=C(C=CC2=CC(OC)=CC(O2)=O)C=C1
 
 
-def main(target_smiles: str,
-         molecule_name: str) -> None:
+def main(target_smiles: str, molecule_name: str) -> None:
     
     # ---- Runner configuration ----
     create_interactive_visualization = False
@@ -215,4 +214,5 @@ def main(target_smiles: str,
 
 
 if __name__ == "__main__":
-    main()
+    main(target_smiles="",
+         molecule_name="")
