@@ -47,12 +47,29 @@ from DORAnet_agent.policies import (
 )
 RDLogger.DisableLog("rdApp.*")
 
-    # Example target molecule
-    # target_smiles = "CCCC(C)=O"  # 3-pentanone (simple ketone)
+### ---- Molecules ---- 
+
+# cryptofolione # O=C1C=CCC(C=CCC(O)CC(O)C=Cc2ccccc2)O1
+# target_smiles = "CCCCCCCCC(=O)O"  # nonanoic acid (known PKS product)
+# target_smiles = "CCCC(C)=O"  # 3-pentanone (simple ketone)
+
+## Kavalactones ##
+
+# kavain # COC1=CC(OC(C=CC2=CC=CC=C2)C1)=O
+# Yangonin # COC1=CC=C(C=CC2=CC(OC)=CC(O2)=O)C=C1
+# 10-methoxyyangonin # COC1=CC(OC)=C(C=CC2=CC(OC)=CC(O2)=O)C=C1
+# methysticin # COC1=CC(OC(C=CC2=CC3=C(OCO3)C=C2)C1)=O
+# 11-methoxyyangonin # COC1=C(OC)C=C(C=CC2=CC(OC)=CC(O2)=O)C=C1
+# 5,6-dihydroyangoin # COC1=CC(OC(C=CC2=CC=C(OC)C=C2)C1)=O
+# 5,6,7,8-tetrahydroyangonin # COC1=CC(OC(CCC2=CC=C(OC)C=C2)C1)=O
+# desmethoxyyangonin # COC1=CC(OC(C=CC2=CC=CC=C2)=C1)=O
+# 11_methoxy_12_hydroxydehydrokavain # COC1=CC=C(C=CC2=CC(OC)=CC(O2)=O)C=C1O
+
+    
     # target_smiles = "OCCCC(=O)O"  # 4-hydroxybutyric acid (gamma-hydroxybutyric acid)
     # target_smiles = "OCCCCO"  # 1,4-butanediol
     # target_smiles = "CCCCC(=O)O"  # pentanoic acid (valeric acid)
-    # target_smiles = "CCCCCCCCC(=O)O"  # nonanoic acid (known PKS product)
+
     # target_smiles = "COC1=CC(OC(C=CC2=CC=CC=C2)C1)=O" # kavain
     # target_smiles = "CCCCCC1=CC(=C2C3C=C(CCC3C(OC2=C1)(C)C)C)O" # dronabinol
     # target_smiles = "CC(CC1=CC=C(C=C1)OC)NCC(C2=CC(=C(C=C2)O)NC=O)O" # arformoterol
@@ -60,7 +77,6 @@ RDLogger.DisableLog("rdApp.*")
     # target_smiles = "CC1CCCCC(CC1)C" # DMCO
     # target_smiles = "C1C=CC(=O)OC1C=CCC(CC(C=CC2=CC=CC=C2)O)O" # cryptofolione
     # target_smiles = "OC23CCC(C1CC(CCC12C)C3(C)C)C" # patchoul
-    # target_smiles = "CCCCCCCCC(=O)O"
 
 def main(target_smiles: str,
          molecule_name: str) -> None:
