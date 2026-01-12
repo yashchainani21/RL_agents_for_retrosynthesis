@@ -23,6 +23,7 @@ Backward Compatibility:
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 import sys
 import time
 from rdkit import Chem
@@ -49,9 +50,16 @@ RDLogger.DisableLog("rdApp.*")
 
 
 ### ---- Molecules ---- 
+# cryptofolione # O=C1C=CCC(C=CCC(O)CC(O)C=Cc2ccccc2)O1
 # kavain # COC1=CC(OC(C=CC2=CC=CC=C2)C1)=O
 # Yangonin # COC1=CC=C(C=CC2=CC(OC)=CC(O2)=O)C=C1
-
+# 10-methoxyyangonin # COC1=CC(OC)=C(C=CC2=CC(OC)=CC(O2)=O)C=C1
+# methysticin # COC1=CC(OC(C=CC2=CC3=C(OCO3)C=C2)C1)=O
+# 11-methoxyyangonin # COC1=C(OC)C=C(C=CC2=CC(OC)=CC(O2)=O)C=C1
+# 5,6-dihydroyangoin # COC1=CC(OC(C=CC2=CC=C(OC)C=C2)C1)=O
+# 5,6,7,8-tetrahydroyangonin # COC1=CC(OC(CCC2=CC=C(OC)C=C2)C1)=O
+# desmethoxyyangonin # COC1=CC(OC(C=CC2=CC=CC=C2)=C1)=O
+# 
 
 def main(target_smiles: str, molecule_name: str) -> None:
     
@@ -60,6 +68,7 @@ def main(target_smiles: str, molecule_name: str) -> None:
     enable_iteration_viz = False
     iteration_interval = 1
     auto_open_iteration_viz = False
+    auto_cleanup_pgnet_files = True
     num_workers = None  # None means "max available"
     max_inflight_expansions = None  # None means "same as num_workers"
     child_downselection_strategy = "first_N"  # "first_N" or "hybrid"
@@ -101,7 +110,7 @@ def main(target_smiles: str, molecule_name: str) -> None:
         use_enzymatic=True,
         use_synthetic=True,
         generations_per_expand=1,
-        max_children_per_expand=30,
+        max_children_per_expand=50,
         child_downselection_strategy=child_downselection_strategy,
         cofactors_files=[str(f) for f in cofactors_files],
         pks_library_file=str(pks_library_file),
@@ -212,7 +221,14 @@ def main(target_smiles: str, molecule_name: str) -> None:
         print("✓ Interactive visualizations complete!")
         print("=" * 70)
 
+    if auto_cleanup_pgnet_files:
+        cleanup_script = REPO_ROOT / "scripts" / "cleanup_pgnet_files.py"
+        try:
+            subprocess.run([sys.executable, str(cleanup_script), "-y"], check=True)
+        except subprocess.CalledProcessError as exc:
+            print(f"[Runner] Warning: .pgnet cleanup failed ({exc}).")
+
 
 if __name__ == "__main__":
-    main(target_smiles="",
-         molecule_name="")
+    main(target_smiles="COC1=CC(OC(C=CC2=CC=CC=C2)=C1)=O",
+         molecule_name="desmethoxyyangonin")
