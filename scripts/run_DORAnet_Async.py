@@ -48,20 +48,22 @@ from DORAnet_agent.policies import (
 RDLogger.DisableLog("rdApp.*")
 
 
-def main() -> None:
-    # ---- Runner configuration (edit these in your IDE) ----
-    create_interactive_visualization = True
-    molecule_name = "kavain"  # e.g., "cryptofolione"
+### ---- Molecules ---- 
+# kavain # COC1=CC(OC(C=CC2=CC=CC=C2)C1)=O
+# Yangonin # COC1=CC=C(C=CC2=CC(OC)=CC(O2)=O)C=C1
+
+
+def main(target_smiles: str,
+         molecule_name: str) -> None:
+    
+    # ---- Runner configuration ----
+    create_interactive_visualization = False
     enable_iteration_viz = False
     iteration_interval = 1
     auto_open_iteration_viz = False
     num_workers = None  # None means "max available"
     max_inflight_expansions = None  # None means "same as num_workers"
     child_downselection_strategy = "first_N"  # "first_N" or "hybrid"
-
-    # Example target molecule
-    target_smiles = "COC1=CC(OC(/C=C/C2=CC=CC=C2)C1)=O" # cryptofolione
-    # target_smiles = "CCCCCCCCC(=O)O"
     target_molecule = Chem.MolFromSmiles(target_smiles)
 
     if target_molecule is None:
@@ -95,7 +97,7 @@ def main() -> None:
     agent = AsyncExpansionDORAnetMCTS(
         root=root,
         target_molecule=target_molecule,
-        total_iterations=200,
+        total_iterations=100,
         max_depth=3,
         use_enzymatic=True,
         use_synthetic=True,
@@ -152,8 +154,8 @@ def main() -> None:
         depth_bonus_coefficient=4.0,
         
         # ---- Visualization Configuration ----
-        enable_visualization=True,
-        enable_interactive_viz=True,
+        enable_visualization=False,
+        enable_interactive_viz=False,
         enable_iteration_visualizations=enable_iteration_viz,
         iteration_viz_interval=iteration_interval,
         auto_open_iteration_viz=auto_open_iteration_viz,
