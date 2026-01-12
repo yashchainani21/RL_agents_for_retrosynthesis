@@ -1,6 +1,9 @@
 *.pyc
 *.html
 *.egg-info/
+*.cdx
+*.cdxml
+*.cds
 scripts/submit_p30041.sh
 scripts/*.txt
 notebooks/.ipynb_checkpoints/
