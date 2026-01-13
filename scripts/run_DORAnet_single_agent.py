@@ -130,12 +130,12 @@ def main(target_smiles: str,
     agent_kwargs = dict(
         root=root,
         target_molecule=target_molecule,
-        total_iterations=200,        # more iterations for deeper exploration
-        max_depth=3,        # deeper retrosynthetic search
+        total_iterations=500,        # more iterations for deeper exploration
+        max_depth=4,        # deeper retrosynthetic search
         use_enzymatic=True,
         use_synthetic=True,
         generations_per_expand=1,
-        max_children_per_expand=50,  # more children since only PKS matches trigger RetroTide
+        max_children_per_expand=30,  # more children since only PKS matches trigger RetroTide
         child_downselection_strategy=child_downselection_strategy,  # "first_N" or "hybrid"
         cofactors_files=[str(f) for f in cofactors_files],  # exclude cofactors and chemistry helpers
         pks_library_file=str(pks_library_file),  # use PKS library for reward
@@ -331,5 +331,5 @@ def main(target_smiles: str,
             print(f"[Runner] Warning: .pgnet cleanup failed ({exc}).")
 
 if __name__ == "__main__":
-    main(target_smiles = "COC1=CC(OC(C=CC2=CC=CC=C2)C1)=O",
-         molecule_name = "kavain")
+    main(target_smiles = "CC1CCCCC(CC1)C",
+         molecule_name = "DMCO")
