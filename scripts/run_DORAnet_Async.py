@@ -65,6 +65,11 @@ RDLogger.DisableLog("rdApp.*")
 # desmethoxyyangonin # COC1=CC(OC(C=CC2=CC=CC=C2)=C1)=O
 # 11_methoxy_12_hydroxydehydrokavain # COC1=CC=C(C=CC2=CC(OC)=CC(O2)=O)C=C1O
 # 7,8-dihydroyangonin # COC1=CC=C(CCC2=CC(OC)=CC(O2)=O)C=C1
+# 5-hydroxykavain # COC1=CC(OC(C=CC2=CC=CC=C2)C1O)=O
+# 7,8-dihydrokavain # COC1=CC(OC(CCC2=CC=CC=C2)C1)=O
+# 5,6-dehydromethysticin # COC1=CC(OC(C=CC2=CC3=C(OCO3)C=C2)=C1)=O
+# methysticin # COC1=CC(OC(C=CC2=CC3=C(OCO3)C=C2)C1)=O
+# 7,8-dihydromethysticin # COC1=CC(OC(CCC2=CC3=C(OCO3)C=C2)C1)=O
 
 def main(target_smiles: str, molecule_name: str) -> None:
     
@@ -110,12 +115,12 @@ def main(target_smiles: str, molecule_name: str) -> None:
     agent = AsyncExpansionDORAnetMCTS(
         root=root,
         target_molecule=target_molecule,
-        total_iterations=100,
+        total_iterations=200,
         max_depth=3,
         use_enzymatic=True,
         use_synthetic=True,
         generations_per_expand=1,
-        max_children_per_expand=50,
+        max_children_per_expand=70,
         child_downselection_strategy=child_downselection_strategy,
         cofactors_files=[str(f) for f in cofactors_files],
         pks_library_file=str(pks_library_file),
@@ -233,7 +238,6 @@ def main(target_smiles: str, molecule_name: str) -> None:
         except subprocess.CalledProcessError as exc:
             print(f"[Runner] Warning: .pgnet cleanup failed ({exc}).")
 
-
 if __name__ == "__main__":
-    main(target_smiles="COC1=CC=C(CCC2=CC(OC)=CC(O2)=O)C=C1",
-         molecule_name="7_8_dihydroyangonin")
+    main(target_smiles="COC1=CC(OC(CCC2=CC3=C(OCO3)C=C2)C1)=O",
+         molecule_name="7_8_dihydromethysticin")
