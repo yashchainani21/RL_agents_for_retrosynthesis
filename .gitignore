@@ -4,6 +4,8 @@
 *.cdx
 *.cdxml
 *.cds
+*.tmp
+*.sh
 scripts/submit_p30041.sh
 scripts/*.txt
 notebooks/.ipynb_checkpoints/
