@@ -9,6 +9,7 @@
 scripts/submit_p30041.sh
 scripts/*.txt
 notebooks/.ipynb_checkpoints/
+notebooks/search_building_blocksDB.ipynb
 .DS_store
 *.pgnet
 data/processed/*.csv
