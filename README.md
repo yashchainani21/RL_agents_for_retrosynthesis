@@ -1,505 +1,409 @@
 # RL Agents for Retrosynthesis
 
-Multi-agent reinforcement learning system for designing synthesis pathways of complex molecules using synthetic organic chemistry, monofunctional enzymes, and multifunctional polyketide synthases (PKS).
+A hierarchical multi-agent reinforcement learning system for retrosynthesis planning that combines **three complementary synthesis modalities**:
 
-## Overview
+1. **Synthetic Organic Chemistry**: Complex carbon-carbon bond formations (Suzuki, Negishi couplings, etc.)
+2. **Monofunctional Enzymes**: Regioselective and stereoselective substrate modifications
+3. **Polyketide Synthases (PKS)**: Programmatic C-C bond formation from acyl-CoA building blocks
 
-This project implements a **Monte Carlo Tree Search (MCTS)** framework that combines backward retrosynthetic analysis with forward biosynthetic planning. The system fragments complex target molecules into simpler precursors and evaluates whether those precursors can be synthesized via:
+This multi-modal approach accesses a wider chemical space than any single modality alone.
 
-1. **Commercial building blocks** (278K+ chemical compounds, 334 biological metabolites)
-2. **Polyketide synthase (PKS) assembly lines** (13K+ known PKS products)
-3. **Enzymatic transformations** (biosynthetic reaction rules)
-4. **Synthetic organic reactions** (traditional chemistry)
+## Scientific Background
 
-## Architecture
+The system uses Monte Carlo Tree Search (MCTS) to explore retrosynthetic pathways:
 
+- **DORAnet Agent**: Performs retrosynthetic fragmentation using both enzymatic (from the JN3604IMT enzyme database) and synthetic transformations (retro-chemical SMARTS)
+- **RetroTide Agent**: Forward PKS synthesis verification—when DORAnet fragments match the PKS library, RetroTide is spawned to design and verify PKS module sequences that can synthesize the fragment
+
+This hierarchical architecture leverages the complementary strengths:
+- Monofunctional enzymes excel at regio/stereoselective modifications but cannot form complex C-C bonds
+- Synthetic chemistry catalyzes complex coupling reactions
+- PKS modules can assemble carbon backbones from simple acyl-CoA precursors
+
+## Installation
+
+```bash
+# Clone the repository
+git clone <repository-url>
+cd RL_agents_for_retrosynthesis
+
+# Create conda environment
+conda create -n retrosynthesis python=3.9
+conda activate retrosynthesis
+
+# Install in development mode
+pip install -e .
 ```
-Target Molecule (SMILES)
-        │
-        ▼
-┌───────────────────────────────────┐
-│     DORAnet MCTS (Backward)       │
-│  ─────────────────────────────    │
-│  • Fragments target molecule      │
-│  • Uses enzymatic + synthetic     │
-│    transformation rules           │
-│  • Filters prohibited chemicals   │
-│  • Checks against PKS library     │
-│  • Checks against sink compounds  │
-└───────────────────────────────────┘
-        │
-        │ (if fragment matches PKS library)
-        ▼
-┌───────────────────────────────────┐
-│    RetroTide MCTS (Forward)       │
-│  ─────────────────────────────    │
-│  • Designs PKS assembly lines     │
-│  • Configures module domains      │
-│  • Evaluates product similarity   │
-│  • Returns viable PKS designs     │
-└───────────────────────────────────┘
-        │
-        ▼
-   Synthesis Pathways + Visualizations
-```
+
+### Dependencies
+
+Core dependencies (see `pyproject.toml` for full list):
+- `doranet` - Reaction network expansion (enzymatic + synthetic transformations)
+- `rdkit>=2022.03.1` - Cheminformatics toolkit
+- `networkx>=2.6.0` - Graph operations
+- `plotly>=5.0.0` - Interactive visualizations
+
+Optional:
+- `retrotide` - PKS synthesis verification (for RetroTide spawning)
+- `bcs` - Biosynthetic cluster scoring
 
 ## Directory Structure
 
 ```
 RL_agents_for_retrosynthesis/
-├── DORAnet_agent/              # DORAnet MCTS implementation
-│   ├── mcts.py                 # Main MCTS driver
-│   ├── async_expansion_mcts.py # Async multiprocessing MCTS
-│   ├── node.py                 # Tree node representation
-│   ├── visualize.py            # Interactive HTML visualization
-│   └── policies/               # Modular rollout/reward policies
-│       ├── __init__.py
-│       ├── base.py             # RolloutPolicy, RewardPolicy ABCs
-│       ├── rollout.py          # Rollout policy implementations
-│       └── reward.py           # Reward policy implementations
-├── RetroTide_agent/            # RetroTide MCTS for PKS design
-│   ├── mcts.py                 # RetroTide MCTS implementation
-│   └── node.py                 # PKS design node representation
-├── scripts/                    # Executable scripts
-│   ├── run_DORAnet_single_agent.py
-│   ├── run_DORAnet_Async.py
-│   └── run_RetroTide_single_agent.py
+├── DORAnet_agent/
+│   ├── mcts.py                    # DORAnetMCTS class (sequential MCTS)
+│   ├── async_expansion_mcts.py    # AsyncExpansionDORAnetMCTS (parallel)
+│   ├── node.py                    # Tree node with MCTS statistics
+│   ├── visualize.py               # Interactive HTML visualization
+│   └── policies/
+│       ├── base.py                # RolloutPolicy, RewardPolicy base classes
+│       ├── rollout.py             # Rollout policy implementations
+│       ├── reward.py              # Reward policy implementations
+│       └── tests/                 # Policy unit tests
+├── RetroTide_agent/
+│   ├── mcts.py                    # Forward PKS synthesis MCTS
+│   └── node.py                    # PKS design state node
+├── scripts/
+│   ├── run_DORAnet_single_agent.py   # Sequential MCTS runner
+│   ├── run_DORAnet_Async.py          # Async MCTS runner (recommended)
+│   ├── run_DORAnet_Async_batch.py    # Batch processing runner
+│   └── run_RetroTide_single_agent.py # Standalone RetroTide runner
+├── tests/
+│   ├── test_async_expansion_mcts.py
+│   ├── test_policies.py
+│   └── fixtures/
 ├── data/
-│   ├── raw/                    # Source data files
-│   │   ├── all_cofactors.csv
-│   │   ├── chemistry_helpers.csv
-│   │   ├── common_metabolites.csv
-│   │   ├── JN3604IMT_rules.tsv
-│   │   ├── Building_Blocks_US.sdf
-│   │   └── prohibited_chemicals.json
-│   └── processed/              # Processed libraries
-│       ├── PKS_smiles.txt
-│       ├── biological_building_blocks.txt
-│       ├── chemical_building_blocks.txt
-│       └── prohibited_chemical_SMILES.txt
-├── utils/                      # Utility functions
-├── tests/                      # Unit tests
-├── notebooks/                  # Jupyter notebooks
-├── results/                    # Output files
-└── figures/                    # Generated visualizations
+│   ├── building_blocks/
+│   │   ├── biological_building_blocks.txt    # 334 metabolites
+│   │   ├── chemical_building_blocks.txt      # 278,779 commercial compounds
+│   │   ├── expanded_pks_building_blocks.txt  # 106,496 PKS products
+│   │   ├── pks_building_blocks.txt           # 13,312 original PKS
+│   │   ├── prohibited_building_blocks.txt    # 652 hazardous (excluded)
+│   │   └── cofactors/
+│   └── processed/                 # Alternative location for building blocks
+├── results/                       # Output directory for runs
+├── ARCHITECTURE_AND_ROADMAP.md
+├── CLAUDE.md                      # AI assistant guidance
+└── pyproject.toml
 ```
 
-## Workflows
+## MCTS Implementations
 
-### 1. DORAnet MCTS (Backward Retrosynthesis)
+### 1. AsyncExpansionDORAnetMCTS (Recommended)
 
-The DORAnet agent performs **backward retrosynthetic search** using Monte Carlo Tree Search:
+Multiprocessing MCTS that parallelizes DORAnet expansion while keeping tree operations thread-safe via virtual loss.
 
-**Selection Phase**
-- Navigates the search tree using UCB1 or depth-biased selection policy
-- Prioritizes unexplored nodes while balancing exploitation of promising paths
+```python
+from rdkit import Chem
+from DORAnet_agent import AsyncExpansionDORAnetMCTS, Node
+from DORAnet_agent.policies import (
+    PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck,
+    SparseTerminalRewardPolicy,
+)
 
-**Expansion Phase**
-- Calls DORAnet neural network to generate molecular fragments
-- Supports two transformation modes:
-  - **Enzymatic**: Biosynthetic reaction rules (oxidations, reductions, condensations, etc.)
-  - **Synthetic**: Organic chemistry transformations (Aldol, Diels-Alder, etc.)
+# Create target molecule
+target_smiles = "COC1=CC(OC(C=CC2=CC=CC=C2)C1)=O"  # kavain
+target_mol = Chem.MolFromSmiles(target_smiles)
 
-**Filtering Pipeline**
-- Removes small byproducts (water, CO2, ammonia)
-- Excludes cofactors (ATP, FAD, NAD+, etc.)
-- Filters molecules exceeding MW threshold (default: 1.5× target MW)
-- Blocks prohibited/hazardous chemicals (652 substances)
-- Removes duplicates and invalid SMILES
+# Create root node
+root = Node(fragment=target_mol, parent=None, depth=0, provenance="target")
 
-**Terminal Detection**
-- **PKS Terminal**: Fragment matches the 13K PKS product library
-- **Sink Compound**: Fragment is commercially available (building blocks)
+# Initialize MCTS with policies
+agent = AsyncExpansionDORAnetMCTS(
+    root=root,
+    target_molecule=target_mol,
+    total_iterations=1000,
+    max_depth=3,
+    max_children_per_expand=50,
+    use_enzymatic=True,
+    use_synthetic=True,
 
-**Reward & Backpropagation**
-- Sink compounds receive configurable reward (default: 2.0)
-- PKS library matches receive reward of 1.0
-- Rewards propagate up the tree to update node values
+    # Building block files
+    sink_compounds_files=[
+        "data/building_blocks/biological_building_blocks.txt",
+        "data/building_blocks/chemical_building_blocks.txt",
+    ],
+    pks_library_file="data/building_blocks/expanded_pks_building_blocks.txt",
+    prohibited_chemicals_file="data/building_blocks/prohibited_building_blocks.txt",
 
-### 2. RetroTide MCTS (Forward PKS Synthesis)
+    # Policy configuration
+    rollout_policy=PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(
+        pks_building_blocks_path="data/building_blocks/expanded_pks_building_blocks.txt"
+    ),
+    reward_policy=SparseTerminalRewardPolicy(sink_terminal_reward=1.0),
 
-When DORAnet discovers a fragment matching the PKS library, it can spawn a **RetroTide agent** to design the PKS assembly line:
+    # Selection configuration
+    selection_policy="depth_biased",  # or "UCB1"
+    depth_bonus_coefficient=4.0,
 
-**PKS Module Architecture**
-- **Loading Module**: Selects initial substrate
-- **Extension Modules**: Add 2-carbon units with modifications
-  - AT (Acyltransferase): Substrate selection
-  - KR (Ketoreductase): Stereochemistry control
-  - DH (Dehydratase): Double bond formation
-  - ER (Enoylreductase): Double bond reduction
-- **Thioesterase (TE)**: Product release via thiolysis, cyclization, or reduction
+    # Async configuration
+    num_workers=None,  # Auto-detect CPU count
+)
 
-**Algorithm**
-- MCTS navigates PKS design space
-- Evaluates designs by product similarity to target
-- Returns viable PKS configurations with module details
+# Run search
+agent.run()
 
-## Chemical Libraries
+# Get results
+print(agent.get_tree_summary())
+agent.save_results("results/output.txt")
+agent.save_finalized_pathways("results/pathways.txt")
+```
 
-| Library | Entries | Description |
-|---------|---------|-------------|
-| PKS Products | 13,312 | Known PKS-synthesizable molecules |
-| Chemical Building Blocks | 278,779 | Commercially available synthons |
-| Biological Building Blocks | 334 | Natural metabolic precursors |
-| Cofactors | 47 | Excluded from fragmentation (ATP, FAD, etc.) |
-| Prohibited Chemicals | 652 | Hazardous/controlled substances |
+### 2. DORAnetMCTS (Sequential)
+
+Single-threaded MCTS for debugging or when parallelization isn't needed.
+
+```python
+from DORAnet_agent import DORAnetMCTS, Node
+
+agent = DORAnetMCTS(
+    root=root,
+    target_molecule=target_mol,
+    total_iterations=100,
+    max_depth=3,
+    # ... same parameters as async
+)
+agent.run()
+```
+
+## Rollout Policies
+
+Rollout policies determine how leaf nodes are evaluated during MCTS simulation.
+
+### NoOpRolloutPolicy
+
+Returns neutral score (0.0). Useful for testing pure MCTS exploration.
+
+```python
+from DORAnet_agent.policies import NoOpRolloutPolicy
+policy = NoOpRolloutPolicy()
+```
+
+### SpawnRetroTideOnDatabaseCheck
+
+Sparse rewards with RetroTide spawning. Checks if fragments match PKS library; on match, spawns RetroTide for forward synthesis verification.
+
+```python
+from DORAnet_agent.policies import SpawnRetroTideOnDatabaseCheck
+policy = SpawnRetroTideOnDatabaseCheck(
+    success_reward=1.0,   # Reward for successful RetroTide PKS designs
+    failure_reward=0.0,
+)
+```
+
+### SAScore_and_SpawnRetroTideOnDatabaseCheck
+
+Dense rewards using Synthetic Accessibility (SA) Score plus PKS database checking. Better training signal but may bias toward chemical synthesis routes.
+
+```python
+from DORAnet_agent.policies import SAScore_and_SpawnRetroTideOnDatabaseCheck
+policy = SAScore_and_SpawnRetroTideOnDatabaseCheck(
+    success_reward=1.0,
+    sa_max_reward=1.0,
+)
+```
+
+### PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck
+
+**Recommended for biosynthetic targets.** Uses Maximum Common Substructure (MCS) similarity to PKS building blocks instead of SA Score. Addresses SA Score's bias toward chemical synthesis.
+
+```python
+from DORAnet_agent.policies import PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck
+policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(
+    pks_building_blocks_path="data/building_blocks/expanded_pks_building_blocks.txt",
+    similarity_threshold=0.7,
+)
+```
+
+## Reward Policies
+
+Reward policies define how to compute rewards for terminal states.
+
+```python
+from DORAnet_agent.policies import (
+    SparseTerminalRewardPolicy,
+    SinkCompoundRewardPolicy,
+    PKSLibraryRewardPolicy,
+    ComposedRewardPolicy,
+)
+
+# Sparse: 1.0 for sink compounds/PKS terminals, 0.0 otherwise
+reward_policy = SparseTerminalRewardPolicy(sink_terminal_reward=1.0)
+
+# Composed: combine multiple policies with weights
+reward_policy = ComposedRewardPolicy([
+    (SinkCompoundRewardPolicy(reward_value=1.0), 0.5),
+    (PKSLibraryRewardPolicy(), 0.5),
+])
+```
 
 ## Usage
 
-### Running DORAnet MCTS
+### Running the Scripts
 
-```bash
-python scripts/run_DORAnet_single_agent.py --name "molecule_name"
-```
-
-**Command Line Options**
-- `--name`: Name for the target molecule (used in output filenames)
-- `--visualize`: Generate interactive HTML visualizations
-- `--iteration-viz`: Create visualizations at intervals during search
-- `--iteration-interval`: Interval between iteration visualizations
-
-### Running RetroTide Standalone
-
-```bash
-python scripts/run_RetroTide_single_agent.py
-```
-
-## Configuration
-
-Key parameters in `DORAnetMCTS`:
+The runner scripts contain hardcoded configurations. Edit the `main()` call at the bottom of each script to change parameters:
 
 ```python
-DORAnetMCTS(
-    # Search parameters
-    total_iterations=40,              # MCTS iterations
-    max_depth=3,                      # Maximum fragmentation depth
-
-    # Transformation modes
-    use_enzymatic=True,               # Enable biosynthetic rules
-    use_synthetic=True,               # Enable organic chemistry rules
-    generations_per_expand=1,         # DORAnet generations per expansion
-    max_children_per_expand=10,       # Max fragments retained per expansion
-
-    # Filtering
-    MW_multiple_to_exclude=1.5,       # Max MW = target_MW × this value
-
-    # Selection policy
-    selection_policy="depth_biased",  # "UCB1" or "depth_biased"
-    depth_bonus_coefficient=2.0,      # Depth exploration bonus
-
-    # Rewards
-    sink_terminal_reward=2.0,         # Reward for commercial precursors
-
-    # RetroTide integration
-    spawn_retrotide=True,             # Auto-launch RetroTide for PKS matches
-    retrotide_kwargs={
-        "max_depth": 10,
-        "total_iterations": 200,
-    },
-
-    # Visualization
-    enable_interactive_viz=True,
-)
+# In scripts/run_DORAnet_Async.py
+if __name__ == "__main__":
+    main(
+        target_smiles="COC1=CC(OC(C=CC2=CC=CC=C2)C1)=O",  # kavain
+        molecule_name="kavain",
+        total_iterations=1000,
+        max_depth=3,
+        max_children_per_expand=50,
+        results_subfolder="kavain_experiment",
+    )
 ```
 
-## Async Expansion
+Then run:
 
-For faster exploration on multi-core systems, use `AsyncExpansionDORAnetMCTS` which offloads expansion to multiprocessing workers:
+```bash
+# Async MCTS (recommended)
+python scripts/run_DORAnet_Async.py
 
-### Quick Start
+# Sequential MCTS
+python scripts/run_DORAnet_single_agent.py
 
-```python
-from DORAnet_agent import AsyncExpansionDORAnetMCTS, Node
-
-# Create root node
-root = Node(fragment=target_molecule, parent=None, depth=0, provenance="target")
-
-# Create async expansion agent
-agent = AsyncExpansionDORAnetMCTS(
-    root=root,
-    target_molecule=target_molecule,
-    total_iterations=100,
-    max_depth=3,
-
-    # Async expansion parameters
-    num_workers=4,                 # Number of worker processes
-    max_inflight_expansions=4,     # Cap in-flight expansions
-
-    # Standard parameters work the same as DORAnetMCTS
-    use_enzymatic=True,
-    use_synthetic=True,
-)
-
-# Run parallel search
-agent.run()
-
-# Access results (same API as sequential)
-pks_matches = agent.get_pks_matches()
-sink_compounds = agent.get_sink_compounds()
-
-# Results are available on the agent as usual
-pks_matches = agent.get_pks_matches()
-sink_compounds = agent.get_sink_compounds()
+# Batch processing
+python scripts/run_DORAnet_Async_batch.py
 ```
 
-### Scripts
+## MCTS Parameters
 
-The runner scripts are designed to be edited and run from your IDE:
-
-- `scripts/run_DORAnet_single_agent.py` for the sequential run
-- `scripts/run_DORAnet_Async.py` for async expansion
-
-### Async Configuration
+### Constructor Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `num_workers` | int | CPU-1 | Number of worker processes |
-| `max_inflight_expansions` | int | `num_workers` | Maximum number of expansions queued at once |
+| `root` | Node | required | Root node containing target molecule |
+| `target_molecule` | Chem.Mol | required | RDKit molecule to fragment |
+| `total_iterations` | int | 100 | Number of MCTS iterations |
+| `max_depth` | int | 3 | Maximum tree depth |
+| `max_children_per_expand` | int | 10 | Max children per expansion |
+| `use_enzymatic` | bool | True | Enable enzymatic transformations |
+| `use_synthetic` | bool | True | Enable synthetic transformations |
+| `selection_policy` | str | "depth_biased" | "UCB1" or "depth_biased" |
+| `depth_bonus_coefficient` | float | 2.0 | Depth bias strength (depth_biased only) |
+| `child_downselection_strategy` | str | "first_N" | "first_N" or "hybrid" |
+| `MW_multiple_to_exclude` | float | 1.5 | Filter fragments > target_MW × this |
+| `num_workers` | int | None | Worker processes (None = auto) |
 
-## Modular Policy System
+### Selection Policies
 
-The MCTS implementation uses a **modular policy architecture** that allows swapping rollout and reward strategies without modifying core MCTS logic.
+- **UCB1**: Standard Upper Confidence Bound—balances exploration and exploitation
+- **depth_biased**: UCB1 + depth bonus—encourages finding complete pathways to building blocks
 
-### Policy Types
+## Building Block Libraries
 
-| Policy Type | Purpose | Default |
-|-------------|---------|---------|
-| `RolloutPolicy` | Determines what happens after expansion (e.g., spawn RetroTide) | `NoOpRolloutPolicy` |
-| `RewardPolicy` | Computes reward for terminal/sink nodes | `SparseTerminalRewardPolicy` |
-
-### Built-in Policies
-
-**Rollout Policies:**
-- `NoOpRolloutPolicy`: Returns zero reward, no side effects (default)
-- `SpawnRetroTideOnDatabaseCheck`: Spawns RetroTide MCTS when fragment matches PKS library (sparse rewards)
-- `SAScore_and_SpawnRetroTideOnDatabaseCheck`: Dense rewards based on synthetic accessibility (SA Score) + RetroTide spawning for PKS matches (RECOMMENDED for better training signals)
-
-**Reward Policies:**
-- `SparseTerminalRewardPolicy`: Returns reward for sink compounds and PKS matches
-- `SinkCompoundRewardPolicy`: Returns reward only for sink compounds  
-- `PKSLibraryRewardPolicy`: Returns reward for PKS library matches
-- `ComposedRewardPolicy`: Weighted combination of multiple reward policies
-
-### SA Score Rewards (Dense Signals)
-
-The `SAScore_and_SpawnRetroTideOnDatabaseCheck` policy provides dense intermediate rewards based on synthetic accessibility:
-
-- **SA Score Formula**: `reward = (10 - sa_score) / 10`
-- **Reward Range**: 0.0-0.9 (simple molecules get ~0.8-0.9, complex molecules get ~0.2-0.4)
-- **Logic**:
-  1. Terminal nodes (sink/PKS designs): `success_reward` (default 1.0)
-  2. PKS library match + RetroTide succeeds: `success_reward` (1.0)
-  3. PKS library match + RetroTide fails: SA Score reward (dense signal!)
-  4. Non-PKS nodes: SA Score reward (dense signal!)
-
-This provides valuable training signal for all nodes, not just terminal states.
-
-### Using Custom Policies
-
-```python
-from DORAnet_agent import DORAnetMCTS
-from DORAnet_agent.policies import (
-    SpawnRetroTideOnDatabaseCheck,
-    SAScore_and_SpawnRetroTideOnDatabaseCheck,
-    SparseTerminalRewardPolicy,
-    ComposedRewardPolicy,
-    SinkCompoundRewardPolicy,
-    PKSLibraryRewardPolicy,
-)
-
-# Option 1: Use backward-compatible spawn_retrotide flag
-agent = DORAnetMCTS(
-    root=root,
-    target_molecule=target_molecule,
-    spawn_retrotide=True,  # Creates SpawnRetroTideOnDatabaseCheck automatically
-    # ... other parameters
-)
-
-# Option 2: Sparse rewards - Explicit SpawnRetroTideOnDatabaseCheck
-rollout = SpawnRetroTideOnDatabaseCheck(
-    pks_library=pks_smiles,
-    retrotide_kwargs={"max_depth": 10, "total_iterations": 200},
-    success_reward=1.0,
-    failure_reward=0.0,
-)
-reward = SparseTerminalRewardPolicy(sink_terminal_reward=2.0)
-
-agent = DORAnetMCTS(
-    root=root,
-    target_molecule=target_molecule,
-    rollout_policy=rollout,
-    reward_policy=reward,
-    # ... other parameters
-)
-
-# Option 3: Dense rewards - SA Score + RetroTide (RECOMMENDED)
-rollout = SAScore_and_SpawnRetroTideOnDatabaseCheck(
-    success_reward=1.0,   # Reward for successful PKS designs
-    sa_max_reward=1.0,    # Optional cap on SA rewards (default 1.0)
-)
-reward = SparseTerminalRewardPolicy(sink_terminal_reward=1.0)
-
-agent = DORAnetMCTS(
-    root=root,
-    target_molecule=target_molecule,
-    rollout_policy=rollout,
-    reward_policy=reward,
-    # ... other parameters
-)
-
-# Option 4: Composed reward policy for custom weighting
-composed_reward = ComposedRewardPolicy([
-    (SinkCompoundRewardPolicy(reward_value=2.0), 0.7),  # 70% weight
-    (PKSLibraryRewardPolicy(), 0.3),                     # 30% weight
-])
-
-agent = DORAnetMCTS(
-    root=root,
-    target_molecule=target_molecule,
-    reward_policy=composed_reward,
-)
-```
-
-### Creating Custom Policies
-
-Implement the abstract base classes to create custom policies:
-
-```python
-from DORAnet_agent.policies import RolloutPolicy, RewardPolicy, RolloutResult
-
-class MyRolloutPolicy(RolloutPolicy):
-    @property
-    def name(self) -> str:
-        return "MyCustomRollout"
-    
-    def rollout(self, node, context):
-        # Custom simulation/evaluation logic
-        reward = evaluate_node(node)
-        return RolloutResult(
-            reward=reward,
-            terminal=is_terminal(node),
-            terminal_type="custom",
-            metadata={"custom_data": "value"}
-        )
-
-class MyRewardPolicy(RewardPolicy):
-    @property  
-    def name(self) -> str:
-        return "MyCustomReward"
-    
-    def calculate_reward(self, node, context):
-        # Custom reward calculation
-        return compute_reward(node, context)
-```
-
-### Deprecation Notice
-
-The `reward_fn` parameter in `AsyncExpansionDORAnetMCTS` is deprecated. Use `reward_policy` instead:
-
-```python
-# Deprecated (still works but not recommended)
-agent = AsyncExpansionDORAnetMCTS(
-    reward_fn=lambda node: my_reward(node),  # Deprecated
-    ...
-)
-
-# Recommended
-agent = AsyncExpansionDORAnetMCTS(
-    reward_policy=MyRewardPolicy(),
-    ...
-)
-```
-
-### How It Works
-
-Async expansion lets the main thread keep selecting while expansions run in worker processes:
-
-1. **Selection Phase** (main thread): select a leaf as usual, skip nodes already pending expansion
-2. **Expansion Phase** (workers): DORAnet fragment generation runs in parallel
-3. **Integration Phase** (main thread): returned fragments are attached to the tree and backpropagated
-3. **Backpropagation Phase** (synchronized): Virtual loss removed, real rewards applied
-
-Virtual loss temporarily penalizes selected nodes, making them appear less attractive to other threads. This encourages different threads to explore different parts of the tree.
-
-### Expected Speedup
-
-| Workers | Typical Speedup |
-|---------|-----------------|
-| 1 | 1.0x (sequential) |
-| 2 | 1.6-1.8x |
-| 4 | 2.5-3.5x |
-| 8 | 3.5-5.0x |
-
-Actual speedup depends on the complexity of fragment generation and tree structure.
-
-## Output Files
-
-| File Pattern | Description |
-|--------------|-------------|
-| `doranet_results_*.txt` | Detailed search tree and all pathways |
-| `finalized_pathways_*.txt` | Complete successful synthesis routes |
-| `successful_pathways_*.txt` | PKS-synthesizable routes only |
-| `doranet_interactive_*.html` | Interactive tree visualization |
-| `doranet_pathways_*.html` | Filtered pathways visualization |
-
-### Interactive Visualizations
-
-The HTML visualizations feature:
-- Mouse wheel zoom and drag-to-pan navigation
-- Hover tooltips showing molecule structures and metadata
-- Color-coded nodes:
-  - **Orange**: Target molecule
-  - **Blue**: Enzymatic transformation products
-  - **Purple**: Synthetic transformation products
-  - **Green**: PKS library matches
-- Edge labels showing reaction SMARTS
-
-## Dependencies
-
-| Package | Purpose |
-|---------|---------|
-| rdkit | Molecular representation and cheminformatics |
-| doranet | Retrosynthesis neural networks |
-| retrotide | PKS design engine |
-| bcs | Biochemistry synthesis library |
-| networkx | Graph algorithms for MCTS tree |
-| plotly | Interactive HTML visualizations |
-| numpy | Numerical computing |
-| pandas | Data manipulation |
-
-## Caching
-
-The system implements efficient caching to avoid redundant computations:
-
-- **Fragment Cache**: DORAnet expansions cached by MD5 hash of input parameters
-- **Library Cache**: Large chemical libraries (>10K entries) cached as pickle files
-- Cache location: `data/processed/.cache/`
-
-## Safety Features
-
-The system includes multiple safety checks:
-
-1. **Prohibited Chemical Filtering**: Blocks 652 hazardous/controlled substances
-2. **Target Validation**: Raises error if target molecule is prohibited
-3. **MW Threshold**: Prevents generation of unrealistically large intermediates
-4. **Cofactor Exclusion**: Removes metabolic cofactors from pathway intermediates
+| Library | Count | Description |
+|---------|-------|-------------|
+| Chemical | 278,779 | Commercial building blocks |
+| Biological | 334 | Biologically-derived compounds |
+| PKS Original | 13,312 | Core PKS building blocks |
+| PKS Expanded | 106,496 | Expanded PKS library with intermediates |
+| Prohibited | 652 | Hazardous compounds (excluded) |
+| Cofactors | 47 | Enzymatic cofactors (excluded from search) |
 
 ## Testing
 
 ```bash
+# Run all tests
 pytest tests/
+
+# Run specific test file
+pytest tests/test_async_expansion_mcts.py -v
+
+# Run with coverage
+pytest tests/ --cov=DORAnet_agent --cov-report=term-missing
 ```
 
-Tests cover:
-- MCTS selection policies
-- Node creation and manipulation
-- Data loading and validation
-- Fragment filtering logic
+## Output Files
+
+Each run generates:
+
+```
+results/<subfolder>/
+├── doranet_results_<name>_<timestamp>.txt       # Full tree and node details
+├── finalized_pathways_<name>_<timestamp>.txt    # Extracted synthesis pathways
+├── successful_pathways_<name>_<timestamp>.txt   # Verified PKS pathways
+├── doranet_interactive_<name>_<timestamp>.html  # Interactive tree visualization
+└── doranet_pathways_<name>_<timestamp>.html     # Pathways-only visualization
+```
+
+## Architecture
+
+### Hierarchical Agent Flow
+
+```
+Target Molecule (SMILES)
+         │
+         ▼
+┌────────────────────────────────────────────────────────────┐
+│              DORAnet MCTS (Retrosynthetic)                 │
+│  ┌──────────┐  ┌──────────┐  ┌─────────────────────────┐  │
+│  │  Select  │→ │  Expand  │→ │  Rollout Policy Check   │  │
+│  │  (UCB1)  │  │ (DORAnet)│  │  (PKS Library Match?)   │  │
+│  └──────────┘  └──────────┘  └─────────────────────────┘  │
+│       ▲              │                    │               │
+│       │              │         ┌──────────┴──────────┐    │
+│       │              │         ▼                     ▼    │
+│       │              │    ┌─────────┐         ┌──────────┐│
+│       │              │    │ NO: Use │         │YES: Spawn││
+│       │              │    │ Reward  │         │ RetroTide││
+│       │              │    │ Policy  │         │  MCTS    ││
+│       │              │    └────┬────┘         └────┬─────┘│
+│       │              │         │                   │      │
+│       │              ▼         ▼                   ▼      │
+│       │        ┌───────────────────────────────────────┐  │
+│       └────────│           Backpropagate              │  │
+│                └───────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────┘
+                         │
+                         ▼
+              Terminal Conditions:
+              • Sink compound (building block)
+              • PKS terminal (RetroTide verified)
+              • Max depth reached
+```
+
+### MDP Formulation
+
+**DORAnet Agent (Retrosynthetic)**:
+- **State**: Molecular fragment (RDKit Mol + canonical SMILES)
+- **Action**: DORAnet expansion (enzymatic or synthetic mode)
+- **Reward**: Sparse—1.0 for terminals (sink compounds, PKS matches), 0.0 otherwise
+- **Selection**: Depth-biased UCB1 (default) or standard UCB1
+
+**RetroTide Agent (Forward PKS Synthesis)**:
+- **State**: PKS intermediate (product, module design, depth)
+- **Action**: Add PKS extension module (condensation, reduction, dehydration domains)
+- **Reward**: 1.0 for exact target match (graph isomorphism), else MCS similarity
+- **Selection**: UCB1 with subgraph-guided pruning
+
+See [ARCHITECTURE_AND_ROADMAP.md](ARCHITECTURE_AND_ROADMAP.md) for detailed architecture documentation.
 
 ## License
 
-[Add license information]
+MIT License - see [LICENSE](LICENSE) for details.
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Add tests for new functionality
+4. Run `pytest tests/` to ensure all tests pass
+5. Submit a pull request
 
 ## Citation
 
-[Add citation information]
+If you use this work, please cite:
+
+```bibtex
+@software{rl_agents_retrosynthesis,
+  title={RL Agents for Retrosynthesis},
+  author={Chainani, Yash},
+  year={2024},
+  url={https://github.com/...}
+}
+```
