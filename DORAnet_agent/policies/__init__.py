@@ -13,6 +13,7 @@ from .rollout import (
     NoOpRolloutPolicy,
     SpawnRetroTideOnDatabaseCheck,
     SAScore_and_SpawnRetroTideOnDatabaseCheck,
+    PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck,
 )
 from .reward import (
     SparseTerminalRewardPolicy,
@@ -30,6 +31,7 @@ __all__ = [
     "NoOpRolloutPolicy",
     "SpawnRetroTideOnDatabaseCheck",
     "SAScore_and_SpawnRetroTideOnDatabaseCheck",
+    "PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck",
     # Reward policies
     "SparseTerminalRewardPolicy",
     "SinkCompoundRewardPolicy",

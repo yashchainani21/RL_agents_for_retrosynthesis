@@ -64,6 +64,16 @@ class Node:
         # Async expansion flag to prevent reselection while expansion is in-flight
         self.is_expansion_pending: bool = False
 
+        # DORA-XGB feasibility scoring for enzymatic reactions
+        # Score is probability of feasibility (0.0-1.0), label is binary (0 or 1)
+        self.feasibility_score: Optional[float] = None
+        self.feasibility_label: Optional[int] = None
+
+        # Pathermo thermodynamic scoring for synthetic reactions
+        # enthalpy_of_reaction is ΔH in kcal/mol, thermodynamic_label is binary (0 or 1)
+        self.enthalpy_of_reaction: Optional[float] = None
+        self.thermodynamic_label: Optional[int] = None
+
         # identifiers for logging/visualizing the tree
         self.node_id: int = Node.node_counter
         self.parent_id: Optional[int] = parent.node_id if parent else None

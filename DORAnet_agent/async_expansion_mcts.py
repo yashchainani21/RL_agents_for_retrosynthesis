@@ -417,6 +417,27 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
                 reactants_smiles=frag.get("reactants_smiles", []),
                 products_smiles=frag.get("products_smiles", []),
             )
+
+            # Score feasibility for enzymatic reactions using DORA-XGB
+            provenance = frag.get("provenance")
+            if provenance == "enzymatic":
+                score, label = self.feasibility_scorer.score_reaction(
+                    reactants_smiles=frag.get("reactants_smiles", []),
+                    products_smiles=frag.get("products_smiles", []),
+                    provenance=provenance
+                )
+                child.feasibility_score = score
+                child.feasibility_label = label
+
+            # Score thermodynamic feasibility using pathermo (both enzymatic and synthetic)
+            delta_h, thermo_label = self.thermodynamic_scorer.score_reaction(
+                reactants_smiles=frag.get("reactants_smiles", []),
+                products_smiles=frag.get("products_smiles", []),
+                provenance=provenance
+            )
+            child.enthalpy_of_reaction = delta_h
+            child.thermodynamic_label = thermo_label
+
             child.created_at_iteration = iteration
             leaf.add_child(child)
             self.nodes.append(child)

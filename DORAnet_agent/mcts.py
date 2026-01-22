@@ -50,6 +50,22 @@ except ImportError:
     RetroTideNode = None
     RETROTIDE_AVAILABLE = False
 
+# Optional DORA-XGB imports for enzymatic reaction feasibility scoring
+try:
+    from DORA_XGB import DORA_XGB
+    DORA_XGB_AVAILABLE = True
+except ImportError:
+    DORA_XGB = None
+    DORA_XGB_AVAILABLE = False
+
+# Optional pathermo imports for synthetic reaction thermodynamic scoring
+try:
+    from pathermo.properties import Hf as pathermo_Hf
+    PATHERMO_AVAILABLE = True
+except ImportError:
+    pathermo_Hf = None
+    PATHERMO_AVAILABLE = False
+
 # Silence RDKit logs during network builds.
 RDLogger.DisableLog("rdApp.*")
 
@@ -109,6 +125,209 @@ def get_smiles_cache_info():
         A named tuple with hits, misses, maxsize, and currsize fields.
     """
     return _canonicalize_smiles.cache_info()
+
+
+def _reverse_reaction_string(rxn_str: str) -> str:
+    """Reverse reaction direction: A.B>>C.D becomes C.D>>A.B.
+
+    Used to convert reactions from retro direction (as stored by DORAnet)
+    to forward direction (as expected by DORA-XGB).
+
+    Args:
+        rxn_str: Reaction string in format "reactants>>products"
+
+    Returns:
+        Reversed reaction string with products and reactants swapped.
+    """
+    if ">>" not in rxn_str:
+        return rxn_str
+    reactants, products = rxn_str.split(">>", 1)
+    return f"{products}>>{reactants}"
+
+
+class FeasibilityScorer:
+    """Scores enzymatic reaction feasibility using DORA-XGB.
+
+    This class provides lazy initialization of the DORA-XGB model and
+    scoring of enzymatic reactions. Synthetic reactions are skipped.
+
+    The scorer expects reactions in the DORAnet storage format (retro direction)
+    and automatically reverses them to forward direction for DORA-XGB.
+    """
+
+    def __init__(self):
+        self._model = None
+        self._initialized = False
+
+    def _ensure_initialized(self):
+        """Lazy initialization of DORA-XGB model."""
+        if self._initialized:
+            return
+        self._initialized = True
+        if DORA_XGB_AVAILABLE:
+            try:
+                self._model = DORA_XGB.feasibility_classifier(
+                    cofactor_positioning='by_descending_MW'
+                )
+            except Exception as e:
+                print(f"[FeasibilityScorer] Failed to initialize DORA-XGB: {e}")
+                self._model = None
+
+    def score_reaction(
+        self,
+        reactants_smiles: List[str],
+        products_smiles: List[str],
+        provenance: str
+    ) -> Tuple[Optional[float], Optional[int]]:
+        """Score a reaction's feasibility.
+
+        Args:
+            reactants_smiles: List of reactant SMILES (as stored by DORAnet)
+            products_smiles: List of product SMILES (as stored by DORAnet)
+            provenance: "enzymatic" or "synthetic"
+
+        Returns:
+            (score, label) tuple where:
+            - score: Probability of feasibility (0.0-1.0), or None if not scored
+            - label: Binary label (0=infeasible, 1=feasible), or None if not scored
+        """
+        # Only score enzymatic reactions
+        if provenance != "enzymatic":
+            return None, None
+
+        # Check for missing data
+        if not reactants_smiles or not products_smiles:
+            return None, None
+
+        self._ensure_initialized()
+
+        if self._model is None:
+            return None, None
+
+        try:
+            # DORAnet stores reactions in RETRO direction for visualization
+            # DORA-XGB expects FORWARD direction
+            # Build the stored reaction string and reverse it
+            reactants_str = ".".join(reactants_smiles)
+            products_str = ".".join(products_smiles)
+            stored_rxn = f"{reactants_str}>>{products_str}"
+            forward_rxn = _reverse_reaction_string(stored_rxn)
+
+            score = self._model.predict_proba(forward_rxn)
+            label = self._model.predict_label(forward_rxn)
+            return float(score), int(label)
+        except Exception as e:
+            print(f"[FeasibilityScorer] Prediction failed: {e}")
+            return None, None
+
+
+class ThermodynamicScorer:
+    """Scores reaction thermodynamic feasibility using pathermo.
+
+    This class computes enthalpy of reaction (ΔH) using group contribution
+    methods via pathermo's Hf function. Reactions with ΔH < 15 kcal/mol
+    are considered thermodynamically feasible.
+
+    Applies to both enzymatic and synthetic reactions. While gas-phase
+    enthalpies are only a proxy for solution-phase free energies, this
+    approximation provides useful thermodynamic guidance.
+
+    The scorer expects reactions in the DORAnet storage format (retro direction)
+    and automatically reverses them to forward direction for thermodynamic calculation.
+    """
+
+    # Feasibility threshold in kcal/mol
+    FEASIBILITY_THRESHOLD = 15.0
+
+    def __init__(self):
+        self._initialized = False
+
+    def _ensure_initialized(self):
+        """Check that pathermo is available."""
+        if self._initialized:
+            return
+        self._initialized = True
+        if not PATHERMO_AVAILABLE:
+            print("[ThermodynamicScorer] pathermo not available - thermodynamic scoring disabled")
+
+    def _calculate_enthalpy_of_formation(self, smiles: str) -> Optional[float]:
+        """Calculate enthalpy of formation for a single molecule.
+
+        Args:
+            smiles: SMILES string of the molecule.
+
+        Returns:
+            Enthalpy of formation in kcal/mol, or None if calculation fails.
+        """
+        if not PATHERMO_AVAILABLE or pathermo_Hf is None:
+            return None
+        try:
+            hf = pathermo_Hf(smiles)
+            return float(hf) if hf is not None else None
+        except Exception:
+            return None
+
+    def score_reaction(
+        self,
+        reactants_smiles: List[str],
+        products_smiles: List[str],
+        provenance: str
+    ) -> Tuple[Optional[float], Optional[int]]:
+        """Score a reaction's thermodynamic feasibility.
+
+        Args:
+            reactants_smiles: List of reactant SMILES (as stored by DORAnet, retro direction)
+            products_smiles: List of product SMILES (as stored by DORAnet, retro direction)
+            provenance: "enzymatic" or "synthetic"
+
+        Returns:
+            (enthalpy_of_reaction, label) tuple where:
+            - enthalpy_of_reaction: ΔH in kcal/mol, or None if not scored
+            - label: 1 if ΔH < 15 kcal/mol (feasible), 0 otherwise, or None if not scored
+        """
+        # Check for missing data
+        if not reactants_smiles or not products_smiles:
+            return None, None
+
+        self._ensure_initialized()
+
+        if not PATHERMO_AVAILABLE:
+            return None, None
+
+        try:
+            # DORAnet stores reactions in RETRO direction
+            # For forward reaction: products_smiles (stored) become reactants
+            #                       reactants_smiles (stored) become products
+            # ΔH°rxn = Σ(ΔH°f products) - Σ(ΔH°f reactants)
+            # In forward direction: ΔH = Σ(Hf of reactants_smiles) - Σ(Hf of products_smiles)
+
+            # Calculate Hf for all "products" in forward direction (reactants_smiles in storage)
+            products_hf = []
+            for smiles in reactants_smiles:
+                hf = self._calculate_enthalpy_of_formation(smiles)
+                if hf is None:
+                    return None, None  # Can't compute if any molecule fails
+                products_hf.append(hf)
+
+            # Calculate Hf for all "reactants" in forward direction (products_smiles in storage)
+            reactants_hf = []
+            for smiles in products_smiles:
+                hf = self._calculate_enthalpy_of_formation(smiles)
+                if hf is None:
+                    return None, None  # Can't compute if any molecule fails
+                reactants_hf.append(hf)
+
+            # ΔH°rxn = Σ(products) - Σ(reactants)
+            delta_h = sum(products_hf) - sum(reactants_hf)
+
+            # Determine feasibility label
+            label = 1 if delta_h < self.FEASIBILITY_THRESHOLD else 0
+
+            return delta_h, label
+
+        except Exception as e:
+            print(f"[ThermodynamicScorer] Prediction failed: {e}")
+            return None, None
 
 
 def _load_enzymatic_rule_labels() -> List[str]:
@@ -730,6 +949,20 @@ class DORAnetMCTS:
         print(f"[DORAnet] Using rollout policy: {self.rollout_policy.name}")
         print(f"[DORAnet] Using reward policy: {self.reward_policy.name}")
 
+        # Initialize feasibility scorer for enzymatic reactions
+        self.feasibility_scorer = FeasibilityScorer()
+        if DORA_XGB_AVAILABLE:
+            print("[DORAnet] DORA-XGB available for enzymatic feasibility scoring")
+        else:
+            print("[DORAnet] DORA-XGB not available - enzymatic feasibility scoring disabled")
+
+        # Initialize thermodynamic scorer for synthetic reactions
+        self.thermodynamic_scorer = ThermodynamicScorer()
+        if PATHERMO_AVAILABLE:
+            print("[DORAnet] pathermo available for synthetic thermodynamic scoring")
+        else:
+            print("[DORAnet] pathermo not available - synthetic thermodynamic scoring disabled")
+
     def _build_rollout_context(self) -> Dict[str, Any]:
         """
         Build context dictionary for rollout and reward policies.
@@ -1210,6 +1443,26 @@ class DORAnetMCTS:
                 reactants_smiles=frag_info.reactants_smiles,
                 products_smiles=frag_info.products_smiles,
             )
+
+            # Score feasibility for enzymatic reactions using DORA-XGB
+            if provenance == "enzymatic":
+                score, label = self.feasibility_scorer.score_reaction(
+                    reactants_smiles=frag_info.reactants_smiles,
+                    products_smiles=frag_info.products_smiles,
+                    provenance=provenance
+                )
+                child.feasibility_score = score
+                child.feasibility_label = label
+
+            # Score thermodynamic feasibility using pathermo (both enzymatic and synthetic)
+            delta_h, thermo_label = self.thermodynamic_scorer.score_reaction(
+                reactants_smiles=frag_info.reactants_smiles,
+                products_smiles=frag_info.products_smiles,
+                provenance=provenance
+            )
+            child.enthalpy_of_reaction = delta_h
+            child.thermodynamic_label = thermo_label
+
             node.add_child(child)
             self.nodes.append(child)
             self.edges.append((node.node_id, child.node_id))
@@ -1597,6 +1850,22 @@ class DORAnetMCTS:
 
             lines.append(f"  Step {i} ({step_node.provenance}): {rxn_label}")
             lines.append(f"           Reaction: {rxn_equation}")
+
+            # Add feasibility info for enzymatic reactions (DORA-XGB)
+            if step_node.provenance == "enzymatic":
+                if step_node.feasibility_score is not None:
+                    label_str = "feasible" if step_node.feasibility_label == 1 else "infeasible"
+                    lines.append(f"           Feasibility: Score={step_node.feasibility_score:.3f}, Label={step_node.feasibility_label} ({label_str})")
+                else:
+                    lines.append(f"           Feasibility: N/A (not scored)")
+
+            # Add thermodynamic info for all reactions (pathermo)
+            if step_node.enthalpy_of_reaction is not None:
+                label_str = "feasible" if step_node.thermodynamic_label == 1 else "infeasible"
+                lines.append(f"           Thermodynamics: ΔH={step_node.enthalpy_of_reaction:.2f} kcal/mol, Label={step_node.thermodynamic_label} ({label_str})")
+            else:
+                lines.append(f"           Thermodynamics: N/A (not scored)")
+
             lines.append(f"           Node: {step_node.node_id} | Fragment: {step_node.smiles}")
 
             # Annotate branched products with sink compound type if available.
