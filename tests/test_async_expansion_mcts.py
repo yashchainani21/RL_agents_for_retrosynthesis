@@ -632,3 +632,368 @@ class TestMostThermoFeasibleStrategy:
         assert child.feasibility_label == 0
         assert child.enthalpy_of_reaction == 99.99
         assert child.thermodynamic_label == 0
+
+
+# =============================================================================
+# Tests for PKS library match priority over sink compound short-circuit
+# =============================================================================
+
+from DORAnet_agent.mcts import _canonicalize_smiles
+from DORAnet_agent.policies.base import RolloutResult, RolloutPolicy, RewardPolicy
+
+
+class MockRolloutPolicy(RolloutPolicy):
+    """Mock rollout policy for testing that tracks calls and returns configurable results."""
+
+    def __init__(self, result: RolloutResult = None):
+        self._result = result or RolloutResult(reward=0.5, terminal=False)
+        self.calls: List[str] = []
+
+    def rollout(self, node: "Node", context: Dict[str, Any]) -> RolloutResult:
+        self.calls.append(node.smiles or "")
+        return self._result
+
+    @property
+    def name(self) -> str:
+        return "MockRolloutPolicy"
+
+
+class MockRewardPolicy(RewardPolicy):
+    """Mock reward policy for testing that tracks calls."""
+
+    def __init__(self, reward: float = 1.0):
+        self._reward = reward
+        self.calls: List[str] = []
+
+    def calculate_reward(self, node: "Node", context: Dict[str, Any]) -> float:
+        self.calls.append(node.smiles or "")
+        return self._reward
+
+    @property
+    def name(self) -> str:
+        return "MockRewardPolicy"
+
+
+class TestPKSSinkCompoundPriority:
+    """Tests for PKS library matches that are also sink compounds."""
+
+    def test_pks_match_triggers_rollout_even_if_sink_compound(
+        self, monkeypatch, sample_molecule
+    ):
+        """Nodes that are both sink compounds AND PKS matches should trigger rollout.
+
+        When the rollout result is not terminal, the reward policy is called as fallback
+        for sink compounds.
+        """
+        # Test SMILES that will be both a sink compound and PKS library match
+        test_smiles = "CCCCO"  # 1-butanol
+        canonical_smiles = _canonicalize_smiles(test_smiles)
+
+        def fake_expand_worker(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+            return [{
+                "smiles": test_smiles,
+                "reaction_smarts": "smarts",
+                "reaction_name": "reaction",
+                "reactants_smiles": [test_smiles],
+                "products_smiles": [test_smiles],
+                "provenance": "enzymatic",
+            }]
+
+        monkeypatch.setattr(
+            "DORAnet_agent.async_expansion_mcts._expand_worker",
+            fake_expand_worker,
+        )
+        monkeypatch.setattr(
+            "DORAnet_agent.async_expansion_mcts.ProcessPoolExecutor",
+            _FakeExecutor,
+        )
+
+        Node.node_counter = 0
+        root = Node(fragment=sample_molecule, parent=None, depth=0, provenance="target")
+
+        # Create mock policies to track calls
+        # Mock rollout returns non-terminal, so reward policy should be called as fallback
+        mock_rollout = MockRolloutPolicy(
+            RolloutResult(reward=0.8, terminal=False)
+        )
+        mock_reward = MockRewardPolicy(reward=1.0)
+
+        agent = AsyncExpansionDORAnetMCTS(
+            root=root,
+            target_molecule=sample_molecule,
+            total_iterations=1,
+            max_depth=1,
+            use_enzymatic=True,
+            use_synthetic=False,
+            num_workers=1,
+            rollout_policy=mock_rollout,
+            reward_policy=mock_reward,
+        )
+
+        # Set sink_compounds and pks_library using canonical SMILES
+        # _get_sink_compound_type checks biological_sink_compounds and chemical_sink_compounds
+        agent.sink_compounds = {canonical_smiles}
+        agent.chemical_sink_compounds = {canonical_smiles}
+        agent.pks_library = {canonical_smiles}
+
+        agent.run()
+
+        # Verify rollout was called even though it's a sink compound
+        # (because it's also in PKS library - this is the key behavior we're testing)
+        assert canonical_smiles in mock_rollout.calls, \
+            "Rollout should be called for sink compound that matches PKS library"
+        # Since rollout returned terminal=False, reward policy is called as fallback
+        # for sink compounds (this is correct behavior per the implementation)
+        assert canonical_smiles in mock_reward.calls, \
+            "Reward policy should be called as fallback when rollout is not terminal"
+
+    def test_pks_terminal_marked_when_retrotide_succeeds_on_sink(
+        self, monkeypatch, sample_molecule
+    ):
+        """Sink compound + PKS match + RetroTide success = is_pks_terminal=True."""
+        test_smiles = "CCCCO"
+        canonical_smiles = _canonicalize_smiles(test_smiles)
+
+        def fake_expand_worker(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+            return [{
+                "smiles": test_smiles,
+                "reaction_smarts": "smarts",
+                "reaction_name": "reaction",
+                "reactants_smiles": [test_smiles],
+                "products_smiles": [test_smiles],
+                "provenance": "enzymatic",
+            }]
+
+        monkeypatch.setattr(
+            "DORAnet_agent.async_expansion_mcts._expand_worker",
+            fake_expand_worker,
+        )
+        monkeypatch.setattr(
+            "DORAnet_agent.async_expansion_mcts.ProcessPoolExecutor",
+            _FakeExecutor,
+        )
+
+        Node.node_counter = 0
+        root = Node(fragment=sample_molecule, parent=None, depth=0, provenance="target")
+
+        # Mock rollout that simulates successful RetroTide
+        mock_rollout = MockRolloutPolicy(
+            RolloutResult(
+                reward=1.0,
+                terminal=True,
+                terminal_type="retrotide_success",
+                metadata={"retrotide_agent": {"best_similarity": 1.0}}
+            )
+        )
+
+        agent = AsyncExpansionDORAnetMCTS(
+            root=root,
+            target_molecule=sample_molecule,
+            total_iterations=1,
+            max_depth=1,
+            use_enzymatic=True,
+            use_synthetic=False,
+            num_workers=1,
+            rollout_policy=mock_rollout,
+        )
+
+        # Set sink_compounds and pks_library using canonical SMILES
+        # _get_sink_compound_type checks biological_sink_compounds and chemical_sink_compounds
+        agent.sink_compounds = {canonical_smiles}
+        agent.chemical_sink_compounds = {canonical_smiles}
+        agent.pks_library = {canonical_smiles}
+
+        agent.run()
+
+        # Find the child node
+        child = agent.nodes[1]
+        assert child.smiles == canonical_smiles
+        assert child.is_sink_compound, "Node should be marked as sink compound"
+        assert child.is_pks_terminal, "Node should be marked as PKS terminal"
+        assert child.expanded, "Node should be marked as expanded"
+
+    def test_sink_reward_fallback_when_retrotide_fails(
+        self, monkeypatch, sample_molecule
+    ):
+        """Sink compound + PKS match + RetroTide failure = use sink reward."""
+        test_smiles = "CCCCO"
+        canonical_smiles = _canonicalize_smiles(test_smiles)
+
+        def fake_expand_worker(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+            return [{
+                "smiles": test_smiles,
+                "reaction_smarts": "smarts",
+                "reaction_name": "reaction",
+                "reactants_smiles": [test_smiles],
+                "products_smiles": [test_smiles],
+                "provenance": "enzymatic",
+            }]
+
+        monkeypatch.setattr(
+            "DORAnet_agent.async_expansion_mcts._expand_worker",
+            fake_expand_worker,
+        )
+        monkeypatch.setattr(
+            "DORAnet_agent.async_expansion_mcts.ProcessPoolExecutor",
+            _FakeExecutor,
+        )
+
+        Node.node_counter = 0
+        root = Node(fragment=sample_molecule, parent=None, depth=0, provenance="target")
+
+        # Mock rollout that simulates failed RetroTide (low similarity)
+        mock_rollout = MockRolloutPolicy(
+            RolloutResult(reward=0.3, terminal=False)  # Not terminal
+        )
+        mock_reward = MockRewardPolicy(reward=1.0)
+
+        agent = AsyncExpansionDORAnetMCTS(
+            root=root,
+            target_molecule=sample_molecule,
+            total_iterations=1,
+            max_depth=1,
+            use_enzymatic=True,
+            use_synthetic=False,
+            num_workers=1,
+            rollout_policy=mock_rollout,
+            reward_policy=mock_reward,
+        )
+
+        # Set sink_compounds and pks_library using canonical SMILES
+        # _get_sink_compound_type checks biological_sink_compounds and chemical_sink_compounds
+        agent.sink_compounds = {canonical_smiles}
+        agent.chemical_sink_compounds = {canonical_smiles}
+        agent.pks_library = {canonical_smiles}
+
+        agent.run()
+
+        # Verify rollout was called (because PKS match)
+        assert canonical_smiles in mock_rollout.calls
+
+        # Verify reward policy was called as fallback (because rollout wasn't terminal
+        # but node is a sink compound)
+        assert canonical_smiles in mock_reward.calls, \
+            "Reward policy should be called as fallback when RetroTide fails on sink"
+
+        # Verify the child used the reward policy reward
+        child = agent.nodes[1]
+        assert child.is_sink_compound
+        assert not child.is_pks_terminal, "Should not be PKS terminal when RetroTide fails"
+
+    def test_pure_sink_compound_skips_rollout(
+        self, monkeypatch, sample_molecule
+    ):
+        """Pure sink compounds (not in PKS library) should still skip rollout."""
+        test_smiles = "CCO"  # Ethanol - only a sink compound, not in PKS library
+        canonical_smiles = _canonicalize_smiles(test_smiles)
+
+        def fake_expand_worker(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+            return [{
+                "smiles": test_smiles,
+                "reaction_smarts": "smarts",
+                "reaction_name": "reaction",
+                "reactants_smiles": [test_smiles],
+                "products_smiles": [test_smiles],
+                "provenance": "enzymatic",
+            }]
+
+        monkeypatch.setattr(
+            "DORAnet_agent.async_expansion_mcts._expand_worker",
+            fake_expand_worker,
+        )
+        monkeypatch.setattr(
+            "DORAnet_agent.async_expansion_mcts.ProcessPoolExecutor",
+            _FakeExecutor,
+        )
+
+        Node.node_counter = 0
+        root = Node(fragment=sample_molecule, parent=None, depth=0, provenance="target")
+
+        mock_rollout = MockRolloutPolicy()
+        mock_reward = MockRewardPolicy(reward=1.0)
+
+        agent = AsyncExpansionDORAnetMCTS(
+            root=root,
+            target_molecule=sample_molecule,
+            total_iterations=1,
+            max_depth=1,
+            use_enzymatic=True,
+            use_synthetic=False,
+            num_workers=1,
+            rollout_policy=mock_rollout,
+            reward_policy=mock_reward,
+        )
+
+        # Set sink_compounds using canonical SMILES, empty PKS library
+        # _get_sink_compound_type checks biological_sink_compounds and chemical_sink_compounds
+        agent.sink_compounds = {canonical_smiles}  # In sink compounds
+        agent.chemical_sink_compounds = {canonical_smiles}
+        agent.pks_library = set()  # Empty PKS library
+
+        agent.run()
+
+        # Verify rollout was NOT called (pure sink compound)
+        assert canonical_smiles not in mock_rollout.calls, \
+            "Rollout should NOT be called for pure sink compound"
+        # Verify reward policy WAS called
+        assert canonical_smiles in mock_reward.calls, \
+            "Reward policy should be called for pure sink compound"
+
+    def test_non_sink_non_pks_uses_standard_rollout(
+        self, monkeypatch, sample_molecule
+    ):
+        """Non-sink, non-PKS compounds should use standard rollout."""
+        test_smiles = "CCCCCC"  # Hexane - neither sink nor PKS
+        canonical_smiles = _canonicalize_smiles(test_smiles)
+
+        def fake_expand_worker(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+            return [{
+                "smiles": test_smiles,
+                "reaction_smarts": "smarts",
+                "reaction_name": "reaction",
+                "reactants_smiles": [test_smiles],
+                "products_smiles": [test_smiles],
+                "provenance": "enzymatic",
+            }]
+
+        monkeypatch.setattr(
+            "DORAnet_agent.async_expansion_mcts._expand_worker",
+            fake_expand_worker,
+        )
+        monkeypatch.setattr(
+            "DORAnet_agent.async_expansion_mcts.ProcessPoolExecutor",
+            _FakeExecutor,
+        )
+
+        Node.node_counter = 0
+        root = Node(fragment=sample_molecule, parent=None, depth=0, provenance="target")
+
+        mock_rollout = MockRolloutPolicy(
+            RolloutResult(reward=0.5, terminal=False)
+        )
+        mock_reward = MockRewardPolicy()
+
+        agent = AsyncExpansionDORAnetMCTS(
+            root=root,
+            target_molecule=sample_molecule,
+            total_iterations=1,
+            max_depth=1,
+            use_enzymatic=True,
+            use_synthetic=False,
+            num_workers=1,
+            rollout_policy=mock_rollout,
+            reward_policy=mock_reward,
+        )
+
+        # Set sink_compounds and pks_library to empty sets
+        agent.sink_compounds = set()  # Empty
+        agent.pks_library = set()  # Empty
+
+        agent.run()
+
+        # Verify rollout WAS called (standard case)
+        assert canonical_smiles in mock_rollout.calls, \
+            "Rollout should be called for non-sink, non-PKS compounds"
+        # Verify reward policy was NOT called
+        assert canonical_smiles not in mock_reward.calls, \
+            "Reward policy should not be called when rollout handles reward"
