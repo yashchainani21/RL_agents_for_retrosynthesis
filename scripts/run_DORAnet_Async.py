@@ -196,6 +196,9 @@ def main(target_smiles: str,
         rollout_policy=rollout_policy,
         reward_policy=reward_policy,
 
+        # Enable RetroTide spawning for PKS library matches
+        spawn_retrotide=True,
+
         # RetroTide configuration (used when spawn_retrotide=True or SpawnRetroTideOnDatabaseCheck)
         retrotide_kwargs={
             "max_depth": 5,
