@@ -2332,34 +2332,52 @@ class DORAnetMCTS:
 
             # PKS Library match summary for all DORAnet-generated precursors
             f.write("=" * 70 + "\n")
-            f.write("DORANET PRECURSORS - PKS LIBRARY MATCHES\n")
+            f.write("DORANET PRECURSORS - PKS LIBRARY ANALYSIS\n")
             f.write("=" * 70 + "\n\n")
 
             if self.pks_library:
                 f.write(f"PKS Library Size: {len(self.pks_library)} molecules\n\n")
 
-                # Separate matches and non-matches
-                pks_matches = [n for n in self.nodes if self.calculate_reward(n) > 0]
-                non_matches = [n for n in self.nodes if self.calculate_reward(n) == 0]
+                # Properly categorize nodes using actual PKS library membership check
+                # (not calculate_reward which includes sink compounds)
+                pks_library_matches = []  # Nodes whose SMILES are in PKS library
+                pks_terminals = []        # Nodes verified by RetroTide
+                non_pks_nodes = []        # Nodes not in PKS library (excluding sink compounds)
+
+                for n in self.nodes:
+                    # Check actual PKS library membership
+                    is_in_pks = self._is_in_pks_library(n.smiles or "")
+
+                    if getattr(n, 'is_pks_terminal', False):
+                        # Verified by RetroTide
+                        pks_terminals.append(n)
+                    elif is_in_pks:
+                        # In PKS library but not yet verified
+                        pks_library_matches.append(n)
+                    elif not n.is_sink_compound:
+                        # Not in PKS library and not a sink compound
+                        non_pks_nodes.append(n)
+                    # Sink compounds are reported separately below
 
                 f.write(f"Total DORAnet nodes: {len(self.nodes)}\n")
-                f.write(f"Nodes matching PKS library: {len(pks_matches)}\n")
-                f.write(f"Nodes NOT in PKS library: {len(non_matches)}\n\n")
+                f.write(f"PKS terminals (RetroTide verified): {len(pks_terminals)}\n")
+                f.write(f"PKS library matches (unverified): {len(pks_library_matches)}\n")
+                f.write(f"Non-PKS nodes (excluding sinks): {len(non_pks_nodes)}\n\n")
 
-                # List PKS matches with pathways
-                if pks_matches:
-                    f.write("✅ PRECURSORS FOUND IN PKS LIBRARY:\n")
+                # List PKS terminals (RetroTide verified)
+                if pks_terminals:
+                    f.write("✅ PKS TERMINALS (RETROTIDE VERIFIED):\n")
                     f.write("-" * 70 + "\n")
-                    for node in pks_matches:
+                    for node in pks_terminals:
                         f.write(f"  Node {node.node_id} (depth={node.depth}, {node.provenance}): {node.smiles}\n")
                     f.write("\n")
 
-                    # Detailed pathways for each PKS match
+                    # Detailed pathways for PKS terminals
                     f.write("=" * 70 + "\n")
-                    f.write("DORANET PATHWAYS TO PKS-SYNTHESIZABLE FRAGMENTS\n")
+                    f.write("DORANET PATHWAYS TO PKS-VERIFIED FRAGMENTS\n")
                     f.write("=" * 70 + "\n\n")
 
-                    for i, node in enumerate(pks_matches):
+                    for i, node in enumerate(pks_terminals):
                         f.write(f"PATHWAY #{i + 1}: Node {node.node_id}\n")
                         f.write("-" * 40 + "\n")
                         f.write(f"Final Fragment: {node.smiles}\n")
@@ -2367,16 +2385,27 @@ class DORAnetMCTS:
                         f.write("Retrosynthetic Route:\n")
                         f.write(self.format_pathway(node) + "\n\n")
 
-                # List non-matches (only first 20 to avoid clutter)
-                if non_matches:
-                    f.write("❌ PRECURSORS NOT IN PKS LIBRARY:\n")
+                # List PKS library matches (not yet verified by RetroTide)
+                if pks_library_matches:
+                    f.write("⏳ PKS LIBRARY MATCHES (AWAITING RETROTIDE VERIFICATION):\n")
                     f.write("-" * 70 + "\n")
-                    display_limit = min(20, len(non_matches))
-                    for node in non_matches[:display_limit]:
+                    display_limit = min(50, len(pks_library_matches))
+                    for node in pks_library_matches[:display_limit]:
+                        f.write(f"  Node {node.node_id} (depth={node.depth}, {node.provenance}): {node.smiles}\n")
+                    if len(pks_library_matches) > display_limit:
+                        f.write(f"  ... and {len(pks_library_matches) - display_limit} more\n")
+                    f.write("\n")
+
+                # List non-PKS nodes (only first 20 to avoid clutter)
+                if non_pks_nodes:
+                    f.write("❌ NON-PKS NODES (not in PKS library, not sink compounds):\n")
+                    f.write("-" * 70 + "\n")
+                    display_limit = min(20, len(non_pks_nodes))
+                    for node in non_pks_nodes[:display_limit]:
                         smiles_display = node.smiles[:50] + "..." if node.smiles and len(node.smiles) > 50 else node.smiles
                         f.write(f"  Node {node.node_id} (depth={node.depth}, {node.provenance}): {smiles_display}\n")
-                    if len(non_matches) > display_limit:
-                        f.write(f"  ... and {len(non_matches) - display_limit} more\n")
+                    if len(non_pks_nodes) > display_limit:
+                        f.write(f"  ... and {len(non_pks_nodes) - display_limit} more\n")
                     f.write("\n")
             else:
                 f.write("No PKS library loaded - skipping PKS match analysis.\n\n")
