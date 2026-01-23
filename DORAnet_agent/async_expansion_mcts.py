@@ -587,21 +587,45 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
 
         # Apply rollout and reward policies to each child (on main process)
         for child in new_children:
-            if child.is_sink_compound:
-                # Sink compounds: use reward policy directly (known terminal)
-                reward = self.reward_policy.calculate_reward(child, context)
-            else:
-                # Non-sink: run rollout policy to simulate and get reward
+            # Check if this node matches PKS library (potential for RetroTide verification)
+            is_pks_library_match = self._is_in_pks_library(child.smiles or "")
+
+            if is_pks_library_match:
+                # PKS library matches: always run rollout (even if sink compound)
+                print(f"[DORAnet] Fragment {child.smiles} is PKS library match - "
+                      f"attempting RetroTide (sink={child.is_sink_compound})")
+
                 result = self.rollout_policy.rollout(child, context)
-                
+
                 if result.terminal:
                     child.is_pks_terminal = True
                     child.expanded = True
-                    
-                    # Store RetroTide results for traceability
+
                     if "retrotide_agent" in result.metadata:
                         self._store_retrotide_result_from_rollout(child, result)
-                
+
+                    reward = result.reward
+                else:
+                    # RetroTide failed - fall back to sink compound reward if applicable
+                    if child.is_sink_compound:
+                        reward = self.reward_policy.calculate_reward(child, context)
+                    else:
+                        reward = result.reward
+
+            elif child.is_sink_compound:
+                # Pure sink compound (not in PKS library) - use reward policy directly
+                reward = self.reward_policy.calculate_reward(child, context)
+            else:
+                # Non-sink, non-PKS: standard rollout
+                result = self.rollout_policy.rollout(child, context)
+
+                if result.terminal:
+                    child.is_pks_terminal = True
+                    child.expanded = True
+
+                    if "retrotide_agent" in result.metadata:
+                        self._store_retrotide_result_from_rollout(child, result)
+
                 reward = result.reward
 
             self.backpropagate(child, reward)

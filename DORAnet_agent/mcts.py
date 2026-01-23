@@ -1766,31 +1766,62 @@ class DORAnetMCTS:
                 terminals_found = 0
                 rollouts_performed = 0
 
-                # Process each child: rollout for non-sinks, reward policy for sinks
+                # Process each child: PKS matches get rollout, pure sinks get reward
                 for child in new_children:
                     child.created_at_iteration = iteration
 
-                    if child.is_sink_compound:
-                        # Sink compounds are known terminals - use reward policy directly
-                        reward = self.reward_policy.calculate_reward(child, context)
-                        if reward > 0:
-                            terminals_found += 1
-                    else:
-                        # Non-sink: run rollout policy to simulate and get reward
+                    # Check if this node matches PKS library (potential for RetroTide verification)
+                    is_pks_library_match = self._is_in_pks_library(child.smiles or "")
+
+                    if is_pks_library_match:
+                        # PKS library matches: always run rollout (even if sink compound)
+                        # This enables RetroTide spawning for PKS verification
+                        print(f"[DORAnet] Fragment {child.smiles} is PKS library match - "
+                              f"attempting RetroTide (sink={child.is_sink_compound})")
+
                         result = self.rollout_policy.rollout(child, context)
-                        
+
                         if result.terminal:
                             child.is_pks_terminal = True
                             child.expanded = True
                             terminals_found += 1
-                            
-                            # Store RetroTide results for traceability
+
                             if "retrotide_agent" in result.metadata:
                                 self._store_retrotide_result_from_rollout(child, result)
-                        
+
+                            reward = result.reward
+                        else:
+                            # RetroTide failed - fall back to sink compound reward if applicable
+                            if child.is_sink_compound:
+                                reward = self.reward_policy.calculate_reward(child, context)
+                                if reward > 0:
+                                    terminals_found += 1
+                            else:
+                                reward = result.reward
+
                         if not isinstance(self.rollout_policy, NoOpRolloutPolicy):
                             rollouts_performed += 1
-                        
+
+                    elif child.is_sink_compound:
+                        # Pure sink compound (not in PKS library) - use reward policy directly
+                        reward = self.reward_policy.calculate_reward(child, context)
+                        if reward > 0:
+                            terminals_found += 1
+                    else:
+                        # Non-sink, non-PKS: standard rollout
+                        result = self.rollout_policy.rollout(child, context)
+
+                        if result.terminal:
+                            child.is_pks_terminal = True
+                            child.expanded = True
+                            terminals_found += 1
+
+                            if "retrotide_agent" in result.metadata:
+                                self._store_retrotide_result_from_rollout(child, result)
+
+                        if not isinstance(self.rollout_policy, NoOpRolloutPolicy):
+                            rollouts_performed += 1
+
                         reward = result.reward
 
                     self.backpropagate(child, reward)
