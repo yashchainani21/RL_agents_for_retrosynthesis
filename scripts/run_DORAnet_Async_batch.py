@@ -35,16 +35,24 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from typing import Optional
+
 from DORAnet_agent import AsyncExpansionDORAnetMCTS, Node
 from DORAnet_agent.visualize import create_enhanced_interactive_html, create_pathways_interactive_html
 from DORAnet_agent.policies import (
+    RolloutPolicy,
+    RewardPolicy,
     NoOpRolloutPolicy,
     SpawnRetroTideOnDatabaseCheck,
+    PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck,
     SAScore_and_SpawnRetroTideOnDatabaseCheck,
     SparseTerminalRewardPolicy,
     SinkCompoundRewardPolicy,
     PKSLibraryRewardPolicy,
     ComposedRewardPolicy,
+    # Thermodynamic scaling wrappers
+    ThermodynamicScaledRolloutPolicy,
+    ThermodynamicScaledRewardPolicy,
 )
 
 RDLogger.DisableLog("rdApp.*")
@@ -72,8 +80,39 @@ RDLogger.DisableLog("rdApp.*")
 # methysticin # COC1=CC(OC(C=CC2=CC3=C(OCO3)C=C2)C1)=O
 # 7,8-dihydromethysticin # COC1=CC(OC(CCC2=CC3=C(OCO3)C=C2)C1)=O
 
-def main(target_smiles: str, molecule_name: str) -> None:
-    
+def main(
+    target_smiles: str,
+    molecule_name: str,
+    rollout_policy: Optional[RolloutPolicy] = None,
+    reward_policy: Optional[RewardPolicy] = None,
+    MW_multiple_to_exclude: float = 1.5,
+) -> None:
+    """
+    Run the async DORAnet MCTS agent for batch processing.
+
+    Args:
+        target_smiles: SMILES string of the target molecule
+        molecule_name: Human-readable name for the molecule (used in filenames)
+        rollout_policy: Policy controlling what happens after node expansion.
+            Options include:
+            - NoOpRolloutPolicy(): No additional work (returns 0 reward)
+            - SpawnRetroTideOnDatabaseCheck(): Spawns RetroTide for PKS matches (sparse)
+            - SAScore_and_SpawnRetroTideOnDatabaseCheck(): SA Score + RetroTide (dense)
+            - PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(): PKS similarity + RetroTide
+            - ThermodynamicScaledRolloutPolicy(base_policy): Wrapper that scales rewards
+              by pathway thermodynamic feasibility
+            If None, defaults to PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck().
+        reward_policy: Policy controlling how terminal rewards are calculated.
+            Options include:
+            - SparseTerminalRewardPolicy(): 1.0 for terminals, 0.0 otherwise
+            - SinkCompoundRewardPolicy(): Only rewards sink compounds
+            - ComposedRewardPolicy(): Combine multiple policies with weights
+            - ThermodynamicScaledRewardPolicy(base_policy): Wrapper that scales rewards
+              by pathway thermodynamic feasibility
+            If None, defaults to SparseTerminalRewardPolicy().
+        MW_multiple_to_exclude: Exclude fragments with MW > target_MW * this value.
+                               Default 1.5 (exclude fragments >150% of target MW).
+    """
     # ---- Runner configuration ----
     create_interactive_visualization = False
     enable_iteration_viz = False
@@ -82,7 +121,13 @@ def main(target_smiles: str, molecule_name: str) -> None:
     auto_cleanup_pgnet_files = True
     num_workers = None  # None means "max available"
     max_inflight_expansions = None  # None means "same as num_workers"
-    child_downselection_strategy = "first_N"  # "first_N" or "hybrid"
+    # Child downselection strategy options:
+    # - "first_N": Keep first N fragments in DORAnet's order (fastest)
+    # - "hybrid": Prioritize sink compounds > PKS matches > smaller MW
+    # - "most_thermo_feasible": Prioritize by thermodynamic feasibility
+    #   (DORA-XGB for enzymatic, sigmoid-transformed ΔH for synthetic),
+    #   with bonuses for sink compounds (+1000) and PKS matches (+500)
+    child_downselection_strategy = "most_thermo_feasible"
     target_molecule = Chem.MolFromSmiles(target_smiles)
 
     if target_molecule is None:
@@ -100,7 +145,7 @@ def main(target_smiles: str, molecule_name: str) -> None:
     ]
 
     # Path to PKS library file for reward calculation
-    pks_library_file = REPO_ROOT / "data" / "processed" / "expanded_PKS_smiles.txt"
+    pks_library_file = REPO_ROOT / "data" / "processed" / "expanded_PKS_SMILES_V2.txt"
 
     # Paths to sink compounds files (commercially available building blocks)
     sink_compounds_files = [
@@ -112,6 +157,16 @@ def main(target_smiles: str, molecule_name: str) -> None:
     prohibited_chemicals_file = REPO_ROOT / "data" / "processed" / "prohibited_chemical_SMILES.txt"
 
     root = Node(fragment=target_molecule, parent=None, depth=0, provenance="target")
+
+    # ---- Policy Configuration ----
+    # Use provided policies or create defaults
+    if rollout_policy is None:
+        # Default: PKS similarity + RetroTide
+        rollout_policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(
+            pks_building_blocks_path=pks_library_file
+        )
+    if reward_policy is None:
+        reward_policy = SparseTerminalRewardPolicy(sink_terminal_reward=1.0)
 
     agent = AsyncExpansionDORAnetMCTS(
         root=root,
@@ -127,40 +182,13 @@ def main(target_smiles: str, molecule_name: str) -> None:
         pks_library_file=str(pks_library_file),
         sink_compounds_files=[str(f) for f in sink_compounds_files],
         prohibited_chemicals_file=str(prohibited_chemicals_file),
-        MW_multiple_to_exclude=1.5,
-        
-        # ---- Policy Configuration ----
-        # Option 1: Use spawn_retrotide for backward compatibility (creates SpawnRetroTideOnDatabaseCheck)
-        # spawn_retrotide=True,
-        
-        # Option 2: Sparse rewards - Explicitly configured SpawnRetroTideOnDatabaseCheck
-        # rollout_policy=SpawnRetroTideOnDatabaseCheck(
-        #     success_reward=1.0,
-        #     failure_reward=0.0,
-        # ),
-        # reward_policy=SparseTerminalRewardPolicy(sink_terminal_reward=1.0),
-        
-        # Option 3: Dense rewards - SA Score + RetroTide (RECOMMENDED for better training signals)
-        # Uses SA Score (synthetic accessibility) as intermediate reward for all nodes,
-        # while still spawning RetroTide for PKS library matches.
-        # SA Score rewards range from 0.0-0.9, with higher rewards for easier-to-synthesize molecules.
-        rollout_policy=SAScore_and_SpawnRetroTideOnDatabaseCheck(
-            success_reward=1.0,   # Reward for successful RetroTide PKS designs
-            sa_max_reward=1.0,    # Optional cap on SA rewards (default 1.0, no cap)
-        ),
-        reward_policy=SparseTerminalRewardPolicy(sink_terminal_reward=1.0),
-        
-        # Option 4: No rollout (just expand, no RetroTide spawning)
-        # rollout_policy=NoOpRolloutPolicy(),
-        # reward_policy=SparseTerminalRewardPolicy(sink_terminal_reward=1.0),
-        
-        # Option 5: Composed reward policy (combine multiple strategies)
-        # reward_policy=ComposedRewardPolicy([
-        #     (SinkCompoundRewardPolicy(reward_value=1.0), 0.5),
-        #     (PKSLibraryRewardPolicy(), 0.5),
-        # ]),
-        
-        # RetroTide configuration (used when spawn_retrotide=True or SpawnRetroTideOnDatabaseCheck)
+        MW_multiple_to_exclude=MW_multiple_to_exclude,
+
+        # Policies passed as explicit arguments
+        rollout_policy=rollout_policy,
+        reward_policy=reward_policy,
+
+        # RetroTide configuration (used when rollout policy spawns RetroTide)
         retrotide_kwargs={
             "max_depth": 5,
             "total_iterations": 50,
@@ -248,4 +276,55 @@ def _parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     args = _parse_args()
-    main(target_smiles=args.smiles, molecule_name=args.name)
+
+    # ---- Configure Policies (shared across batch runs) ----
+    # Option 1: PKS similarity + RetroTide (DEFAULT, uses Tanimoto fingerprint similarity)
+    selected_rollout_policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck()
+
+    # Option 2: Dense rewards - SA Score + RetroTide
+    # selected_rollout_policy = SAScore_and_SpawnRetroTideOnDatabaseCheck(
+    #     success_reward=1.0,
+    #     sa_max_reward=1.0,
+    # )
+
+    # Option 3: Sparse rewards - RetroTide only for PKS library matches
+    # selected_rollout_policy = SpawnRetroTideOnDatabaseCheck(
+    #     success_reward=1.0,
+    #     failure_reward=0.0,
+    # )
+
+    # Option 4: No rollout (just expand, no RetroTide spawning)
+    # selected_rollout_policy = NoOpRolloutPolicy()
+
+    # Option 5: Thermodynamic-scaled rollout (wrap any base policy)
+    # This scales rewards by pathway thermodynamic feasibility using DORA-XGB
+    # for enzymatic reactions and sigmoid-transformed ΔH for synthetic reactions.
+    # selected_rollout_policy = ThermodynamicScaledRolloutPolicy(
+    #     base_policy=PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(),
+    #     feasibility_weight=0.8,      # 0.0=ignore feasibility, 1.0=full scaling
+    #     sigmoid_k=0.2,               # Steepness of sigmoid for ΔH
+    #     sigmoid_threshold=15.0,      # Center point in kcal/mol
+    #     use_dora_xgb_for_enzymatic=True,  # Use DORA-XGB for enzymatic reactions
+    #     aggregation="geometric_mean",     # How to aggregate pathway scores
+    # )
+
+    selected_reward_policy = SparseTerminalRewardPolicy(sink_terminal_reward=1.0)
+
+    # Alternative: Thermodynamic-scaled reward policy (wrap any base policy)
+    # This scales terminal rewards by pathway thermodynamic feasibility.
+    # selected_reward_policy = ThermodynamicScaledRewardPolicy(
+    #     base_policy=SparseTerminalRewardPolicy(sink_terminal_reward=1.0),
+    #     feasibility_weight=0.8,
+    #     sigmoid_k=0.2,
+    #     sigmoid_threshold=15.0,
+    #     use_dora_xgb_for_enzymatic=True,
+    #     aggregation="geometric_mean",
+    # )
+
+    main(
+        target_smiles=args.smiles,
+        molecule_name=args.name,
+        rollout_policy=selected_rollout_policy,
+        reward_policy=selected_reward_policy,
+        MW_multiple_to_exclude=1.5,
+    )

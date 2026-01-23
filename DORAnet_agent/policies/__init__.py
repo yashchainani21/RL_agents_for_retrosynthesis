@@ -4,6 +4,7 @@ Modular policies for DORAnet MCTS.
 This module provides abstract base classes and concrete implementations for:
 - Rollout policies: Simulation strategies from leaf nodes (e.g., RetroTide spawning)
 - Reward policies: Reward computation strategies (e.g., sparse, shaped)
+- Thermodynamic scaling: Wrappers that scale rewards by pathway feasibility
 
 Selection policies remain in mcts.py for now and will be migrated in a future PR.
 """
@@ -21,6 +22,13 @@ from .reward import (
     PKSLibraryRewardPolicy,
     ComposedRewardPolicy,
 )
+from .thermodynamic import (
+    sigmoid_transform,
+    get_node_feasibility_score,
+    get_pathway_feasibility,
+    ThermodynamicScaledRolloutPolicy,
+    ThermodynamicScaledRewardPolicy,
+)
 
 __all__ = [
     # Base classes
@@ -37,4 +45,10 @@ __all__ = [
     "SinkCompoundRewardPolicy",
     "PKSLibraryRewardPolicy",
     "ComposedRewardPolicy",
+    # Thermodynamic scaling
+    "sigmoid_transform",
+    "get_node_feasibility_score",
+    "get_pathway_feasibility",
+    "ThermodynamicScaledRolloutPolicy",
+    "ThermodynamicScaledRewardPolicy",
 ]

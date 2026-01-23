@@ -67,6 +67,93 @@ def _expand_worker(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     if mol is None:
         return []
 
+    # Lazy init scorers for most_thermo_feasible strategy
+    dora_model = None
+    pathermo_Hf = None
+    if child_downselection_strategy == "most_thermo_feasible":
+        # Initialize DORA-XGB for enzymatic reactions
+        try:
+            from DORA_XGB import DORA_XGB
+            dora_model = DORA_XGB.feasibility_classifier(
+                cofactor_positioning='by_descending_MW'
+            )
+        except Exception:
+            dora_model = None
+
+        # Initialize pathermo for thermodynamic scoring
+        try:
+            from pathermo.properties import Hf as pathermo_Hf_import
+            pathermo_Hf = pathermo_Hf_import
+        except Exception:
+            pathermo_Hf = None
+
+    def _compute_frag_feasibility(
+        frag: Dict[str, Any],
+        mode: str,
+    ) -> Dict[str, Any]:
+        """
+        Compute unified feasibility score for fragment.
+
+        For enzymatic: Uses DORA-XGB probability if available, else sigmoid(ΔH).
+        For synthetic: Uses sigmoid-transformed ΔH.
+        Unknown: Default to 1.0.
+
+        Returns the fragment dict with score fields added.
+        """
+        if child_downselection_strategy != "most_thermo_feasible":
+            return frag
+
+        reactants = frag.get("reactants_smiles", [])
+        products = frag.get("products_smiles", [])
+
+        dora_score = None
+        dora_label = None
+        delta_h = None
+        thermo_label = None
+
+        # Score DORA-XGB for enzymatic reactions
+        if mode == "enzymatic" and dora_model is not None:
+            try:
+                # DORAnet stores reactions in retro direction
+                # For forward direction: products_smiles -> reactants_smiles
+                rxn_str = ".".join(products) + ">>" + ".".join(reactants)
+                prob = float(dora_model.predict_proba(rxn_str))
+                dora_score = prob
+                dora_label = 1 if prob >= 0.5 else 0
+            except Exception:
+                pass
+
+        # Score thermodynamic feasibility (both enzymatic and synthetic)
+        if pathermo_Hf is not None:
+            try:
+                # DORAnet stores reactions in retro direction
+                # For forward: products_smiles (stored) become reactants
+                #              reactants_smiles (stored) become products
+                # ΔH = Σ(Hf products) - Σ(Hf reactants)
+                products_hf = sum(float(pathermo_Hf(s)) for s in reactants)
+                reactants_hf = sum(float(pathermo_Hf(s)) for s in products)
+                delta_h = products_hf - reactants_hf
+                thermo_label = 1 if delta_h < 15.0 else 0
+            except Exception:
+                pass
+
+        # Compute unified feasibility score (0-1 scale)
+        if mode == "enzymatic" and dora_score is not None:
+            feasibility_score = dora_score
+        elif delta_h is not None:
+            # Sigmoid transform: score = 1 / (1 + exp(0.2 * (ΔH - 15)))
+            feasibility_score = 1.0 / (1.0 + math.exp(0.2 * (delta_h - 15.0)))
+        else:
+            feasibility_score = 1.0  # Unknown, assume feasible
+
+        frag["feasibility_score"] = feasibility_score
+        frag["dora_xgb_score"] = dora_score
+        frag["dora_xgb_label"] = dora_label
+        frag["enthalpy_of_reaction"] = delta_h
+        frag["thermodynamic_label"] = thermo_label
+
+        return frag
+
     def _downselect_fragments(
         fragments: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
@@ -74,31 +161,57 @@ def _expand_worker(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
             return fragments
         if child_downselection_strategy == "first_N":
             return fragments[:max_children_per_expand]
-        if child_downselection_strategy != "hybrid":
+
+        if child_downselection_strategy == "hybrid":
+            scored: List[Tuple[float, int, Dict[str, Any]]] = []
+            for idx, frag in enumerate(fragments):
+                score = 0.0
+                smiles = frag["smiles"]
+                if smiles in sink_compounds:
+                    score += 1000.0
+                elif smiles in pks_library:
+                    score += 500.0
+
+                frag_mw = frag.get("mw")
+                if frag_mw is None:
+                    frag_mol = Chem.MolFromSmiles(smiles)
+                    if frag_mol is not None:
+                        frag_mw = Descriptors.MolWt(frag_mol)
+                if frag_mw is not None:
+                    mw_score = max(0, 100 * (1 - frag_mw / max(target_mw, 1)))
+                    score += mw_score
+
+                scored.append((score, -idx, frag))
+
+            scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+            return [frag for _, _, frag in scored[:max_children_per_expand]]
+
+        elif child_downselection_strategy == "most_thermo_feasible":
+            # Score fragments by thermodynamic feasibility with priority bonuses
+            scored: List[Tuple[float, int, Dict[str, Any]]] = []
+            for idx, frag in enumerate(fragments):
+                # Use pre-computed feasibility score, default to 1.0 if not available
+                feas_score = frag.get("feasibility_score", 1.0)
+                if feas_score is None:
+                    feas_score = 1.0
+
+                # Priority bonuses (same as hybrid) to preserve terminal prioritization
+                smiles = frag["smiles"]
+                if smiles in sink_compounds:
+                    score = feas_score + 1000.0
+                elif smiles in pks_library:
+                    score = feas_score + 500.0
+                else:
+                    score = feas_score
+
+                scored.append((score, -idx, frag))
+
+            scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+            return [frag for _, _, frag in scored[:max_children_per_expand]]
+
+        else:
+            # Unknown strategy, fall back to first_N
             return fragments[:max_children_per_expand]
-
-        scored: List[Tuple[float, int, Dict[str, Any]]] = []
-        for idx, frag in enumerate(fragments):
-            score = 0.0
-            smiles = frag["smiles"]
-            if smiles in sink_compounds:
-                score += 1000.0
-            elif smiles in pks_library:
-                score += 500.0
-
-            frag_mw = frag.get("mw")
-            if frag_mw is None:
-                frag_mol = Chem.MolFromSmiles(smiles)
-                if frag_mol is not None:
-                    frag_mw = Descriptors.MolWt(frag_mol)
-            if frag_mw is not None:
-                mw_score = max(0, 100 * (1 - frag_mw / max(target_mw, 1)))
-                score += mw_score
-
-            scored.append((score, -idx, frag))
-
-        scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
-        return [frag for _, _, frag in scored[:max_children_per_expand]]
 
     def _generate_fragments_for_mode(mode: str) -> List[Dict[str, Any]]:
         if mode == "enzymatic":
@@ -223,6 +336,10 @@ def _expand_worker(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "provenance": mode,
                 "mw": Descriptors.MolWt(rd_mol),
             }
+
+            # Compute feasibility scores for most_thermo_feasible strategy
+            frag = _compute_frag_feasibility(frag, mode)
+
             fragments.append(frag)
 
             if child_downselection_strategy == "first_N":
@@ -418,25 +535,35 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
                 products_smiles=frag.get("products_smiles", []),
             )
 
-            # Score feasibility for enzymatic reactions using DORA-XGB
             provenance = frag.get("provenance")
-            if provenance == "enzymatic":
-                score, label = self.feasibility_scorer.score_reaction(
+
+            # Check if scores were pre-computed by worker (for most_thermo_feasible)
+            if frag.get("feasibility_score") is not None:
+                # Use pre-computed scores
+                child.feasibility_score = frag["feasibility_score"]
+                child.feasibility_label = frag.get("dora_xgb_label")
+                child.enthalpy_of_reaction = frag.get("enthalpy_of_reaction")
+                child.thermodynamic_label = frag.get("thermodynamic_label")
+            else:
+                # Compute scores (for other strategies)
+                # Score feasibility for enzymatic reactions using DORA-XGB
+                if provenance == "enzymatic":
+                    score, label = self.feasibility_scorer.score_reaction(
+                        reactants_smiles=frag.get("reactants_smiles", []),
+                        products_smiles=frag.get("products_smiles", []),
+                        provenance=provenance
+                    )
+                    child.feasibility_score = score
+                    child.feasibility_label = label
+
+                # Score thermodynamic feasibility using pathermo (both enzymatic and synthetic)
+                delta_h, thermo_label = self.thermodynamic_scorer.score_reaction(
                     reactants_smiles=frag.get("reactants_smiles", []),
                     products_smiles=frag.get("products_smiles", []),
                     provenance=provenance
                 )
-                child.feasibility_score = score
-                child.feasibility_label = label
-
-            # Score thermodynamic feasibility using pathermo (both enzymatic and synthetic)
-            delta_h, thermo_label = self.thermodynamic_scorer.score_reaction(
-                reactants_smiles=frag.get("reactants_smiles", []),
-                products_smiles=frag.get("products_smiles", []),
-                provenance=provenance
-            )
-            child.enthalpy_of_reaction = delta_h
-            child.thermodynamic_label = thermo_label
+                child.enthalpy_of_reaction = delta_h
+                child.thermodynamic_label = thermo_label
 
             child.created_at_iteration = iteration
             leaf.add_child(child)

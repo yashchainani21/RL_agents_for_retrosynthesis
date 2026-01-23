@@ -46,6 +46,8 @@ Core dependencies (see `pyproject.toml` for full list):
 Optional:
 - `retrotide` - PKS synthesis verification (for RetroTide spawning)
 - `bcs` - Biosynthetic cluster scoring
+- `DORA_XGB` - Enzymatic reaction feasibility prediction (DORA-XGB model)
+- `pathermo` - Thermodynamic property estimation (group contribution method for ΔH)
 
 ## Directory Structure
 
@@ -60,6 +62,7 @@ RL_agents_for_retrosynthesis/
 │       ├── base.py                # RolloutPolicy, RewardPolicy base classes
 │       ├── rollout.py             # Rollout policy implementations
 │       ├── reward.py              # Reward policy implementations
+│       ├── thermodynamic.py       # Thermodynamic-scaled wrapper policies
 │       └── tests/                 # Policy unit tests
 ├── RetroTide_agent/
 │   ├── mcts.py                    # Forward PKS synthesis MCTS
@@ -133,9 +136,10 @@ agent = AsyncExpansionDORAnetMCTS(
     ),
     reward_policy=SparseTerminalRewardPolicy(sink_terminal_reward=1.0),
 
-    # Selection configuration
+    # Selection and downselection configuration
     selection_policy="depth_biased",  # or "UCB1"
     depth_bonus_coefficient=4.0,
+    child_downselection_strategy="most_thermo_feasible",  # Prioritize thermodynamically feasible reactions
 
     # Async configuration
     num_workers=None,  # Auto-detect CPU count
@@ -238,6 +242,143 @@ reward_policy = ComposedRewardPolicy([
 ])
 ```
 
+## Thermodynamic Scoring
+
+The system incorporates thermodynamic feasibility scoring to prioritize chemically realistic reactions. Two scoring mechanisms are available:
+
+### DORA-XGB Feasibility Scoring (Enzymatic Reactions)
+
+For enzymatic reactions, the DORA-XGB machine learning model predicts reaction feasibility. This model was trained on known enzymatic transformations and outputs a probability score (0.0-1.0) indicating likelihood of feasibility.
+
+**Requirements**: Install the optional `DORA_XGB` package.
+
+```python
+# Scores are automatically computed when DORA_XGB is available
+# Node attributes after expansion:
+node.feasibility_score  # float 0.0-1.0 (probability)
+node.feasibility_label  # int 0 or 1 (binary classification)
+```
+
+### Pathermo Thermodynamic Scoring (All Reactions)
+
+For synthetic reactions (and as a fallback for enzymatic), the `pathermo` library computes enthalpy of reaction (ΔH) using group contribution methods. A sigmoid transformation converts ΔH to a 0-1 score:
+
+```
+score = 1.0 / (1.0 + exp(k * (ΔH - threshold)))
+```
+
+Where `k=0.2` and `threshold=15.0 kcal/mol` by default. Exothermic reactions (negative ΔH) score near 1.0; highly endothermic reactions score near 0.0.
+
+**Requirements**: Install the optional `pathermo` package.
+
+```python
+# Node attributes after expansion:
+node.enthalpy_of_reaction  # float (ΔH in kcal/mol)
+node.thermodynamic_label   # int 0 or 1 (0 = unfavorable, 1 = favorable)
+```
+
+### Scoring Priority
+
+| Provenance | Primary Scorer | Fallback |
+|------------|----------------|----------|
+| Enzymatic  | DORA-XGB | Pathermo sigmoid(ΔH) |
+| Synthetic  | Pathermo sigmoid(ΔH) | None |
+| Unknown    | Default 1.0 | - |
+
+## Thermodynamic Policies
+
+Wrapper policies that scale rewards by pathway thermodynamic feasibility. These can wrap any base rollout or reward policy.
+
+### ThermodynamicScaledRolloutPolicy
+
+Scales rollout rewards by the thermodynamic feasibility of the pathway from root to the current node.
+
+```python
+from DORAnet_agent.policies import (
+    ThermodynamicScaledRolloutPolicy,
+    SAScore_and_SpawnRetroTideOnDatabaseCheck,
+)
+
+policy = ThermodynamicScaledRolloutPolicy(
+    base_policy=SAScore_and_SpawnRetroTideOnDatabaseCheck(
+        success_reward=1.0,
+        sa_max_reward=1.0,
+    ),
+    feasibility_weight=0.8,      # 0.0=ignore feasibility, 1.0=full scaling
+    sigmoid_k=0.2,               # Steepness of sigmoid for ΔH
+    sigmoid_threshold=15.0,      # Center point in kcal/mol
+    use_dora_xgb_for_enzymatic=True,  # Use DORA-XGB for enzymatic reactions
+    aggregation="geometric_mean",     # How to aggregate pathway scores
+)
+```
+
+### ThermodynamicScaledRewardPolicy
+
+Scales terminal rewards by pathway thermodynamic feasibility.
+
+```python
+from DORAnet_agent.policies import (
+    ThermodynamicScaledRewardPolicy,
+    SparseTerminalRewardPolicy,
+)
+
+policy = ThermodynamicScaledRewardPolicy(
+    base_policy=SparseTerminalRewardPolicy(sink_terminal_reward=1.0),
+    feasibility_weight=0.8,
+    sigmoid_k=0.2,
+    sigmoid_threshold=15.0,
+    use_dora_xgb_for_enzymatic=True,
+    aggregation="geometric_mean",
+)
+```
+
+### Aggregation Methods
+
+| Method | Formula | Use Case |
+|--------|---------|----------|
+| `geometric_mean` | (∏ scores)^(1/n) | Balanced—penalizes weak links (default) |
+| `product` | ∏ scores | Strict—pathway is only as good as worst step |
+| `minimum` | min(scores) | Very strict—single bad step dominates |
+| `arithmetic_mean` | Σ scores / n | Lenient—averages out bad steps |
+
+### Combined Example
+
+Use both thermodynamic-scaled rollout and reward policies together:
+
+```python
+from DORAnet_agent.policies import (
+    ThermodynamicScaledRolloutPolicy,
+    ThermodynamicScaledRewardPolicy,
+    SAScore_and_SpawnRetroTideOnDatabaseCheck,
+    SparseTerminalRewardPolicy,
+)
+
+# Rollout policy with thermodynamic scaling
+rollout_policy = ThermodynamicScaledRolloutPolicy(
+    base_policy=SAScore_and_SpawnRetroTideOnDatabaseCheck(
+        success_reward=1.0,
+        sa_max_reward=1.0,
+    ),
+    feasibility_weight=0.8,
+    aggregation="geometric_mean",
+)
+
+# Reward policy with thermodynamic scaling
+reward_policy = ThermodynamicScaledRewardPolicy(
+    base_policy=SparseTerminalRewardPolicy(sink_terminal_reward=1.0),
+    feasibility_weight=0.8,
+    aggregation="geometric_mean",
+)
+
+agent = AsyncExpansionDORAnetMCTS(
+    root=root,
+    target_molecule=target_mol,
+    rollout_policy=rollout_policy,
+    reward_policy=reward_policy,
+    # ... other parameters
+)
+```
+
 ## Usage
 
 ### Running the Scripts
@@ -285,7 +426,7 @@ python scripts/run_DORAnet_Async_batch.py
 | `use_synthetic` | bool | True | Enable synthetic transformations |
 | `selection_policy` | str | "depth_biased" | "UCB1" or "depth_biased" |
 | `depth_bonus_coefficient` | float | 2.0 | Depth bias strength (depth_biased only) |
-| `child_downselection_strategy` | str | "first_N" | "first_N" or "hybrid" |
+| `child_downselection_strategy` | str | "first_N" | "first_N", "hybrid", or "most_thermo_feasible" |
 | `MW_multiple_to_exclude` | float | 1.5 | Filter fragments > target_MW × this |
 | `num_workers` | int | None | Worker processes (None = auto) |
 
@@ -293,6 +434,35 @@ python scripts/run_DORAnet_Async_batch.py
 
 - **UCB1**: Standard Upper Confidence Bound—balances exploration and exploitation
 - **depth_biased**: UCB1 + depth bonus—encourages finding complete pathways to building blocks
+
+### Child Downselection Strategies
+
+When DORAnet generates fragments during expansion, the `child_downselection_strategy` controls which fragments are kept (up to `max_children_per_expand`):
+
+| Strategy | Description | Use Case |
+|----------|-------------|----------|
+| `first_N` | Keep first N fragments in DORAnet's generation order | Fastest, minimal overhead |
+| `hybrid` | Prioritize: sink compounds (+1000) > PKS matches (+500) > smaller MW | Balances terminals with simpler fragments |
+| `most_thermo_feasible` | **Recommended.** Prioritize by thermodynamic feasibility score, with bonuses for sink compounds (+1000) and PKS matches (+500) | Best for finding chemically realistic pathways |
+
+**`most_thermo_feasible` details:**
+
+This strategy computes feasibility scores during fragment generation (before downselection), then sorts by:
+1. Sink compounds: feasibility_score + 1000 (highest priority)
+2. PKS library matches: feasibility_score + 500
+3. Other fragments: raw feasibility_score (0.0-1.0)
+
+Feasibility scores use DORA-XGB for enzymatic reactions and sigmoid-transformed ΔH for synthetic reactions. This ensures thermodynamically favorable fragments are kept even when many fragments are generated.
+
+```python
+agent = AsyncExpansionDORAnetMCTS(
+    root=root,
+    target_molecule=target_mol,
+    child_downselection_strategy="most_thermo_feasible",  # Recommended
+    max_children_per_expand=50,
+    # ... other parameters
+)
+```
 
 ## Building Block Libraries
 

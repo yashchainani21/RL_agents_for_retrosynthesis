@@ -706,6 +706,9 @@ class DORAnetMCTS:
                 when more than max_children_per_expand are generated. Options:
                 - "first_N": Keep the first N fragments in DORAnet's order (default, fastest)
                 - "hybrid": Prioritize sink compounds first, PKS matches second, then smaller MW
+                - "most_thermo_feasible": Prioritize by thermodynamic feasibility score
+                  (DORA-XGB for enzymatic, sigmoid-transformed ΔH for synthetic), with priority
+                  bonuses for sink compounds (+1000) and PKS library matches (+500)
             excluded_fragments: SMILES of fragments to ignore (small byproducts).
             cofactors_file: Path to CSV file with cofactor SMILES to exclude (deprecated, use cofactors_files).
             cofactors_files: List of paths to CSV files with cofactor SMILES to exclude.
@@ -756,7 +759,7 @@ class DORAnetMCTS:
         self.max_children_per_expand = max_children_per_expand
 
         # Child downselection strategy configuration
-        valid_downselection_strategies = ["first_N", "hybrid"]
+        valid_downselection_strategies = ["first_N", "hybrid", "most_thermo_feasible"]
         if child_downselection_strategy not in valid_downselection_strategies:
             raise ValueError(f"Invalid child_downselection_strategy '{child_downselection_strategy}'. "
                            f"Must be one of: {valid_downselection_strategies}")
@@ -794,6 +797,8 @@ class DORAnetMCTS:
         # Log the child downselection strategy
         if self.child_downselection_strategy == "hybrid":
             print(f"[DORAnet] Child downselection: hybrid (sink > PKS > smaller MW)")
+        elif self.child_downselection_strategy == "most_thermo_feasible":
+            print(f"[DORAnet] Child downselection: most_thermo_feasible (sink > PKS > thermodynamic feasibility)")
         else:
             print(f"[DORAnet] Child downselection: first_N (DORAnet order)")
 
@@ -989,6 +994,72 @@ class DORAnetMCTS:
         reaction_name: Optional[str] = None
         reactants_smiles: List[str] = field(default_factory=list)
         products_smiles: List[str] = field(default_factory=list)
+        # Pre-computed thermodynamic scoring fields (for most_thermo_feasible strategy)
+        feasibility_score: Optional[float] = None
+        dora_xgb_score: Optional[float] = None
+        dora_xgb_label: Optional[int] = None
+        enthalpy_of_reaction: Optional[float] = None
+        thermodynamic_label: Optional[int] = None
+        provenance: Optional[str] = None
+
+    def _compute_fragment_feasibility_score(
+        self,
+        fragment_info: "DORAnetMCTS.FragmentInfo",
+        provenance: str,
+    ) -> "DORAnetMCTS.FragmentInfo":
+        """
+        Compute feasibility score for a fragment before node creation.
+
+        For enzymatic reactions: Uses DORA-XGB probability if available,
+        otherwise falls back to sigmoid-transformed ΔH.
+
+        For synthetic reactions: Uses sigmoid-transformed ΔH.
+
+        The sigmoid transform maps ΔH to (0, 1) where:
+        - score = 1.0 / (1.0 + exp(0.2 * (ΔH - 15.0)))
+        - ΔH < 15 kcal/mol → score > 0.5 (feasible)
+        - ΔH > 15 kcal/mol → score < 0.5 (infeasible)
+
+        Args:
+            fragment_info: FragmentInfo with reaction data populated.
+            provenance: "enzymatic" or "synthetic".
+
+        Returns:
+            FragmentInfo with feasibility fields populated.
+        """
+        fragment_info.provenance = provenance
+
+        # Score DORA-XGB for enzymatic reactions
+        if provenance == "enzymatic":
+            score, label = self.feasibility_scorer.score_reaction(
+                reactants_smiles=fragment_info.reactants_smiles,
+                products_smiles=fragment_info.products_smiles,
+                provenance=provenance
+            )
+            fragment_info.dora_xgb_score = score
+            fragment_info.dora_xgb_label = label
+
+        # Score thermodynamic feasibility (both enzymatic and synthetic)
+        delta_h, thermo_label = self.thermodynamic_scorer.score_reaction(
+            reactants_smiles=fragment_info.reactants_smiles,
+            products_smiles=fragment_info.products_smiles,
+            provenance=provenance
+        )
+        fragment_info.enthalpy_of_reaction = delta_h
+        fragment_info.thermodynamic_label = thermo_label
+
+        # Compute unified feasibility score (0-1 scale)
+        if provenance == "enzymatic" and fragment_info.dora_xgb_score is not None:
+            # Use DORA-XGB probability for enzymatic reactions
+            fragment_info.feasibility_score = fragment_info.dora_xgb_score
+        elif delta_h is not None:
+            # Use sigmoid-transformed ΔH
+            fragment_info.feasibility_score = 1.0 / (1.0 + math.exp(0.2 * (delta_h - 15.0)))
+        else:
+            # Unknown, assume feasible
+            fragment_info.feasibility_score = 1.0
+
+        return fragment_info
 
     def _generate_doranet_fragments(
         self,
@@ -1024,6 +1095,7 @@ class DORAnetMCTS:
         cache_key = hashlib.md5(
             f"{starter_smiles}|{mode}|gen={self.generations_per_expand}"
             f"|max_children={self.max_children_per_expand}"
+            f"|strategy={self.child_downselection_strategy}"
             f"|excluded={excluded_hash}|helpers={helpers_hash}".encode()
         ).hexdigest()[:16]
         cache_file = self.fragment_cache_dir / f"{cache_key}.pkl"
@@ -1044,6 +1116,13 @@ class DORAnetMCTS:
                         reaction_name=item.get("reaction_name"),
                         reactants_smiles=item.get("reactants_smiles", []),
                         products_smiles=item.get("products_smiles", []),
+                        # Restore pre-computed scores if available
+                        feasibility_score=item.get("feasibility_score"),
+                        dora_xgb_score=item.get("dora_xgb_score"),
+                        dora_xgb_label=item.get("dora_xgb_label"),
+                        enthalpy_of_reaction=item.get("enthalpy_of_reaction"),
+                        thermodynamic_label=item.get("thermodynamic_label"),
+                        provenance=item.get("provenance"),
                     ))
                 return fragments
             except Exception:
@@ -1169,6 +1248,11 @@ class DORAnetMCTS:
                 reactants_smiles=rxn_info.get('reactants', []),
                 products_smiles=rxn_info.get('products', []),
             )
+
+            # Compute feasibility scores for most_thermo_feasible strategy
+            if self.child_downselection_strategy == "most_thermo_feasible":
+                frag_info = self._compute_fragment_feasibility_score(frag_info, mode)
+
             fragments.append(frag_info)
 
             # For first_N strategy, stop early once we have enough fragments
@@ -1185,13 +1269,22 @@ class DORAnetMCTS:
             self.fragment_cache_dir.mkdir(parents=True, exist_ok=True)
             cache_payload = []
             for frag in fragments:
-                cache_payload.append({
+                item = {
                     "smiles": frag.smiles,
                     "reaction_smarts": frag.reaction_smarts,
                     "reaction_name": frag.reaction_name,
                     "reactants_smiles": frag.reactants_smiles,
                     "products_smiles": frag.products_smiles,
-                })
+                }
+                # Include pre-computed scores if available (for most_thermo_feasible)
+                if frag.feasibility_score is not None:
+                    item["feasibility_score"] = frag.feasibility_score
+                    item["dora_xgb_score"] = frag.dora_xgb_score
+                    item["dora_xgb_label"] = frag.dora_xgb_label
+                    item["enthalpy_of_reaction"] = frag.enthalpy_of_reaction
+                    item["thermodynamic_label"] = frag.thermodynamic_label
+                    item["provenance"] = frag.provenance
+                cache_payload.append(item)
             with open(cache_file, "wb") as f:
                 pickle.dump(cache_payload, f)
         except Exception:
@@ -1205,10 +1298,26 @@ class DORAnetMCTS:
         """
         Downselect fragments to max_children_per_expand using the configured strategy.
 
+        Strategies:
+        - "first_N": Simple truncation to max_children_per_expand.
+        - "hybrid": Score by sink compounds, PKS library matches, and MW.
+        - "most_thermo_feasible": Score by thermodynamic feasibility with priority
+          bonuses for known terminals.
+
         For "hybrid" strategy, fragments are scored and sorted by priority:
         1. Sink compounds (highest priority) - commercially available building blocks
         2. PKS library matches (medium priority) - known PKS-synthesizable molecules
         3. Smaller molecular weight (base priority) - simpler precursors preferred
+
+        For "most_thermo_feasible" strategy, fragments are scored by:
+        1. Sink compounds: feasibility_score + 1000 (highest priority)
+        2. PKS library matches: feasibility_score + 500 (medium priority)
+        3. Other fragments: raw feasibility_score (0-1 scale)
+
+        The feasibility_score is computed as:
+        - Enzymatic: DORA-XGB probability (if available), else sigmoid(ΔH)
+        - Synthetic: sigmoid-transformed ΔH
+        - Unknown: 1.0 (assume feasible)
 
         Args:
             fragments: List of all valid fragments from DORAnet expansion.
@@ -1243,6 +1352,32 @@ class DORAnetMCTS:
                     # Fragments at 0 MW get 100 points, fragments at target_MW get 0 points
                     mw_score = max(0, 100 * (1 - frag_mw / max(self.target_MW, 1)))
                     score += mw_score
+
+                # Use negative index as tiebreaker to maintain original order for equal scores
+                scored_fragments.append((score, -idx, frag))
+
+            # Sort by score descending (higher score = higher priority)
+            scored_fragments.sort(key=lambda x: (x[0], x[1]), reverse=True)
+
+            # Return top N fragments
+            return [frag for _, _, frag in scored_fragments[:self.max_children_per_expand]]
+
+        elif self.child_downselection_strategy == "most_thermo_feasible":
+            # Score fragments by thermodynamic feasibility with priority bonuses
+            # for known terminals (sink compounds, PKS library matches)
+            scored_fragments: List[Tuple[float, int, "DORAnetMCTS.FragmentInfo"]] = []
+
+            for idx, frag in enumerate(fragments):
+                # Use pre-computed feasibility score, default to 1.0 if not available
+                feas_score = frag.feasibility_score if frag.feasibility_score is not None else 1.0
+
+                # Priority bonuses (same as hybrid) to preserve terminal prioritization
+                if self._is_sink_compound(frag.smiles):
+                    score = feas_score + 1000.0
+                elif self._is_in_pks_library(frag.smiles):
+                    score = feas_score + 500.0
+                else:
+                    score = feas_score
 
                 # Use negative index as tiebreaker to maintain original order for equal scores
                 scored_fragments.append((score, -idx, frag))

@@ -449,3 +449,186 @@ def test_pks_policy_with_multiple_inflight_expansions(
             avg_reward = node.value / node.visits
             assert avg_reward < pks_node.value / pks_node.visits, \
                 f"Small molecule {node.smiles} should have lower reward than PKS match"
+
+
+# =============================================================================
+# Tests for most_thermo_feasible downselection strategy
+# =============================================================================
+
+
+class TestMostThermoFeasibleStrategy:
+    """Tests for most_thermo_feasible downselection strategy.
+
+    Note: Since we monkeypatch _expand_worker, the downselection happens
+    in the fake worker. These tests verify that:
+    1. The strategy is accepted and properly configured
+    2. Pre-computed scores from worker are preserved in nodes
+    3. Multiple fragments returned by worker are all integrated
+    """
+
+    def test_strategy_accepted_and_configured(self, monkeypatch, sample_molecule):
+        """The most_thermo_feasible strategy should be accepted without error."""
+        def fake_expand_worker(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+            # Verify the strategy was passed to the worker
+            assert payload["child_downselection_strategy"] == "most_thermo_feasible"
+            # Return a single fragment (simulating downselection already happened)
+            return [{
+                "smiles": "CCC",
+                "reaction_smarts": "smarts1",
+                "reaction_name": "reaction1",
+                "reactants_smiles": ["CCC"],
+                "products_smiles": ["CCCCC(=O)O"],
+                "provenance": "enzymatic",
+                "feasibility_score": 0.9,
+                "dora_xgb_score": 0.9,
+                "dora_xgb_label": 1,
+                "enthalpy_of_reaction": 5.0,
+                "thermodynamic_label": 1,
+            }]
+
+        monkeypatch.setattr(
+            "DORAnet_agent.async_expansion_mcts._expand_worker",
+            fake_expand_worker,
+        )
+        monkeypatch.setattr(
+            "DORAnet_agent.async_expansion_mcts.ProcessPoolExecutor",
+            _FakeExecutor,
+        )
+
+        Node.node_counter = 0
+        root = Node(fragment=sample_molecule, parent=None, depth=0, provenance="target")
+
+        # Should not raise an error
+        agent = AsyncExpansionDORAnetMCTS(
+            root=root,
+            target_molecule=sample_molecule,
+            total_iterations=1,
+            max_depth=1,
+            max_children_per_expand=5,
+            child_downselection_strategy="most_thermo_feasible",
+            use_enzymatic=True,
+            use_synthetic=False,
+            num_workers=1,
+        )
+
+        assert agent.child_downselection_strategy == "most_thermo_feasible"
+        agent.run()
+
+        # Should have 2 nodes (root + 1 child)
+        assert len(agent.nodes) == 2
+
+    def test_multiple_fragments_all_integrated(self, monkeypatch, sample_molecule):
+        """When worker returns multiple fragments, all should be integrated as nodes."""
+        def fake_expand_worker(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+            return [
+                {
+                    "smiles": "CCC",
+                    "reaction_smarts": "smarts1",
+                    "reaction_name": "reaction1",
+                    "reactants_smiles": ["CCC"],
+                    "products_smiles": ["CCCCC(=O)O"],
+                    "provenance": "enzymatic",
+                    "feasibility_score": 0.9,
+                    "dora_xgb_score": 0.9,
+                    "dora_xgb_label": 1,
+                    "enthalpy_of_reaction": 5.0,
+                    "thermodynamic_label": 1,
+                },
+                {
+                    "smiles": "CCCC",
+                    "reaction_smarts": "smarts2",
+                    "reaction_name": "reaction2",
+                    "reactants_smiles": ["CCCC"],
+                    "products_smiles": ["CCCCC(=O)O"],
+                    "provenance": "enzymatic",
+                    "feasibility_score": 0.3,
+                    "dora_xgb_score": 0.3,
+                    "dora_xgb_label": 0,
+                    "enthalpy_of_reaction": 20.0,
+                    "thermodynamic_label": 0,
+                },
+            ]
+
+        monkeypatch.setattr(
+            "DORAnet_agent.async_expansion_mcts._expand_worker",
+            fake_expand_worker,
+        )
+        monkeypatch.setattr(
+            "DORAnet_agent.async_expansion_mcts.ProcessPoolExecutor",
+            _FakeExecutor,
+        )
+
+        Node.node_counter = 0
+        root = Node(fragment=sample_molecule, parent=None, depth=0, provenance="target")
+
+        agent = AsyncExpansionDORAnetMCTS(
+            root=root,
+            target_molecule=sample_molecule,
+            total_iterations=1,
+            max_depth=1,
+            max_children_per_expand=5,  # Allow multiple
+            child_downselection_strategy="most_thermo_feasible",
+            use_enzymatic=True,
+            use_synthetic=False,
+            num_workers=1,
+        )
+
+        agent.run()
+
+        # Should have 3 nodes (root + 2 children)
+        assert len(agent.nodes) == 3
+
+        # Verify both fragments were created as nodes with their scores
+        child_smiles = {n.smiles for n in agent.nodes[1:]}
+        assert "CCC" in child_smiles
+        assert "CCCC" in child_smiles
+
+    def test_precomputed_scores_override_recomputation(self, monkeypatch, sample_molecule):
+        """Pre-computed scores from worker should be used instead of recomputing."""
+        def fake_expand_worker(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+            return [{
+                "smiles": "CCC",
+                "reaction_smarts": "smarts1",
+                "reaction_name": "reaction1",
+                "reactants_smiles": ["CCC"],
+                "products_smiles": ["CCCCC(=O)O"],
+                "provenance": "enzymatic",
+                # Pre-computed scores that would be different from recomputation
+                "feasibility_score": 0.12345,
+                "dora_xgb_score": 0.12345,
+                "dora_xgb_label": 0,
+                "enthalpy_of_reaction": 99.99,
+                "thermodynamic_label": 0,
+            }]
+
+        monkeypatch.setattr(
+            "DORAnet_agent.async_expansion_mcts._expand_worker",
+            fake_expand_worker,
+        )
+        monkeypatch.setattr(
+            "DORAnet_agent.async_expansion_mcts.ProcessPoolExecutor",
+            _FakeExecutor,
+        )
+
+        Node.node_counter = 0
+        root = Node(fragment=sample_molecule, parent=None, depth=0, provenance="target")
+
+        agent = AsyncExpansionDORAnetMCTS(
+            root=root,
+            target_molecule=sample_molecule,
+            total_iterations=1,
+            max_depth=1,
+            child_downselection_strategy="most_thermo_feasible",
+            use_enzymatic=True,
+            use_synthetic=False,
+            num_workers=1,
+        )
+
+        agent.run()
+
+        child = agent.nodes[1]
+        # These specific values from worker should be preserved, not recomputed
+        assert child.feasibility_score == 0.12345
+        assert child.feasibility_label == 0
+        assert child.enthalpy_of_reaction == 99.99
+        assert child.thermodynamic_label == 0

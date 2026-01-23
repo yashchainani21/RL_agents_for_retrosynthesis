@@ -15,14 +15,14 @@ A rollout simulates from a node to estimate its value, which can involve:
 from __future__ import annotations
 
 import os
+import pickle
 import sys
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 
-from rdkit import Chem
-from rdkit.Chem import RDConfig
-from rdkit.Chem import rdFMCS
+from rdkit import Chem, DataStructs
+from rdkit.Chem import AllChem, RDConfig, rdFMCS
 
 from .base import RolloutPolicy, RolloutResult
 
@@ -135,7 +135,37 @@ def _calculate_mcs_similarity_without_stereo(
             
         score = result.numAtoms / union_atoms
         return score
-        
+
+    except Exception:
+        return None
+
+
+def _calculate_tanimoto_similarity(
+    query_fp: DataStructs.ExplicitBitVect,
+    reference_fp: DataStructs.ExplicitBitVect,
+) -> float:
+    """Calculate Tanimoto similarity between two fingerprints."""
+    return DataStructs.TanimotoSimilarity(query_fp, reference_fp)
+
+
+def _generate_morgan_fingerprint(
+    mol: Chem.Mol,
+    radius: int = 2,
+    n_bits: int = 2048,
+) -> Optional[DataStructs.ExplicitBitVect]:
+    """
+    Generate Morgan (ECFP-like) fingerprint for a molecule.
+
+    Args:
+        mol: RDKit Mol object
+        radius: Fingerprint radius (default 2, equivalent to ECFP4)
+        n_bits: Number of bits in fingerprint (default 2048)
+
+    Returns:
+        Morgan fingerprint as ExplicitBitVect, or None if generation fails
+    """
+    try:
+        return AllChem.GetMorganFingerprintAsBitVect(mol, radius, nBits=n_bits)
     except Exception:
         return None
 
@@ -726,40 +756,47 @@ class SAScore_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
 class PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
     """
     Rollout policy combining PKS similarity-based rewards with RetroTide spawning.
-    
+
     This policy provides dense intermediate rewards based on structural similarity
-    to PKS building blocks, addressing the bias of SA scores toward chemical 
+    to PKS building blocks, addressing the bias of SA scores toward chemical
     building blocks over biological metabolites.
-    
-    The PKS similarity score uses Maximum Common Substructure (MCS) without 
-    stereochemistry matching, which provides a chemically meaningful measure
-    of how "PKS-synthesizable" a molecule is.
-    
+
+    Supports two similarity methods:
+        - "tanimoto" (default): Fast Morgan fingerprint-based Tanimoto similarity
+        - "mcs": Maximum Common Substructure without stereochemistry matching
+
     Reward Logic:
         1. Terminal Nodes (sink compounds): success_reward (default 1.0)
         2. PKS Library Match + RetroTide Success: success_reward (default 1.0)
         3. PKS Library Match + RetroTide Failure: PKS similarity score (0.0-1.0)
         4. Non-PKS Nodes: PKS similarity score (0.0-1.0)
-    
-    PKS Similarity Score:
+
+    Tanimoto Similarity (default):
+        - Uses Morgan fingerprints (ECFP4 equivalent, radius=2, 2048 bits)
+        - ~100-1000x faster than MCS
+        - Fingerprints are pre-computed and cached to disk
+        - Range: [0.0, 1.0] where 1.0 = identical fingerprints
+
+    MCS Similarity (legacy):
         - Computed using MCS without stereochemistry matching
         - Formula: MCS_atoms / (query_atoms + reference_atoms - MCS_atoms)
-        - Returns max similarity across all PKS building blocks
+        - Pre-filtering by atom count for performance
         - Range: [0.0, 1.0] where 1.0 = perfect structural match
-    
+
     Performance Optimizations:
         - Early termination when similarity >= threshold (default 0.9)
-        - Pre-filtering by atom count (skip fragments with vastly different sizes)
-        - Timeout per MCS calculation (default 1 second)
+        - Pre-computed fingerprints cached to disk (Tanimoto method)
+        - Pre-filtering by atom count (MCS method only)
+        - Timeout per MCS calculation (MCS method only)
         - Pre-parsed PKS building blocks loaded once at initialization
-    
+
     This policy is designed to complement biological/PKS pathway exploration
     by providing rewards that are not biased toward chemical synthesizability.
     """
 
     # Default path relative to project root
-    DEFAULT_PKS_BUILDING_BLOCKS_PATH = "data/processed/expanded_PKS_SMILES.txt"
-    
+    DEFAULT_PKS_BUILDING_BLOCKS_PATH = "data/processed/PKS_smiles.txt"
+
     def __init__(
         self,
         pks_building_blocks_path: Optional[str] = None,
@@ -767,41 +804,63 @@ class PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
         retrotide_kwargs: Optional[Dict[str, Any]] = None,
         success_reward: float = 1.0,
         similarity_threshold: float = 0.9,
+        similarity_method: str = "tanimoto",
+        fingerprint_radius: int = 2,
+        fingerprint_bits: int = 2048,
         mcs_timeout: float = 1.0,
         atom_count_tolerance: float = 0.5,
         project_root: Optional[str] = None,
     ):
         """
         Args:
-            pks_building_blocks_path: Path to file containing PKS building block 
-                SMILES (one per line). If None, uses default path relative to 
-                project root. Default: "data/processed/expanded_PKS_SMILES.txt"
-            pks_library: Set of canonical PKS product SMILES for RetroTide 
+            pks_building_blocks_path: Path to file containing PKS building block
+                SMILES (one per line). If None, uses default path relative to
+                project root. Default: "data/processed/PKS_smiles.txt"
+            pks_library: Set of canonical PKS product SMILES for RetroTide
                 spawning. If None, retrieved from context["pks_library"].
             retrotide_kwargs: Parameters passed to RetroTide MCTS constructor.
                 If None, retrieved from context["retrotide_kwargs"].
-            success_reward: Reward for terminal nodes (sink) or successful 
+            success_reward: Reward for terminal nodes (sink) or successful
                 RetroTide designs. Default 1.0.
-            similarity_threshold: Early termination threshold. Stop computing 
+            similarity_threshold: Early termination threshold. Stop computing
                 similarities if we find a score >= this value. Default 0.9.
+            similarity_method: Method for computing similarity. Options:
+                - "tanimoto" (default): Fast Morgan fingerprint-based similarity
+                - "mcs": Maximum Common Substructure-based similarity
+            fingerprint_radius: Radius for Morgan fingerprints. Default 2
+                (equivalent to ECFP4). Only used with similarity_method="tanimoto".
+            fingerprint_bits: Number of bits for Morgan fingerprints. Default 2048.
+                Only used with similarity_method="tanimoto".
             mcs_timeout: Timeout in seconds for each MCS calculation. Default 1.0.
+                Only used with similarity_method="mcs".
             atom_count_tolerance: Fraction tolerance for atom count pre-filtering.
-                Skip PKS fragments where atom count differs by more than this 
-                fraction from the query. E.g., 0.5 means skip if PKS has <50% 
+                Skip PKS fragments where atom count differs by more than this
+                fraction from the query. E.g., 0.5 means skip if PKS has <50%
                 or >150% of query's atoms. Default 0.5.
-            project_root: Root directory of the project for resolving relative 
+                Only used with similarity_method="mcs".
+            project_root: Root directory of the project for resolving relative
                 paths. If None, attempts to auto-detect from this file's location.
         """
+        # Validate similarity_method
+        if similarity_method not in ("tanimoto", "mcs"):
+            raise ValueError(
+                f"Invalid similarity_method: {similarity_method}. "
+                "Must be 'tanimoto' or 'mcs'."
+            )
+
         self._pks_library = pks_library
         self._retrotide_kwargs = retrotide_kwargs or {}
         self.success_reward = success_reward
         self.similarity_threshold = similarity_threshold
+        self.similarity_method = similarity_method
+        self.fingerprint_radius = fingerprint_radius
+        self.fingerprint_bits = fingerprint_bits
         self.mcs_timeout = mcs_timeout
         self.atom_count_tolerance = atom_count_tolerance
 
         # Track RetroTide availability
         self._retrotide_available = self._check_retrotide_available()
-        
+
         # Determine project root
         if project_root is not None:
             self._project_root = Path(project_root)
@@ -809,7 +868,7 @@ class PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
             # Auto-detect: this file is in DORAnet_agent/policies/rollout.py
             # Project root is 2 levels up
             self._project_root = Path(__file__).parent.parent.parent
-        
+
         # Resolve PKS building blocks path
         if pks_building_blocks_path is not None:
             pks_path = Path(pks_building_blocks_path)
@@ -817,37 +876,142 @@ class PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
                 pks_path = self._project_root / pks_path
         else:
             pks_path = self._project_root / self.DEFAULT_PKS_BUILDING_BLOCKS_PATH
-            
+
         self._pks_building_blocks_path = pks_path
-        
+
         # Load and pre-parse PKS building blocks
-        self._pks_building_blocks: List[Tuple[Chem.Mol, int]] = []
+        # For Tanimoto: stores List[Tuple[str, ExplicitBitVect]] (smiles, fingerprint)
+        # For MCS: stores List[Tuple[Chem.Mol, int]] (mol, atom_count)
+        self._pks_building_blocks: Union[
+            List[Tuple[str, DataStructs.ExplicitBitVect]],
+            List[Tuple[Chem.Mol, int]]
+        ] = []
         self._load_pks_building_blocks()
-        
+
         print(f"[PKS Sim Score Policy] Loaded {len(self._pks_building_blocks)} PKS building blocks")
+        print(f"[PKS Sim Score Policy] Similarity method: {self.similarity_method}")
         print(f"[PKS Sim Score Policy] Similarity threshold: {self.similarity_threshold}")
-        print(f"[PKS Sim Score Policy] Atom count tolerance: {self.atom_count_tolerance}")
+        if self.similarity_method == "tanimoto":
+            print(f"[PKS Sim Score Policy] Fingerprint: Morgan r={self.fingerprint_radius}, bits={self.fingerprint_bits}")
+        else:
+            print(f"[PKS Sim Score Policy] Atom count tolerance: {self.atom_count_tolerance}")
 
     def _load_pks_building_blocks(self) -> None:
         """
-        Load PKS building blocks from file and pre-parse to RDKit Mol objects.
-        
-        Stores tuples of (mol, num_atoms) for efficient filtering and comparison.
+        Load PKS building blocks from file and pre-parse for similarity computation.
+
+        For Tanimoto method:
+            - Stores tuples of (smiles, fingerprint) for fast comparison
+            - Fingerprints are cached to disk for faster subsequent loads
+        For MCS method:
+            - Stores tuples of (mol, num_atoms) for filtering and comparison
         """
         if not self._pks_building_blocks_path.exists():
             print(f"[PKS Sim Score Policy] WARNING: PKS building blocks file not found: "
                   f"{self._pks_building_blocks_path}")
             return
-            
+
+        if self.similarity_method == "tanimoto":
+            self._load_pks_building_blocks_tanimoto()
+        else:
+            self._load_pks_building_blocks_mcs()
+
+    def _get_cache_path(self) -> Path:
+        """Get path to fingerprint cache file."""
+        return self._pks_building_blocks_path.with_suffix('.fingerprints.pkl')
+
+    def _is_cache_valid(self) -> bool:
+        """Check if cache exists and is newer than source SMILES file."""
+        cache_path = self._get_cache_path()
+        if not cache_path.exists():
+            return False
+        return cache_path.stat().st_mtime > self._pks_building_blocks_path.stat().st_mtime
+
+    def _load_fingerprints_from_cache(self) -> bool:
+        """
+        Load fingerprints from cache. Returns True if successful.
+
+        Validates that cache format and fingerprint parameters match current settings.
+        """
+        try:
+            with open(self._get_cache_path(), 'rb') as f:
+                cached_data = pickle.load(f)
+            # Validate cache format and fingerprint params match
+            if cached_data.get('radius') != self.fingerprint_radius:
+                return False
+            if cached_data.get('bits') != self.fingerprint_bits:
+                return False
+            self._pks_building_blocks = cached_data['fingerprints']
+            return True
+        except Exception:
+            return False
+
+    def _save_fingerprints_to_cache(self) -> None:
+        """Save fingerprints to cache file."""
+        try:
+            cached_data = {
+                'radius': self.fingerprint_radius,
+                'bits': self.fingerprint_bits,
+                'fingerprints': self._pks_building_blocks,
+            }
+            with open(self._get_cache_path(), 'wb') as f:
+                pickle.dump(cached_data, f)
+        except Exception as e:
+            print(f"[PKS Sim Score Policy] WARNING: Failed to save cache: {e}")
+
+    def _load_pks_building_blocks_tanimoto(self) -> None:
+        """Load PKS building blocks with pre-computed Morgan fingerprints."""
+        # Try to load from cache first
+        if self._is_cache_valid():
+            if self._load_fingerprints_from_cache():
+                print(f"[PKS Sim Score Policy] Loaded fingerprints from cache: {self._get_cache_path()}")
+                return
+
+        # Load from SMILES file and compute fingerprints
         loaded = 0
         failed = 0
-        
+
         with open(self._pks_building_blocks_path, 'r') as f:
             for line in f:
                 smiles = line.strip()
                 if not smiles:
                     continue
-                    
+
+                try:
+                    mol = Chem.MolFromSmiles(smiles)
+                    if mol is not None:
+                        fp = _generate_morgan_fingerprint(
+                            mol,
+                            radius=self.fingerprint_radius,
+                            n_bits=self.fingerprint_bits,
+                        )
+                        if fp is not None:
+                            self._pks_building_blocks.append((smiles, fp))
+                            loaded += 1
+                        else:
+                            failed += 1
+                    else:
+                        failed += 1
+                except Exception:
+                    failed += 1
+
+        if failed > 0:
+            print(f"[PKS Sim Score Policy] WARNING: Failed to parse {failed} SMILES")
+
+        # Save to cache for future runs
+        self._save_fingerprints_to_cache()
+
+    def _load_pks_building_blocks_mcs(self) -> None:
+        """Load PKS building blocks with atom counts for MCS comparison."""
+        loaded = 0
+        failed = 0
+
+        with open(self._pks_building_blocks_path, 'r') as f:
+            for line in f:
+                smiles = line.strip()
+                if not smiles:
+                    continue
+
                 try:
                     mol = Chem.MolFromSmiles(smiles)
                     if mol is not None:
@@ -858,7 +1022,7 @@ class PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
                         failed += 1
                 except Exception:
                     failed += 1
-                    
+
         if failed > 0:
             print(f"[PKS Sim Score Policy] WARNING: Failed to parse {failed} SMILES")
 
@@ -898,72 +1062,152 @@ class PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
     def _get_pks_similarity_reward(self, node: "Node") -> Tuple[float, Dict[str, Any]]:
         """
         Calculate PKS similarity reward for a node.
-        
-        Computes the maximum MCS-based similarity between the node's molecule
-        and all PKS building blocks, with early termination and atom count
-        pre-filtering for performance.
-        
+
+        Routes to the appropriate similarity method based on self.similarity_method.
+
         Args:
             node: The node to compute similarity for
-            
+
         Returns:
             Tuple of (similarity_score, metadata_dict) where:
                 - similarity_score: Max similarity in [0.0, 1.0]
                 - metadata_dict: Contains computation details for debugging
         """
+        if self.similarity_method == "tanimoto":
+            return self._compute_tanimoto_similarity(node)
+        else:
+            return self._compute_mcs_similarity(node)
+
+    def _compute_tanimoto_similarity(self, node: "Node") -> Tuple[float, Dict[str, Any]]:
+        """
+        Compute Tanimoto fingerprint similarity to PKS building blocks.
+
+        Uses pre-computed Morgan fingerprints for fast O(1) comparisons.
+
+        Args:
+            node: The node to compute similarity for
+
+        Returns:
+            Tuple of (similarity_score, metadata_dict) where:
+                - similarity_score: Max Tanimoto similarity in [0.0, 1.0]
+                - metadata_dict: Contains computation details for debugging
+        """
         metadata = {
+            "similarity_method": "tanimoto",
             "pks_building_blocks_checked": 0,
-            "pks_building_blocks_skipped_size": 0,
-            "pks_building_blocks_skipped_timeout": 0,
             "best_similarity": 0.0,
         }
-        
+
         if not self._pks_building_blocks:
             return 0.0, metadata
-            
+
         # Get molecule from node
         mol = None
         if hasattr(node, 'fragment') and node.fragment is not None:
             mol = node.fragment
         elif hasattr(node, 'smiles') and node.smiles is not None:
             mol = Chem.MolFromSmiles(node.smiles)
-            
+
         if mol is None:
             return 0.0, metadata
-            
+
+        # Generate fingerprint for query molecule
+        query_fp = _generate_morgan_fingerprint(
+            mol,
+            radius=self.fingerprint_radius,
+            n_bits=self.fingerprint_bits,
+        )
+
+        if query_fp is None:
+            return 0.0, metadata
+
+        best_similarity = 0.0
+
+        for pks_smiles, pks_fp in self._pks_building_blocks:
+            metadata["pks_building_blocks_checked"] += 1
+
+            # Calculate Tanimoto similarity (O(1) operation)
+            similarity = _calculate_tanimoto_similarity(query_fp, pks_fp)
+
+            if similarity > best_similarity:
+                best_similarity = similarity
+
+            # Early termination if we found a very good match
+            if best_similarity >= self.similarity_threshold:
+                break
+
+        metadata["best_similarity"] = best_similarity
+        return best_similarity, metadata
+
+    def _compute_mcs_similarity(self, node: "Node") -> Tuple[float, Dict[str, Any]]:
+        """
+        Compute MCS-based similarity to PKS building blocks.
+
+        Uses Maximum Common Substructure without stereochemistry matching.
+        Includes atom count pre-filtering and timeout handling.
+
+        Args:
+            node: The node to compute similarity for
+
+        Returns:
+            Tuple of (similarity_score, metadata_dict) where:
+                - similarity_score: Max MCS similarity in [0.0, 1.0]
+                - metadata_dict: Contains computation details for debugging
+        """
+        metadata = {
+            "similarity_method": "mcs",
+            "pks_building_blocks_checked": 0,
+            "pks_building_blocks_skipped_size": 0,
+            "pks_building_blocks_skipped_timeout": 0,
+            "best_similarity": 0.0,
+        }
+
+        if not self._pks_building_blocks:
+            return 0.0, metadata
+
+        # Get molecule from node
+        mol = None
+        if hasattr(node, 'fragment') and node.fragment is not None:
+            mol = node.fragment
+        elif hasattr(node, 'smiles') and node.smiles is not None:
+            mol = Chem.MolFromSmiles(node.smiles)
+
+        if mol is None:
+            return 0.0, metadata
+
         query_atoms = mol.GetNumAtoms()
-        
+
         # Calculate atom count bounds for pre-filtering
         min_atoms = int(query_atoms * (1.0 - self.atom_count_tolerance))
         max_atoms = int(query_atoms * (1.0 + self.atom_count_tolerance))
-        
+
         best_similarity = 0.0
-        
+
         for pks_mol, pks_atoms in self._pks_building_blocks:
             # Pre-filter by atom count
             if pks_atoms < min_atoms or pks_atoms > max_atoms:
                 metadata["pks_building_blocks_skipped_size"] += 1
                 continue
-                
+
             metadata["pks_building_blocks_checked"] += 1
-            
+
             # Calculate MCS similarity
             similarity = _calculate_mcs_similarity_without_stereo(
                 mol, pks_mol, timeout=self.mcs_timeout
             )
-            
+
             if similarity is None:
                 # MCS timed out, skip this pair
                 metadata["pks_building_blocks_skipped_timeout"] += 1
                 continue
-                
+
             if similarity > best_similarity:
                 best_similarity = similarity
-                
+
             # Early termination if we found a very good match
             if best_similarity >= self.similarity_threshold:
                 break
-                
+
         metadata["best_similarity"] = best_similarity
         return best_similarity, metadata
 
@@ -1166,15 +1410,28 @@ class PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
     @property
     def name(self) -> str:
         return (f"PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck("
+                f"method={self.similarity_method}, "
                 f"success={self.success_reward}, threshold={self.similarity_threshold})")
 
     def __repr__(self) -> str:
-        return (
+        base_repr = (
             f"PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck("
+            f"similarity_method='{self.similarity_method}', "
             f"success_reward={self.success_reward}, "
             f"similarity_threshold={self.similarity_threshold}, "
-            f"mcs_timeout={self.mcs_timeout}, "
-            f"atom_count_tolerance={self.atom_count_tolerance}, "
+        )
+        if self.similarity_method == "tanimoto":
+            method_repr = (
+                f"fingerprint_radius={self.fingerprint_radius}, "
+                f"fingerprint_bits={self.fingerprint_bits}, "
+            )
+        else:
+            method_repr = (
+                f"mcs_timeout={self.mcs_timeout}, "
+                f"atom_count_tolerance={self.atom_count_tolerance}, "
+            )
+        return (
+            base_repr + method_repr +
             f"pks_building_blocks={len(self._pks_building_blocks)}, "
             f"retrotide_available={self._retrotide_available})"
         )
