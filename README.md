@@ -175,6 +175,75 @@ agent.run()
 
 Rollout policies determine how leaf nodes are evaluated during MCTS simulation.
 
+### Rollout Phase: Database Checking Order
+
+After a node is expanded and children are created, each child undergoes database checking in a specific order to determine whether to run the rollout policy or use the reward policy directly. **PKS library membership is checked first** to ensure PKS-eligible fragments always get RetroTide verification, even if they are also sink compounds.
+
+```
+For each child node after expansion:
+
+1. PKS Library Check (FIRST)
+   └── _is_in_pks_library(child.smiles)
+       └── Checks if canonical SMILES is in self.pks_library
+
+   If PKS match:
+   ├── Run rollout policy (enables RetroTide spawning)
+   ├── If rollout returns terminal=True:
+   │   └── Mark is_pks_terminal=True, use rollout reward
+   └── If rollout returns terminal=False:
+       └── Fall back to sink compound check (step 2)
+
+2. Sink Compound Check (SECOND - only if NOT PKS match, or PKS rollout failed)
+   └── child.is_sink_compound (already set during node creation)
+       └── Set by _get_sink_compound_type() which checks:
+           ├── self.biological_sink_compounds
+           └── self.chemical_sink_compounds
+
+   If sink compound:
+   └── Use reward policy directly (skip rollout)
+
+3. Standard Rollout (THIRD - neither PKS nor sink)
+   └── Run rollout policy normally
+```
+
+#### Visual Flow
+
+```
+                    ┌─────────────────┐
+                    │  New Child Node │
+                    └────────┬────────┘
+                             │
+                    ┌────────▼────────┐
+                    │ In PKS Library? │
+                    └────────┬────────┘
+                       YES   │   NO
+              ┌──────────────┴──────────────┐
+              │                             │
+     ┌────────▼────────┐           ┌────────▼────────┐
+     │  Run Rollout    │           │ Is Sink Compound?│
+     │ (RetroTide)     │           └────────┬────────┘
+     └────────┬────────┘              YES   │   NO
+              │                 ┌───────────┴───────────┐
+     ┌────────▼────────┐        │                       │
+     │ Terminal=True?  │ ┌──────▼──────┐       ┌────────▼────────┐
+     └────────┬────────┘ │ Use Reward  │       │  Run Rollout    │
+        YES   │   NO     │ Policy Only │       │  (Standard)     │
+     ┌────────┴────────┐ └─────────────┘       └─────────────────┘
+     │                 │
+┌────▼────┐    ┌───────▼───────┐
+│ PKS     │    │ Is also Sink? │
+│Terminal │    └───────┬───────┘
+└─────────┘       YES  │  NO
+              ┌────────┴────────┐
+              │                 │
+      ┌───────▼───────┐  ┌──────▼──────┐
+      │ Use Reward    │  │ Use Rollout │
+      │ Policy        │  │ Reward      │
+      └───────────────┘  └─────────────┘
+```
+
+This PKS-priority approach ensures that fragments matching the PKS library always have the opportunity for RetroTide verification, maximizing the use of the hierarchical agent system for biosynthetic pathway discovery.
+
 ### NoOpRolloutPolicy
 
 Returns neutral score (0.0). Useful for testing pure MCTS exploration.
@@ -509,33 +578,40 @@ results/<subfolder>/
 Target Molecule (SMILES)
          │
          ▼
-┌────────────────────────────────────────────────────────────┐
-│              DORAnet MCTS (Retrosynthetic)                 │
-│  ┌──────────┐  ┌──────────┐  ┌─────────────────────────┐  │
-│  │  Select  │→ │  Expand  │→ │  Rollout Policy Check   │  │
-│  │  (UCB1)  │  │ (DORAnet)│  │  (PKS Library Match?)   │  │
-│  └──────────┘  └──────────┘  └─────────────────────────┘  │
-│       ▲              │                    │               │
-│       │              │         ┌──────────┴──────────┐    │
-│       │              │         ▼                     ▼    │
-│       │              │    ┌─────────┐         ┌──────────┐│
-│       │              │    │ NO: Use │         │YES: Spawn││
-│       │              │    │ Reward  │         │ RetroTide││
-│       │              │    │ Policy  │         │  MCTS    ││
-│       │              │    └────┬────┘         └────┬─────┘│
-│       │              │         │                   │      │
-│       │              ▼         ▼                   ▼      │
-│       │        ┌───────────────────────────────────────┐  │
-│       └────────│           Backpropagate              │  │
-│                └───────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                    DORAnet MCTS (Retrosynthetic)                       │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────────────────────────────┐ │
+│  │  Select  │→ │  Expand  │→ │     For Each Child Fragment:         │ │
+│  │  (UCB1)  │  │ (DORAnet)│  │                                      │ │
+│  └──────────┘  └──────────┘  │  1. PKS Library Match? ──────────┐   │ │
+│       ▲                      │     │YES              │NO        │   │ │
+│       │                      │     ▼                 ▼          │   │ │
+│       │                      │  ┌─────────┐   2. Sink Compound? │   │ │
+│       │                      │  │ Rollout │      │YES    │NO    │   │ │
+│       │                      │  │ Policy  │      ▼       ▼      │   │ │
+│       │                      │  │(RetroTide)  ┌──────┐ ┌──────┐ │   │ │
+│       │                      │  └────┬────┘   │Reward│ │Rollout│ │   │ │
+│       │                      │       │        │Policy│ │Policy │ │   │ │
+│       │                      │       ▼        └──┬───┘ └──┬────┘ │   │ │
+│       │                      │  Terminal?        │        │      │   │ │
+│       │                      │  YES→PKS Terminal │        │      │   │ │
+│       │                      │  NO→Sink Fallback─┘        │      │   │ │
+│       │                      └──────────────┬─────────────┘      │   │
+│       │                                     │                        │
+│       │                                     ▼                        │
+│       │                      ┌──────────────────────────────────┐    │
+│       └──────────────────────│         Backpropagate            │    │
+│                              └──────────────────────────────────┘    │
+└────────────────────────────────────────────────────────────────────────┘
                          │
                          ▼
               Terminal Conditions:
+              • PKS terminal (RetroTide verified) ← prioritized
               • Sink compound (building block)
-              • PKS terminal (RetroTide verified)
               • Max depth reached
 ```
+
+**Key Design Decision**: PKS library membership is checked **before** sink compound status. This ensures that fragments matching the PKS library always get RetroTide verification, even if they are also commercially available building blocks. This maximizes the discovery of biosynthetic pathways.
 
 ### MDP Formulation
 
