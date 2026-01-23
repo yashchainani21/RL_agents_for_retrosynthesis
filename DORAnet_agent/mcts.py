@@ -447,6 +447,10 @@ def _load_pks_library(
     - Show progress during loading
     - Cache the canonicalized SMILES to a pickle file for faster subsequent loads
 
+    If the specified file is not found, attempts to load from a fallback path
+    on the Northwestern Quest supercomputing cluster. Raises an error if the
+    PKS library cannot be found at either location.
+
     Args:
         pks_file: Path to text file with PKS SMILES.
         use_cache: If True, use cached canonical SMILES if available.
@@ -454,16 +458,36 @@ def _load_pks_library(
 
     Returns:
         Set of canonical SMILES strings for PKS products.
+
+    Raises:
+        FileNotFoundError: If PKS library file cannot be found at the specified
+            path or the fallback cluster path.
     """
     import pickle
     import hashlib
+
+    # Fallback path for Northwestern Quest supercomputing cluster
+    CLUSTER_FALLBACK_PATH = Path(
+        "/projects/p30041/YashChainani/RL_agents_for_retrosynthesis/data/processed/expanded_PKS_SMILES_V2.txt"
+    )
 
     pks_smiles: Set[str] = set()
     path = Path(pks_file)
 
     if not path.exists():
-        print(f"[WARN] PKS library file not found: {pks_file}")
-        return pks_smiles
+        print(f"[WARN] PKS library file not found at primary path: {pks_file}")
+        print(f"[DORAnet] Attempting fallback path (Quest cluster): {CLUSTER_FALLBACK_PATH}")
+
+        if CLUSTER_FALLBACK_PATH.exists():
+            print(f"[DORAnet] Found PKS library at fallback cluster path")
+            path = CLUSTER_FALLBACK_PATH
+        else:
+            raise FileNotFoundError(
+                f"PKS library file not found at either location:\n"
+                f"  Primary path: {pks_file}\n"
+                f"  Cluster fallback: {CLUSTER_FALLBACK_PATH}\n"
+                f"Please ensure the PKS library file exists at one of these locations."
+            )
 
     # Check for cached version
     cache_dir = path.parent / ".cache"
