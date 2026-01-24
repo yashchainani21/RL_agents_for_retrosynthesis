@@ -834,7 +834,7 @@ class PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
     """
 
     # Default path relative to project root
-    DEFAULT_PKS_BUILDING_BLOCKS_PATH = "data/processed/PKS_smiles.txt"
+    DEFAULT_PKS_BUILDING_BLOCKS_PATH = "data/processed/expanded_PKS_SMILES_V3.txt"
 
     def __init__(
         self,
@@ -856,7 +856,7 @@ class PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
         Args:
             pks_building_blocks_path: Path to file containing PKS building block
                 SMILES (one per line). If None, uses default path relative to
-                project root. Default: "data/processed/PKS_smiles.txt"
+                project root. Default: "data/processed/expanded_PKS_SMILES_V3.txt"
             pks_library: Set of canonical PKS product SMILES for RetroTide
                 spawning. If None, retrieved from context["pks_library"].
             retrotide_kwargs: Parameters passed to RetroTide MCTS constructor.

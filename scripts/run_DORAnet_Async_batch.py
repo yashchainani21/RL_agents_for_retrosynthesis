@@ -9,10 +9,29 @@ Policy System:
   - NoOpRolloutPolicy: No additional work after expansion (just returns 0 reward)
   - SpawnRetroTideOnDatabaseCheck: Spawns RetroTide for PKS library matches (sparse rewards)
   - SAScore_and_SpawnRetroTideOnDatabaseCheck: SA Score rewards + RetroTide spawning (dense rewards)
+  - PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck: PKS similarity + RetroTide (dense, PKS-focused)
 - reward_policy: Controls how terminal rewards are calculated (default: SparseTerminalRewardPolicy)
   - SparseTerminalRewardPolicy: 1.0 for sink compounds, 1.0 for PKS matches, 0.0 otherwise
   - SinkCompoundRewardPolicy: Only rewards sink compounds
   - ComposedRewardPolicy: Combine multiple reward policies with weights
+  - PKSSimilarityRewardPolicy: PKS Tanimoto similarity as sole reward signal
+    - Uses similarity^exponent as reward for ALL nodes (including sink compounds)
+    - Guides MCTS toward PKS-compatible chemical space
+    - Example: similarity=0.8 with exponent=2.0 → reward=0.64
+
+Example: PKS-focused MCTS configuration
+    from DORAnet_agent.policies import (
+        PKSSimilarityRewardPolicy,
+        PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck,
+    )
+
+    reward_policy = PKSSimilarityRewardPolicy(
+        similarity_exponent=2.0,  # Square the similarity
+    )
+    rollout_policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(
+        retrotide_spawn_threshold=0.9,
+        similarity_reward_exponent=2.0,
+    )
 
 Backward Compatibility:
 - spawn_retrotide=True creates SpawnRetroTideOnDatabaseCheck automatically
@@ -50,6 +69,7 @@ from DORAnet_agent.policies import (
     SinkCompoundRewardPolicy,
     PKSLibraryRewardPolicy,
     ComposedRewardPolicy,
+    PKSSimilarityRewardPolicy,
     # Thermodynamic scaling wrappers
     ThermodynamicScaledRolloutPolicy,
     ThermodynamicScaledRewardPolicy,
@@ -148,7 +168,7 @@ def main(
     ]
 
     # Path to PKS library file for reward calculation
-    pks_library_file = REPO_ROOT / "data" / "processed" / "expanded_PKS_SMILES_V2.txt"
+    pks_library_file = REPO_ROOT / "data" / "processed" / "expanded_PKS_SMILES_V3.txt"
 
     # Paths to sink compounds files (commercially available building blocks)
     sink_compounds_files = [
@@ -323,6 +343,12 @@ if __name__ == "__main__":
     # )
 
     selected_reward_policy = SparseTerminalRewardPolicy(sink_terminal_reward=1.0)
+
+    # Option 6: PKS similarity reward policy (replaces flat 1.0 for sink compounds)
+    # This uses PKS Tanimoto similarity as the reward signal for ALL nodes.
+    # selected_reward_policy = PKSSimilarityRewardPolicy(
+    #     similarity_exponent=2.0,  # Square the similarity (penalize low PKS similarity)
+    # )
 
     # Alternative: Thermodynamic-scaled reward policy (wrap any base policy)
     # This scales terminal rewards by pathway thermodynamic feasibility.

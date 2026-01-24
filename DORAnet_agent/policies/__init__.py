@@ -21,6 +21,7 @@ from .reward import (
     SinkCompoundRewardPolicy,
     PKSLibraryRewardPolicy,
     ComposedRewardPolicy,
+    PKSSimilarityRewardPolicy,
 )
 from .thermodynamic import (
     sigmoid_transform,
@@ -45,6 +46,7 @@ __all__ = [
     "SinkCompoundRewardPolicy",
     "PKSLibraryRewardPolicy",
     "ComposedRewardPolicy",
+    "PKSSimilarityRewardPolicy",
     # Thermodynamic scaling
     "sigmoid_transform",
     "get_node_feasibility_score",

@@ -517,7 +517,7 @@ def _load_pks_library(
 
     # Fallback path for Northwestern Quest supercomputing cluster
     CLUSTER_FALLBACK_PATH = Path(
-        "/projects/p30041/YashChainani/RL_agents_for_retrosynthesis/data/processed/expanded_PKS_SMILES_V2.txt"
+        "/projects/p30041/YashChainani/RL_agents_for_retrosynthesis/data/processed/expanded_PKS_SMILES_V3.txt"
     )
 
     pks_smiles: Set[str] = set()

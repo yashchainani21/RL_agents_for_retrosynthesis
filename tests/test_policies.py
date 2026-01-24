@@ -26,6 +26,7 @@ from DORAnet_agent.policies import (
     SinkCompoundRewardPolicy,
     PKSLibraryRewardPolicy,
     ComposedRewardPolicy,
+    PKSSimilarityRewardPolicy,
 )
 from DORAnet_agent.node import Node
 
@@ -843,6 +844,381 @@ class TestPKSSimScoreAndSpawnRetroTideOnDatabaseCheck:
         ):
             policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck()
         assert isinstance(policy, RolloutPolicy)
+
+
+class TestPKSSimilarityRewardPolicy:
+    """Tests for PKSSimilarityRewardPolicy."""
+
+    def test_initialization_defaults(self):
+        """Test default initialization."""
+        with patch.object(
+            PKSSimilarityRewardPolicy,
+            '_load_pks_fingerprints'
+        ):
+            policy = PKSSimilarityRewardPolicy()
+
+        assert policy.similarity_threshold == 0.95
+        assert policy.fingerprint_radius == 2
+        assert policy.fingerprint_bits == 2048
+        assert policy.similarity_exponent == 2.0
+
+    def test_initialization_custom_params(self):
+        """Test custom initialization parameters."""
+        with patch.object(
+            PKSSimilarityRewardPolicy,
+            '_load_pks_fingerprints'
+        ):
+            policy = PKSSimilarityRewardPolicy(
+                similarity_threshold=0.9,
+                fingerprint_radius=3,
+                fingerprint_bits=1024,
+                similarity_exponent=3.0,
+            )
+
+        assert policy.similarity_threshold == 0.9
+        assert policy.fingerprint_radius == 3
+        assert policy.fingerprint_bits == 1024
+        assert policy.similarity_exponent == 3.0
+
+    def test_pks_exact_match_returns_one(self):
+        """PKS library exact matches should return ~1.0 (high similarity)."""
+        with patch.object(
+            PKSSimilarityRewardPolicy,
+            '_load_pks_fingerprints'
+        ):
+            policy = PKSSimilarityRewardPolicy(similarity_exponent=1.0)
+
+        # Mock similarity to return 1.0 (exact match)
+        with patch.object(policy, '_compute_pks_similarity') as mock_sim:
+            mock_sim.return_value = (1.0, {"best_similarity": 1.0})
+
+            mol = Chem.MolFromSmiles("CCO")
+            node = Node(fragment=mol, parent=None)
+
+            reward = policy.calculate_reward(node, {})
+            assert reward == 1.0
+
+    def test_high_similarity_returns_high_reward(self):
+        """High PKS similarity should return high reward."""
+        with patch.object(
+            PKSSimilarityRewardPolicy,
+            '_load_pks_fingerprints'
+        ):
+            policy = PKSSimilarityRewardPolicy(similarity_exponent=1.0)
+
+        # Mock similarity to return 0.9
+        with patch.object(policy, '_compute_pks_similarity') as mock_sim:
+            mock_sim.return_value = (0.9, {"best_similarity": 0.9})
+
+            mol = Chem.MolFromSmiles("CCO")
+            node = Node(fragment=mol, parent=None)
+
+            reward = policy.calculate_reward(node, {})
+            assert reward == pytest.approx(0.9)
+
+    def test_low_similarity_returns_low_reward(self):
+        """Low PKS similarity should return low reward."""
+        with patch.object(
+            PKSSimilarityRewardPolicy,
+            '_load_pks_fingerprints'
+        ):
+            policy = PKSSimilarityRewardPolicy(similarity_exponent=1.0)
+
+        # Mock similarity to return 0.2
+        with patch.object(policy, '_compute_pks_similarity') as mock_sim:
+            mock_sim.return_value = (0.2, {"best_similarity": 0.2})
+
+            mol = Chem.MolFromSmiles("CCO")
+            node = Node(fragment=mol, parent=None)
+
+            reward = policy.calculate_reward(node, {})
+            assert reward == pytest.approx(0.2)
+
+    def test_exponential_scaling(self):
+        """Test that similarity^exponent is applied correctly."""
+        with patch.object(
+            PKSSimilarityRewardPolicy,
+            '_load_pks_fingerprints'
+        ):
+            policy = PKSSimilarityRewardPolicy(similarity_exponent=2.0)
+
+        # Mock similarity to return 0.8
+        with patch.object(policy, '_compute_pks_similarity') as mock_sim:
+            mock_sim.return_value = (0.8, {"best_similarity": 0.8})
+
+            mol = Chem.MolFromSmiles("CCO")
+            node = Node(fragment=mol, parent=None)
+
+            reward = policy.calculate_reward(node, {})
+            # 0.8^2 = 0.64
+            assert reward == pytest.approx(0.64)
+
+    def test_exponential_scaling_various_exponents(self):
+        """Test exponential scaling with different exponent values."""
+        with patch.object(
+            PKSSimilarityRewardPolicy,
+            '_load_pks_fingerprints'
+        ):
+            # Test with exponent=3.0
+            policy = PKSSimilarityRewardPolicy(similarity_exponent=3.0)
+
+        with patch.object(policy, '_compute_pks_similarity') as mock_sim:
+            mock_sim.return_value = (0.5, {"best_similarity": 0.5})
+
+            mol = Chem.MolFromSmiles("CCO")
+            node = Node(fragment=mol, parent=None)
+
+            reward = policy.calculate_reward(node, {})
+            # 0.5^3 = 0.125
+            assert reward == pytest.approx(0.125)
+
+    def test_sink_compound_gets_similarity_reward(self):
+        """Sink compounds should get PKS similarity, not 1.0."""
+        with patch.object(
+            PKSSimilarityRewardPolicy,
+            '_load_pks_fingerprints'
+        ):
+            policy = PKSSimilarityRewardPolicy(similarity_exponent=2.0)
+
+        # Mock similarity to return 0.7 for a "sink compound"
+        with patch.object(policy, '_compute_pks_similarity') as mock_sim:
+            mock_sim.return_value = (0.7, {"best_similarity": 0.7})
+
+            mol = Chem.MolFromSmiles("CCO")
+            node = Node(fragment=mol, parent=None)
+            node.is_sink_compound = True  # Mark as sink compound
+
+            reward = policy.calculate_reward(node, {})
+            # Even though it's a sink compound, it gets PKS similarity reward
+            # 0.7^2 = 0.49
+            assert reward == pytest.approx(0.49)
+            assert reward != 1.0  # NOT the flat 1.0 that SparseTerminalRewardPolicy would give
+
+    def test_non_sink_gets_similarity_reward(self):
+        """Non-terminal nodes should get PKS similarity reward."""
+        with patch.object(
+            PKSSimilarityRewardPolicy,
+            '_load_pks_fingerprints'
+        ):
+            policy = PKSSimilarityRewardPolicy(similarity_exponent=2.0)
+
+        # Mock similarity to return 0.6 for a non-terminal node
+        with patch.object(policy, '_compute_pks_similarity') as mock_sim:
+            mock_sim.return_value = (0.6, {"best_similarity": 0.6})
+
+            mol = Chem.MolFromSmiles("CCO")
+            node = Node(fragment=mol, parent=None)
+            node.is_sink_compound = False
+            node.is_pks_terminal = False
+
+            reward = policy.calculate_reward(node, {})
+            # Non-terminal gets similarity reward, NOT 0.0
+            # 0.6^2 = 0.36
+            assert reward == pytest.approx(0.36)
+            assert reward > 0.0
+
+    def test_inherits_from_reward_policy(self):
+        """Test proper inheritance."""
+        assert issubclass(PKSSimilarityRewardPolicy, RewardPolicy)
+
+        with patch.object(
+            PKSSimilarityRewardPolicy,
+            '_load_pks_fingerprints'
+        ):
+            policy = PKSSimilarityRewardPolicy()
+        assert isinstance(policy, RewardPolicy)
+
+    def test_name_includes_exponent(self):
+        """Test that policy name includes exponent parameter."""
+        with patch.object(
+            PKSSimilarityRewardPolicy,
+            '_load_pks_fingerprints'
+        ):
+            policy = PKSSimilarityRewardPolicy(similarity_exponent=2.5)
+
+        name = policy.name
+        assert "PKSSimilarity" in name
+        assert "exp=2.5" in name
+
+    def test_repr_includes_params(self):
+        """Test that repr includes key parameters."""
+        with patch.object(
+            PKSSimilarityRewardPolicy,
+            '_load_pks_fingerprints'
+        ):
+            policy = PKSSimilarityRewardPolicy(
+                similarity_exponent=2.5,
+                similarity_threshold=0.9,
+                fingerprint_radius=3,
+                fingerprint_bits=1024,
+            )
+
+        repr_str = repr(policy)
+        assert "exponent=2.5" in repr_str
+        assert "threshold=0.9" in repr_str
+        assert "radius=3" in repr_str
+        assert "bits=1024" in repr_str
+
+    def test_no_scaling_with_exponent_one(self):
+        """Test that exponent=1.0 means no scaling."""
+        with patch.object(
+            PKSSimilarityRewardPolicy,
+            '_load_pks_fingerprints'
+        ):
+            policy = PKSSimilarityRewardPolicy(similarity_exponent=1.0)
+
+        with patch.object(policy, '_compute_pks_similarity') as mock_sim:
+            mock_sim.return_value = (0.7, {"best_similarity": 0.7})
+
+            mol = Chem.MolFromSmiles("CCO")
+            node = Node(fragment=mol, parent=None)
+
+            reward = policy.calculate_reward(node, {})
+            # No scaling with exponent=1.0
+            assert reward == pytest.approx(0.7)
+
+    def test_comparison_with_sparse_terminal_policy(self):
+        """Compare PKSSimilarityRewardPolicy vs SparseTerminalRewardPolicy behavior."""
+        # Setup PKSSimilarityRewardPolicy
+        with patch.object(
+            PKSSimilarityRewardPolicy,
+            '_load_pks_fingerprints'
+        ):
+            pks_sim_policy = PKSSimilarityRewardPolicy(similarity_exponent=2.0)
+
+        # Setup SparseTerminalRewardPolicy
+        sparse_policy = SparseTerminalRewardPolicy(sink_terminal_reward=1.0)
+
+        # Create a sink compound node
+        mol = Chem.MolFromSmiles("CCO")
+        node = Node(fragment=mol, parent=None)
+        node.is_sink_compound = True
+
+        # Sparse policy gives flat 1.0 for sink compounds
+        sparse_reward = sparse_policy.calculate_reward(node, {})
+        assert sparse_reward == 1.0
+
+        # PKS similarity policy gives similarity-based reward
+        with patch.object(pks_sim_policy, '_compute_pks_similarity') as mock_sim:
+            mock_sim.return_value = (0.5, {"best_similarity": 0.5})
+
+            pks_reward = pks_sim_policy.calculate_reward(node, {})
+            # 0.5^2 = 0.25, not 1.0
+            assert pks_reward == pytest.approx(0.25)
+            assert pks_reward != sparse_reward
+
+    def test_none_molecule_returns_zero(self):
+        """Test that None molecule returns 0.0 reward."""
+        with patch.object(
+            PKSSimilarityRewardPolicy,
+            '_load_pks_fingerprints'
+        ):
+            policy = PKSSimilarityRewardPolicy()
+
+        node = MagicMock()
+        node.fragment = None
+        node.smiles = None
+
+        reward = policy.calculate_reward(node, {})
+        assert reward == 0.0
+
+
+class TestPKSDatabaseContents:
+    """
+    Tests to verify specific molecules are present in the PKS database.
+
+    These tests use the actual PKS database (expanded_PKS_SMILES_V3.txt)
+    to verify that key target molecules are included and receive appropriate
+    similarity rewards.
+    """
+
+    @pytest.fixture
+    def pks_policy(self):
+        """Create a PKSSimilarityRewardPolicy with the real database."""
+        return PKSSimilarityRewardPolicy(similarity_exponent=1.0)
+
+    def test_4_hydroxybutyric_acid_in_database(self, pks_policy):
+        """Test that 4-hydroxybutyric acid is in the PKS database."""
+        # 4-hydroxybutyric acid (gamma-hydroxybutyric acid)
+        mol = Chem.MolFromSmiles("OCCCC(=O)O")
+        node = Node(fragment=mol, parent=None)
+
+        reward = pks_policy.calculate_reward(node, {})
+
+        # Should have perfect similarity (1.0) since it's in the database
+        assert reward == pytest.approx(1.0), \
+            f"4-hydroxybutyric acid should be in PKS database, got reward {reward}"
+
+    def test_5_ketohexanoic_acid_in_database(self, pks_policy):
+        """Test that 5-ketohexanoic acid is in the PKS database."""
+        # 5-ketohexanoic acid (5-oxohexanoic acid)
+        mol = Chem.MolFromSmiles("CC(=O)CCCC(=O)O")
+        node = Node(fragment=mol, parent=None)
+
+        reward = pks_policy.calculate_reward(node, {})
+
+        # Should have perfect similarity (1.0) since it's in the database
+        assert reward == pytest.approx(1.0), \
+            f"5-ketohexanoic acid should be in PKS database, got reward {reward}"
+
+    def test_tiglic_acid_in_database(self, pks_policy):
+        """Test that tiglic acid is in the PKS database."""
+        # Tiglic acid (trans-2-methyl-2-butenoic acid)
+        mol = Chem.MolFromSmiles("CC=CC(=O)O")
+        node = Node(fragment=mol, parent=None)
+
+        reward = pks_policy.calculate_reward(node, {})
+
+        # Should have perfect similarity (1.0) since it's in the database
+        assert reward == pytest.approx(1.0), \
+            f"Tiglic acid should be in PKS database, got reward {reward}"
+
+    def test_gamma_valerolactone_not_in_database(self, pks_policy):
+        """Test that gamma-valerolactone is NOT in the PKS database."""
+        # Gamma-valerolactone (5-methyl-2-oxolanone)
+        mol = Chem.MolFromSmiles("CC1CCC(=O)O1")
+        node = Node(fragment=mol, parent=None)
+
+        reward = pks_policy.calculate_reward(node, {})
+
+        # Should NOT have perfect similarity since it's not in the database
+        assert reward < 1.0, \
+            f"Gamma-valerolactone should NOT be in PKS database, got reward {reward}"
+
+    def test_hydroxyethyl_furanone_in_database(self, pks_policy):
+        """Test that 5-(2-hydroxyethylidene)furan-2(5H)-one is in the PKS database."""
+        # This molecule can be synthesized by RetroTide via PKS + cyclization
+        mol = Chem.MolFromSmiles("O=C1C=CC(=CCO)O1")
+        node = Node(fragment=mol, parent=None)
+
+        reward = pks_policy.calculate_reward(node, {})
+
+        # Should have perfect similarity (1.0) since it's in the database
+        assert reward == pytest.approx(1.0), \
+            f"Hydroxyethyl furanone should be in PKS database, got reward {reward}"
+
+    def test_styryl_lactone_in_database(self, pks_policy):
+        """Test that 6-styryl-5,6-dihydro-2H-pyran-2-one is in the PKS database."""
+        # 13-carbon styryl lactone (pyranone with phenyl group)
+        mol = Chem.MolFromSmiles("O=C1C=CCC(C=Cc2ccccc2)O1")
+        node = Node(fragment=mol, parent=None)
+
+        reward = pks_policy.calculate_reward(node, {})
+
+        # Should have perfect similarity (1.0) since it's in the database
+        assert reward == pytest.approx(1.0), \
+            f"Styryl lactone should be in PKS database, got reward {reward}"
+
+    def test_database_loads_correct_molecule_count(self, pks_policy):
+        """Test that the PKS database loads the expected number of molecules."""
+        # The expanded_PKS_SMILES_V3.txt database should have ~962k molecules
+        num_molecules = len(pks_policy._pks_building_blocks)
+
+        # Allow some tolerance in case the database is updated
+        assert num_molecules > 900000, \
+            f"PKS database should have >900k molecules, got {num_molecules}"
+        assert num_molecules < 1100000, \
+            f"PKS database should have <1.1M molecules, got {num_molecules}"
 
 
 class TestPreprocessTargetMolecule:
