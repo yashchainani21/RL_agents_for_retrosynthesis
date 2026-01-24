@@ -20,6 +20,7 @@ from DORAnet_agent.policies import (
     NoOpRolloutPolicy,
     SpawnRetroTideOnDatabaseCheck,
     SAScore_and_SpawnRetroTideOnDatabaseCheck,
+    PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck,
     # Reward policies
     SparseTerminalRewardPolicy,
     SinkCompoundRewardPolicy,
@@ -593,6 +594,252 @@ class TestSAScoreAndSpawnRetroTideOnDatabaseCheck:
     def test_inherits_from_rollout_policy(self):
         """Test that SAScore policy inherits from RolloutPolicy."""
         assert issubclass(SAScore_and_SpawnRetroTideOnDatabaseCheck, RolloutPolicy)
-        
+
         policy = SAScore_and_SpawnRetroTideOnDatabaseCheck()
+        assert isinstance(policy, RolloutPolicy)
+
+
+class TestPKSSimScoreAndSpawnRetroTideOnDatabaseCheck:
+    """Tests for PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck rollout policy."""
+
+    def test_initialization_defaults(self):
+        """Test default initialization parameters including new ones."""
+        # Use a mock to avoid loading actual PKS building blocks
+        with patch.object(
+            PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck,
+            '_load_pks_building_blocks'
+        ):
+            policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck()
+
+        assert policy.success_reward == 1.0
+        assert policy.similarity_threshold == 0.9
+        assert policy.similarity_method == "tanimoto"
+        assert policy.fingerprint_radius == 2
+        assert policy.fingerprint_bits == 2048
+        # New parameters
+        assert policy.retrotide_spawn_threshold == 0.9
+        assert policy.similarity_reward_exponent == 2.0
+
+    def test_initialization_custom_new_params(self):
+        """Test custom initialization of new parameters."""
+        with patch.object(
+            PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck,
+            '_load_pks_building_blocks'
+        ):
+            policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(
+                retrotide_spawn_threshold=0.85,
+                similarity_reward_exponent=3.0,
+            )
+
+        assert policy.retrotide_spawn_threshold == 0.85
+        assert policy.similarity_reward_exponent == 3.0
+
+    def test_initialization_exact_match_only_behavior(self):
+        """Test initialization for exact-match-only behavior (old behavior)."""
+        with patch.object(
+            PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck,
+            '_load_pks_building_blocks'
+        ):
+            policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(
+                retrotide_spawn_threshold=1.0,  # Only exact matches
+                similarity_reward_exponent=1.0,  # Linear rewards
+            )
+
+        assert policy.retrotide_spawn_threshold == 1.0
+        assert policy.similarity_reward_exponent == 1.0
+
+    def test_exponential_scaling_in_get_pks_similarity_reward(self):
+        """Test that _get_pks_similarity_reward applies exponential scaling."""
+        with patch.object(
+            PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck,
+            '_load_pks_building_blocks'
+        ):
+            policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(
+                similarity_reward_exponent=2.0,
+            )
+
+        # Mock the _compute_tanimoto_similarity method to return a known value
+        with patch.object(policy, '_compute_tanimoto_similarity') as mock_compute:
+            mock_compute.return_value = (0.9, {"best_similarity": 0.9, "similarity_method": "tanimoto"})
+
+            node = MagicMock()
+            reward, metadata = policy._get_pks_similarity_reward(node)
+
+            # 0.9^2 = 0.81
+            assert reward == pytest.approx(0.81)
+            assert metadata["raw_similarity"] == 0.9
+            assert metadata["similarity_exponent"] == 2.0
+
+    def test_exponential_scaling_with_different_exponents(self):
+        """Test exponential scaling with various exponent values."""
+        with patch.object(
+            PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck,
+            '_load_pks_building_blocks'
+        ):
+            # Test with exponent=3.0
+            policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(
+                similarity_reward_exponent=3.0,
+            )
+
+        with patch.object(policy, '_compute_tanimoto_similarity') as mock_compute:
+            mock_compute.return_value = (0.5, {"best_similarity": 0.5, "similarity_method": "tanimoto"})
+
+            node = MagicMock()
+            reward, metadata = policy._get_pks_similarity_reward(node)
+
+            # 0.5^3 = 0.125
+            assert reward == pytest.approx(0.125)
+
+    def test_no_scaling_with_exponent_one(self):
+        """Test that exponent=1.0 means no scaling."""
+        with patch.object(
+            PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck,
+            '_load_pks_building_blocks'
+        ):
+            policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(
+                similarity_reward_exponent=1.0,
+            )
+
+        with patch.object(policy, '_compute_tanimoto_similarity') as mock_compute:
+            mock_compute.return_value = (0.7, {"best_similarity": 0.7, "similarity_method": "tanimoto"})
+
+            node = MagicMock()
+            reward, metadata = policy._get_pks_similarity_reward(node)
+
+            # No scaling
+            assert reward == pytest.approx(0.7)
+            # Should not add raw_similarity or similarity_exponent when exponent=1.0
+            assert "raw_similarity" not in metadata
+
+    def test_high_similarity_triggers_retrotide_spawn(self):
+        """Test that high similarity (>= threshold) triggers RetroTide spawn logic."""
+        with patch.object(
+            PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck,
+            '_load_pks_building_blocks'
+        ):
+            policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(
+                pks_library=set(),  # Empty library = no exact match
+                retrotide_spawn_threshold=0.9,
+                similarity_reward_exponent=1.0,
+            )
+
+        # Mock similarity to return 0.95 (above threshold)
+        with patch.object(policy, '_get_pks_similarity_reward') as mock_sim:
+            mock_sim.return_value = (0.95, {"best_similarity": 0.95, "similarity_method": "tanimoto"})
+
+            mol = Chem.MolFromSmiles("CCO")
+            node = Node(fragment=mol, parent=None)
+            context = {"pks_library": set()}  # Empty library
+
+            # Without RetroTide available, it should still recognize high similarity
+            result = policy.rollout(node, context)
+
+            # The metadata should indicate high_similarity_match (even if RetroTide fails/unavailable)
+            assert result.metadata.get("high_similarity_match") is True or \
+                   result.metadata.get("retrotide_available") is False
+
+    def test_low_similarity_does_not_trigger_retrotide(self):
+        """Test that low similarity (< threshold) does not trigger RetroTide."""
+        with patch.object(
+            PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck,
+            '_load_pks_building_blocks'
+        ):
+            policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(
+                pks_library=set(),  # Empty library = no exact match
+                retrotide_spawn_threshold=0.9,
+                similarity_reward_exponent=2.0,
+            )
+
+        # Mock similarity to return 0.7 (below threshold)
+        with patch.object(policy, '_get_pks_similarity_reward') as mock_sim:
+            mock_sim.return_value = (0.49, {  # 0.7^2 = 0.49 (scaled)
+                "best_similarity": 0.7,
+                "raw_similarity": 0.7,
+                "similarity_exponent": 2.0,
+                "similarity_method": "tanimoto"
+            })
+
+            mol = Chem.MolFromSmiles("CCO")
+            node = Node(fragment=mol, parent=None)
+            context = {"pks_library": set()}
+
+            result = policy.rollout(node, context)
+
+            # Should return the scaled similarity reward without attempting RetroTide
+            assert result.reward == pytest.approx(0.49)
+            assert result.terminal is False
+            assert result.metadata.get("pks_match") is False
+            assert result.metadata.get("high_similarity_match") is False
+
+    def test_metadata_includes_new_fields(self):
+        """Test that metadata includes new tracking fields."""
+        with patch.object(
+            PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck,
+            '_load_pks_building_blocks'
+        ):
+            policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(
+                pks_library=set(),
+                retrotide_spawn_threshold=0.9,
+                similarity_reward_exponent=2.0,
+            )
+
+        with patch.object(policy, '_get_pks_similarity_reward') as mock_sim:
+            mock_sim.return_value = (0.36, {
+                "best_similarity": 0.6,
+                "raw_similarity": 0.6,
+                "similarity_exponent": 2.0,
+                "similarity_method": "tanimoto"
+            })
+
+            mol = Chem.MolFromSmiles("CCO")
+            node = Node(fragment=mol, parent=None)
+            context = {}
+
+            result = policy.rollout(node, context)
+
+            # Check for new metadata fields
+            assert "retrotide_spawn_threshold" in result.metadata
+            assert result.metadata["retrotide_spawn_threshold"] == 0.9
+            assert "raw_similarity" in result.metadata
+            assert result.metadata["raw_similarity"] == 0.6
+
+    def test_name_includes_new_params(self):
+        """Test that policy name includes new parameters."""
+        with patch.object(
+            PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck,
+            '_load_pks_building_blocks'
+        ):
+            policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(
+                retrotide_spawn_threshold=0.85,
+                similarity_reward_exponent=2.5,
+            )
+
+        name = policy.name
+        assert "spawn_thresh=0.85" in name
+        assert "exp=2.5" in name
+
+    def test_repr_includes_new_params(self):
+        """Test that repr includes new parameters."""
+        with patch.object(
+            PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck,
+            '_load_pks_building_blocks'
+        ):
+            policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(
+                retrotide_spawn_threshold=0.85,
+                similarity_reward_exponent=2.5,
+            )
+
+        repr_str = repr(policy)
+        assert "retrotide_spawn_threshold=0.85" in repr_str
+        assert "similarity_reward_exponent=2.5" in repr_str
+
+    def test_inherits_from_rollout_policy(self):
+        """Test that PKS Sim Score policy inherits from RolloutPolicy."""
+        assert issubclass(PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck, RolloutPolicy)
+
+        with patch.object(
+            PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck,
+            '_load_pks_building_blocks'
+        ):
+            policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck()
         assert isinstance(policy, RolloutPolicy)

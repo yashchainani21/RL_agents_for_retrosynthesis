@@ -765,11 +765,35 @@ class PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
         - "tanimoto" (default): Fast Morgan fingerprint-based Tanimoto similarity
         - "mcs": Maximum Common Substructure without stereochemistry matching
 
+    Key Features:
+        - Similarity-threshold RetroTide spawning: Spawn RetroTide for fragments
+          with high PKS similarity (>= retrotide_spawn_threshold), not just exact
+          library matches. This allows discovery of PKS routes for molecules
+          similar to known PKS products.
+        - Exponential reward scaling: Apply similarity^exponent to penalize low
+          similarities and guide MCTS toward PKS-compatible chemical space.
+
     Reward Logic:
         1. Terminal Nodes (sink compounds): success_reward (default 1.0)
-        2. PKS Library Match + RetroTide Success: success_reward (default 1.0)
-        3. PKS Library Match + RetroTide Failure: PKS similarity score (0.0-1.0)
-        4. Non-PKS Nodes: PKS similarity score (0.0-1.0)
+        2. Exact PKS Library Match + RetroTide Success: success_reward (1.0)
+        3. High Similarity (>= threshold) + RetroTide Success: success_reward (1.0)
+        4. RetroTide Failure or Low Similarity: scaled similarity score
+           (similarity^exponent, default exponent=2.0)
+
+    RetroTide Spawning:
+        By default (retrotide_spawn_threshold=0.9), RetroTide is spawned when:
+        - Fragment exactly matches PKS library (canonical SMILES match), OR
+        - Fragment has >= 0.9 Tanimoto similarity to any PKS building block
+
+        Set retrotide_spawn_threshold=1.0 to revert to exact-match-only behavior.
+
+    Similarity Reward Scaling:
+        By default (similarity_reward_exponent=2.0), rewards are squared:
+        - 0.9 similarity → 0.81 reward
+        - 0.7 similarity → 0.49 reward
+        - 0.5 similarity → 0.25 reward
+
+        Set similarity_reward_exponent=1.0 for linear (unscaled) rewards.
 
     Tanimoto Similarity (default):
         - Uses Morgan fingerprints (ECFP4 equivalent, radius=2, 2048 bits)
@@ -789,6 +813,21 @@ class PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
         - Pre-filtering by atom count (MCS method only)
         - Timeout per MCS calculation (MCS method only)
         - Pre-parsed PKS building blocks loaded once at initialization
+
+    Usage Examples:
+        # Default: threshold=0.9, exponent=2.0
+        policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck()
+
+        # More aggressive: spawn at 0.85 similarity
+        policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(
+            retrotide_spawn_threshold=0.85,
+        )
+
+        # Revert to old behavior: exact matches only, linear rewards
+        policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(
+            retrotide_spawn_threshold=1.0,
+            similarity_reward_exponent=1.0,
+        )
 
     This policy is designed to complement biological/PKS pathway exploration
     by providing rewards that are not biased toward chemical synthesizability.
@@ -810,6 +849,8 @@ class PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
         mcs_timeout: float = 1.0,
         atom_count_tolerance: float = 0.5,
         project_root: Optional[str] = None,
+        retrotide_spawn_threshold: float = 0.9,
+        similarity_reward_exponent: float = 2.0,
     ):
         """
         Args:
@@ -840,6 +881,15 @@ class PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
                 Only used with similarity_method="mcs".
             project_root: Root directory of the project for resolving relative
                 paths. If None, attempts to auto-detect from this file's location.
+            retrotide_spawn_threshold: Minimum PKS similarity to trigger RetroTide
+                spawning. If a fragment has similarity >= this threshold to any
+                PKS building block, RetroTide will be spawned even without an
+                exact library match. Set to 1.0 to revert to exact-match-only
+                behavior. Default 0.9.
+            similarity_reward_exponent: Exponent for scaling similarity rewards.
+                Applied as: reward = similarity ^ exponent. Values > 1.0 penalize
+                low similarities more heavily, < 1.0 boost them. Default 2.0
+                (squared). Examples with exponent=2.0: 0.9→0.81, 0.7→0.49, 0.5→0.25.
         """
         # Validate similarity_method
         if similarity_method not in ("tanimoto", "mcs"):
@@ -857,6 +907,12 @@ class PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
         self.fingerprint_bits = fingerprint_bits
         self.mcs_timeout = mcs_timeout
         self.atom_count_tolerance = atom_count_tolerance
+
+        # RetroTide spawning threshold (spawn for high-similarity fragments)
+        self.retrotide_spawn_threshold = retrotide_spawn_threshold
+
+        # Similarity reward scaling exponent
+        self.similarity_reward_exponent = similarity_reward_exponent
 
         # Track RetroTide availability
         self._retrotide_available = self._check_retrotide_available()
@@ -890,7 +946,9 @@ class PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
 
         print(f"[PKS Sim Score Policy] Loaded {len(self._pks_building_blocks)} PKS building blocks")
         print(f"[PKS Sim Score Policy] Similarity method: {self.similarity_method}")
-        print(f"[PKS Sim Score Policy] Similarity threshold: {self.similarity_threshold}")
+        print(f"[PKS Sim Score Policy] Similarity threshold (early termination): {self.similarity_threshold}")
+        print(f"[PKS Sim Score Policy] RetroTide spawn threshold: {self.retrotide_spawn_threshold}")
+        print(f"[PKS Sim Score Policy] Similarity reward exponent: {self.similarity_reward_exponent}")
         if self.similarity_method == "tanimoto":
             print(f"[PKS Sim Score Policy] Fingerprint: Morgan r={self.fingerprint_radius}, bits={self.fingerprint_bits}")
         else:
@@ -1063,20 +1121,30 @@ class PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
         """
         Calculate PKS similarity reward for a node.
 
-        Routes to the appropriate similarity method based on self.similarity_method.
+        Routes to the appropriate similarity method based on self.similarity_method,
+        then applies exponential scaling if configured.
 
         Args:
             node: The node to compute similarity for
 
         Returns:
-            Tuple of (similarity_score, metadata_dict) where:
-                - similarity_score: Max similarity in [0.0, 1.0]
-                - metadata_dict: Contains computation details for debugging
+            Tuple of (scaled_reward, metadata_dict) where:
+                - scaled_reward: Similarity ^ exponent, in [0.0, 1.0]
+                - metadata_dict: Contains computation details including raw similarity
         """
         if self.similarity_method == "tanimoto":
-            return self._compute_tanimoto_similarity(node)
+            raw_similarity, metadata = self._compute_tanimoto_similarity(node)
         else:
-            return self._compute_mcs_similarity(node)
+            raw_similarity, metadata = self._compute_mcs_similarity(node)
+
+        # Apply exponential scaling to the similarity reward
+        if self.similarity_reward_exponent != 1.0:
+            scaled_reward = raw_similarity ** self.similarity_reward_exponent
+            metadata["raw_similarity"] = raw_similarity
+            metadata["similarity_exponent"] = self.similarity_reward_exponent
+            return scaled_reward, metadata
+
+        return raw_similarity, metadata
 
     def _compute_tanimoto_similarity(self, node: "Node") -> Tuple[float, Dict[str, Any]]:
         """
@@ -1282,13 +1350,17 @@ class PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
         Perform rollout with PKS similarity rewards and RetroTide spawning.
 
         Logic:
-            1. Check if node is terminal (sink) → return success_reward
-            2. Compute PKS similarity reward for the node
-            3. If PKS library match:
-               a. Spawn RetroTide
+            1. Compute PKS similarity reward for the node
+            2. Check if node qualifies for RetroTide spawning:
+               a. Exact PKS library match (canonical SMILES in library), OR
+               b. High similarity (>= retrotide_spawn_threshold) to PKS building block
+            3. If qualifies for RetroTide:
+               a. Spawn RetroTide to verify PKS synthesis
                b. If RetroTide succeeds → return success_reward, mark terminal
-               c. If RetroTide fails → return PKS similarity reward (dense signal)
-            4. If not PKS match → return PKS similarity reward (dense signal)
+               c. If RetroTide fails → return scaled similarity reward
+            4. If doesn't qualify → return scaled similarity reward (dense signal)
+
+        Similarity rewards are scaled by: reward = similarity ^ exponent
 
         Args:
             node: The node to perform rollout from (a newly expanded child).
@@ -1299,10 +1371,10 @@ class PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
 
         Returns:
             RolloutResult with:
-                - reward: success_reward, or PKS similarity reward (0.0-1.0)
+                - reward: success_reward (1.0), or scaled similarity (sim^exponent)
                 - terminal: True if RetroTide succeeds
                 - terminal_type: "pks_terminal" if successful
-                - metadata: Contains PKS similarity, RetroTide results for traceability
+                - metadata: Contains PKS similarity, match type, RetroTide results
         """
         # Compute PKS similarity reward upfront (will be used as fallback)
         pks_sim_reward, pks_sim_metadata = self._get_pks_similarity_reward(node)
@@ -1320,21 +1392,34 @@ class PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
 
         # Get PKS library and check membership
         pks_library = self._get_pks_library(context)
-        is_pks_match = self._is_pks_match(node, pks_library)
-        
-        if not is_pks_match:
-            # Not a PKS match - return PKS similarity reward as dense signal
+        is_exact_pks_match = self._is_pks_match(node, pks_library)
+
+        # Check if similarity is high enough to attempt RetroTide verification
+        # (even if not an exact match in the library)
+        # Use raw_similarity if available (when exponent != 1.0), otherwise best_similarity
+        raw_similarity = pks_sim_metadata.get("raw_similarity", pks_sim_metadata.get("best_similarity", 0.0))
+        is_high_similarity = raw_similarity >= self.retrotide_spawn_threshold
+
+        should_spawn_retrotide = is_exact_pks_match or is_high_similarity
+
+        if not should_spawn_retrotide:
+            # Not a PKS match and similarity below threshold
+            # Return scaled PKS similarity reward as dense signal
             return RolloutResult(
                 reward=pks_sim_reward,
                 terminal=False,
                 metadata={
                     "pks_similarity": pks_sim_reward,
+                    "raw_similarity": raw_similarity,
                     "pks_match": False,
+                    "high_similarity_match": False,
+                    "retrotide_spawn_threshold": self.retrotide_spawn_threshold,
                     **pks_sim_metadata,
                 }
             )
 
-        # Node matches PKS library - attempt RetroTide
+        # Node is either exact PKS match OR has high similarity - attempt RetroTide
+        match_type = "exact" if is_exact_pks_match else "high_similarity"
         if not self._retrotide_available:
             print("[PKS Sim Score Rollout] WARNING: RetroTide not available, using PKS similarity reward")
             return RolloutResult(
@@ -1342,13 +1427,17 @@ class PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
                 terminal=False,
                 metadata={
                     "pks_similarity": pks_sim_reward,
-                    "pks_match": True,
+                    "raw_similarity": raw_similarity,
+                    "pks_match": is_exact_pks_match,
+                    "high_similarity_match": is_high_similarity and not is_exact_pks_match,
+                    "retrotide_spawn_threshold": self.retrotide_spawn_threshold,
                     "retrotide_available": False,
                     **pks_sim_metadata,
                 }
             )
 
-        print(f"[PKS Sim Score Rollout] Node {node.node_id} matches PKS library, spawning RetroTide")
+        print(f"[PKS Sim Score Rollout] Node {node.node_id} qualifies for RetroTide "
+              f"(match_type={match_type}, similarity={raw_similarity:.3f})")
 
         # Mark as attempted to prevent duplicate rollouts
         node.retrotide_attempted = True
@@ -1362,7 +1451,10 @@ class PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
                 terminal=False,
                 metadata={
                     "pks_similarity": pks_sim_reward,
-                    "pks_match": True,
+                    "raw_similarity": raw_similarity,
+                    "pks_match": is_exact_pks_match,
+                    "high_similarity_match": is_high_similarity and not is_exact_pks_match,
+                    "retrotide_spawn_threshold": self.retrotide_spawn_threshold,
                     "retrotide_skipped": "no_target_molecule",
                     **pks_sim_metadata,
                 }
@@ -1374,14 +1466,19 @@ class PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
         result = self._run_retrotide(node, target_molecule, retrotide_kwargs)
 
         if result["successful"]:
-            print(f"[PKS Sim Score Rollout] SUCCESS! Found {result['num_successful_nodes']} valid PKS designs")
+            print(f"[PKS Sim Score Rollout] SUCCESS! Found {result['num_successful_nodes']} valid PKS designs "
+                  f"(match_type={match_type})")
             return RolloutResult(
                 reward=self.success_reward,
                 terminal=True,
                 terminal_type="pks_terminal",
                 metadata={
                     "pks_similarity": pks_sim_reward,
-                    "pks_match": True,
+                    "raw_similarity": raw_similarity,
+                    "pks_match": is_exact_pks_match,
+                    "high_similarity_match": is_high_similarity and not is_exact_pks_match,
+                    "retrotide_spawn_threshold": self.retrotide_spawn_threshold,
+                    "retrotide_match_type": match_type,
                     "retrotide_successful": True,
                     "retrotide_num_successful_nodes": result["num_successful_nodes"],
                     "retrotide_best_score": result["best_score"],
@@ -1393,13 +1490,18 @@ class PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
             )
         else:
             # RetroTide failed - return PKS similarity reward as dense signal
-            print(f"[PKS Sim Score Rollout] No valid PKS design found, returning PKS similarity reward: {pks_sim_reward:.3f}")
+            print(f"[PKS Sim Score Rollout] No valid PKS design found (match_type={match_type}), "
+                  f"returning PKS similarity reward: {pks_sim_reward:.3f}")
             return RolloutResult(
                 reward=pks_sim_reward,
                 terminal=False,
                 metadata={
                     "pks_similarity": pks_sim_reward,
-                    "pks_match": True,
+                    "raw_similarity": raw_similarity,
+                    "pks_match": is_exact_pks_match,
+                    "high_similarity_match": is_high_similarity and not is_exact_pks_match,
+                    "retrotide_spawn_threshold": self.retrotide_spawn_threshold,
+                    "retrotide_match_type": match_type,
                     "retrotide_successful": False,
                     "retrotide_total_nodes": result["total_nodes"],
                     "retrotide_target_smiles": result["target_smiles"],
@@ -1411,7 +1513,8 @@ class PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
     def name(self) -> str:
         return (f"PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck("
                 f"method={self.similarity_method}, "
-                f"success={self.success_reward}, threshold={self.similarity_threshold})")
+                f"spawn_thresh={self.retrotide_spawn_threshold}, "
+                f"exp={self.similarity_reward_exponent})")
 
     def __repr__(self) -> str:
         base_repr = (
@@ -1419,6 +1522,8 @@ class PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
             f"similarity_method='{self.similarity_method}', "
             f"success_reward={self.success_reward}, "
             f"similarity_threshold={self.similarity_threshold}, "
+            f"retrotide_spawn_threshold={self.retrotide_spawn_threshold}, "
+            f"similarity_reward_exponent={self.similarity_reward_exponent}, "
         )
         if self.similarity_method == "tanimoto":
             method_repr = (
