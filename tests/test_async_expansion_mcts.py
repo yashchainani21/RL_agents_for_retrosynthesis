@@ -150,7 +150,7 @@ def pks_building_blocks_path():
     fixture_path = REPO_ROOT / "tests" / "fixtures" / "test_pks_building_blocks.txt"
     if not fixture_path.exists():
         # Create fixture from full file if it doesn't exist
-        full_path = REPO_ROOT / "data" / "processed" / "expanded_PKS_SMILES.txt"
+        full_path = REPO_ROOT / "data" / "processed" / "expanded_PKS_SMILES_V3.txt"
         fixture_path.parent.mkdir(parents=True, exist_ok=True)
         with open(full_path, "r") as src, open(fixture_path, "w") as dst:
             for i, line in enumerate(src):

@@ -43,7 +43,7 @@ def _build_common_kwargs(target_molecule: Chem.Mol, total_iterations: int) -> di
         REPO_ROOT / "data" / "raw" / "all_cofactors.csv",
         REPO_ROOT / "data" / "raw" / "chemistry_helpers.csv",
     ]
-    pks_library_file = REPO_ROOT / "data" / "processed" / "expanded_PKS_smiles.txt"
+    pks_library_file = REPO_ROOT / "data" / "processed" / "expanded_PKS_SMILES_V3.txt"
     sink_compounds_files = [
         REPO_ROOT / "data" / "processed" / "biological_building_blocks.txt",
         REPO_ROOT / "data" / "processed" / "chemical_building_blocks.txt",

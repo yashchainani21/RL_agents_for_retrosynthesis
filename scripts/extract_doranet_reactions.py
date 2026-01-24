@@ -290,7 +290,7 @@ def extract_reactions_from_mcts_run(
         str(REPO_ROOT / "data" / "raw" / "all_cofactors.csv"),
         str(REPO_ROOT / "data" / "raw" / "chemistry_helpers.csv"),
     ]
-    pks_library_file = str(REPO_ROOT / "data" / "processed" / "PKS_smiles.txt")
+    pks_library_file = str(REPO_ROOT / "data" / "processed" / "expanded_PKS_SMILES_V3.txt")
     sink_compounds_files = [
         str(REPO_ROOT / "data" / "processed" / "biological_building_blocks.txt"),
         str(REPO_ROOT / "data" / "processed" / "chemical_building_blocks.txt"),

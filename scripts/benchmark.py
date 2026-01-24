@@ -161,7 +161,7 @@ class BenchmarkConfig:
                 str(REPO_ROOT / "data" / "raw" / "chemistry_helpers.csv"),
             ]
         if not self.pks_library_file:
-            self.pks_library_file = str(REPO_ROOT / "data" / "processed" / "PKS_smiles.txt")
+            self.pks_library_file = str(REPO_ROOT / "data" / "processed" / "expanded_PKS_SMILES_V3.txt")
         if not self.sink_compounds_files:
             self.sink_compounds_files = [
                 str(REPO_ROOT / "data" / "processed" / "biological_building_blocks.txt"),
