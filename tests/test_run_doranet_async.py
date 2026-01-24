@@ -55,7 +55,13 @@ def test_async_runner_invokes_agent(monkeypatch, tmp_path):
     _orig_mol_from_smiles = Chem.MolFromSmiles
     monkeypatch.setattr(runner.Chem, "MolFromSmiles", lambda s: _orig_mol_from_smiles("CCO"))
 
-    runner.main()
+    runner.main(
+        target_smiles="CCO",
+        molecule_name="ethanol",
+        total_iterations=10,
+        max_depth=2,
+        max_children_per_expand=5,
+    )
 
     assert calls["run"] == 1
     assert calls["save_results"] == 1
@@ -70,4 +76,10 @@ def test_async_runner_respects_invalid_smiles(monkeypatch, tmp_path):
     monkeypatch.setattr(runner.Chem, "MolFromSmiles", lambda s: None)
 
     with pytest.raises(ValueError):
-        runner.main()
+        runner.main(
+            target_smiles="INVALID",
+            molecule_name="invalid",
+            total_iterations=10,
+            max_depth=2,
+            max_children_per_expand=5,
+        )

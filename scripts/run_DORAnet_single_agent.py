@@ -99,7 +99,8 @@ def main(target_smiles: str,
          rollout_policy: Optional[RolloutPolicy] = None,
          reward_policy: Optional[RewardPolicy] = None,
          results_subfolder: str = None,
-         MW_multiple_to_exclude: float = 1.5) -> None:
+         MW_multiple_to_exclude: float = 1.5,
+         child_downselection_strategy: str = "most_thermo_feasible") -> None:
     """
     Run the DORAnet MCTS agent.
 
@@ -130,19 +131,21 @@ def main(target_smiles: str,
                           If None, saves directly to results/. Useful for batch runs.
         MW_multiple_to_exclude: Exclude fragments with MW > target_MW * this value.
                                Default 1.5 (exclude fragments >150% of target MW).
+        child_downselection_strategy: Strategy for selecting which fragments to keep
+            when more than max_children_per_expand are generated. Options:
+            - "first_N": Keep first N fragments in DORAnet's order (fastest)
+            - "hybrid": Prioritize sink compounds > PKS matches > smaller MW
+            - "most_thermo_feasible": Prioritize by thermodynamic feasibility
+              (DORA-XGB for enzymatic, sigmoid-transformed ΔH for synthetic),
+              with bonuses for sink compounds (+1000) and PKS matches (+500)
+            Default is "most_thermo_feasible".
     """
     create_interactive_visualization = False
     enable_iteration_viz = False
     iteration_interval = 1
     auto_open_iteration_viz = False
     auto_cleanup_pgnet_files = True
-    # Child downselection strategy options:
-    # - "first_N": Keep first N fragments in DORAnet's order (fastest)
-    # - "hybrid": Prioritize sink compounds > PKS matches > smaller MW
-    # - "most_thermo_feasible": Prioritize by thermodynamic feasibility
-    #   (DORA-XGB for enzymatic, sigmoid-transformed ΔH for synthetic),
-    #   with bonuses for sink compounds (+1000) and PKS matches (+500)
-    child_downselection_strategy = "most_thermo_feasible"
+
     target_molecule = Chem.MolFromSmiles(target_smiles)
     
     if target_molecule is None:
@@ -430,4 +433,5 @@ if __name__ == "__main__":
         reward_policy=selected_reward_policy,
         results_subfolder=None,
         MW_multiple_to_exclude=1.5,
+        child_downselection_strategy="most_thermo_feasible",
     )

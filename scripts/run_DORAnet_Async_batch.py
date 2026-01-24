@@ -86,6 +86,7 @@ def main(
     rollout_policy: Optional[RolloutPolicy] = None,
     reward_policy: Optional[RewardPolicy] = None,
     MW_multiple_to_exclude: float = 1.5,
+    child_downselection_strategy: str = "most_thermo_feasible",
 ) -> None:
     """
     Run the async DORAnet MCTS agent for batch processing.
@@ -112,6 +113,14 @@ def main(
             If None, defaults to SparseTerminalRewardPolicy().
         MW_multiple_to_exclude: Exclude fragments with MW > target_MW * this value.
                                Default 1.5 (exclude fragments >150% of target MW).
+        child_downselection_strategy: Strategy for selecting which fragments to keep
+            when more than max_children_per_expand are generated. Options:
+            - "first_N": Keep first N fragments in DORAnet's order (fastest)
+            - "hybrid": Prioritize sink compounds > PKS matches > smaller MW
+            - "most_thermo_feasible": Prioritize by thermodynamic feasibility
+              (DORA-XGB for enzymatic, sigmoid-transformed ΔH for synthetic),
+              with bonuses for sink compounds (+1000) and PKS matches (+500)
+            Default is "most_thermo_feasible".
     """
     # ---- Runner configuration ----
     create_interactive_visualization = False
@@ -121,13 +130,7 @@ def main(
     auto_cleanup_pgnet_files = True
     num_workers = None  # None means "max available"
     max_inflight_expansions = None  # None means "same as num_workers"
-    # Child downselection strategy options:
-    # - "first_N": Keep first N fragments in DORAnet's order (fastest)
-    # - "hybrid": Prioritize sink compounds > PKS matches > smaller MW
-    # - "most_thermo_feasible": Prioritize by thermodynamic feasibility
-    #   (DORA-XGB for enzymatic, sigmoid-transformed ΔH for synthetic),
-    #   with bonuses for sink compounds (+1000) and PKS matches (+500)
-    child_downselection_strategy = "most_thermo_feasible"
+
     target_molecule = Chem.MolFromSmiles(target_smiles)
 
     if target_molecule is None:
@@ -274,6 +277,14 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run async DORAnet for a single molecule.")
     parser.add_argument("--name", required=True, help="Molecule name for output filenames.")
     parser.add_argument("--smiles", required=True, help="Target molecule SMILES.")
+    parser.add_argument(
+        "--child-downselection-strategy",
+        default="most_thermo_feasible",
+        choices=["first_N", "hybrid", "most_thermo_feasible"],
+        help="Strategy for selecting fragments when more than max_children are generated. "
+             "Options: first_N (fastest), hybrid (sink > PKS > smaller MW), "
+             "most_thermo_feasible (thermodynamic feasibility). Default: most_thermo_feasible."
+    )
     return parser.parse_args()
 
 
@@ -330,4 +341,5 @@ if __name__ == "__main__":
         rollout_policy=selected_rollout_policy,
         reward_policy=selected_reward_policy,
         MW_multiple_to_exclude=1.5,
+        child_downselection_strategy=args.child_downselection_strategy.replace("-", "_"),
     )

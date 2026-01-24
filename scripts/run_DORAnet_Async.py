@@ -87,7 +87,8 @@ def main(target_smiles: str,
          rollout_policy: Optional[RolloutPolicy] = None,
          reward_policy: Optional[RewardPolicy] = None,
          results_subfolder: str = None,
-         MW_multiple_to_exclude: float = 1.2) -> None:
+         MW_multiple_to_exclude: float = 1.2,
+         child_downselection_strategy: str = "most_thermo_feasible") -> None:
     """
     Run the async DORAnet MCTS agent with multiprocessing expansion.
 
@@ -118,6 +119,14 @@ def main(target_smiles: str,
                           If None, saves directly to results/. Useful for batch runs.
         MW_multiple_to_exclude: Exclude fragments with MW > target_MW * this value.
                                Default 1.2 (exclude fragments >120% of target MW).
+        child_downselection_strategy: Strategy for selecting which fragments to keep
+            when more than max_children_per_expand are generated. Options:
+            - "first_N": Keep first N fragments in DORAnet's order (fastest)
+            - "hybrid": Prioritize sink compounds > PKS matches > smaller MW
+            - "most_thermo_feasible": Prioritize by thermodynamic feasibility
+              (DORA-XGB for enzymatic, sigmoid-transformed ΔH for synthetic),
+              with bonuses for sink compounds (+1000) and PKS matches (+500)
+            Default is "most_thermo_feasible".
     """
     # ---- Runner configuration ----
     create_interactive_visualization = False
@@ -127,15 +136,7 @@ def main(target_smiles: str,
     auto_cleanup_pgnet_files = True
     num_workers = None  # None means "max available"
     max_inflight_expansions = None  # None means "same as num_workers"
-    
-    # Child downselection strategy options:
-    # - "first_N": Keep first N fragments in DORAnet's order (fastest)
-    # - "hybrid": Prioritize sink compounds > PKS matches > smaller MW
-    # - "most_thermo_feasible": Prioritize by thermodynamic feasibility
-    #   (DORA-XGB for enzymatic, sigmoid-transformed ΔH for synthetic),
-    #   with bonuses for sink compounds (+1000) and PKS matches (+500)
-    child_downselection_strategy = "most_thermo_feasible"
-    
+
     target_molecule = Chem.MolFromSmiles(target_smiles)
     if target_molecule is None:
         raise ValueError(f"Could not parse target SMILES: {target_smiles}")
@@ -291,7 +292,7 @@ if __name__ == "__main__":
     # )
 
     # Option 2: PKS similarity + RetroTide (uses Tanimoto fingerprint similarity)
-    # selected_rollout_policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck()
+    selected_rollout_policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck()
 
     # Option 3: Sparse rewards - RetroTide only for PKS library matches
     # selected_rollout_policy = SpawnRetroTideOnDatabaseCheck(
@@ -305,17 +306,15 @@ if __name__ == "__main__":
     # Option 5: Thermodynamic-scaled rollout (wrap any base policy)
     # This scales rewards by pathway thermodynamic feasibility using DORA-XGB
     # for enzymatic reactions and sigmoid-transformed ΔH for synthetic reactions.
-    selected_rollout_policy = ThermodynamicScaledRolloutPolicy(
-        base_policy=SAScore_and_SpawnRetroTideOnDatabaseCheck(
-            success_reward=1.0,
-            sa_max_reward=1.0,
-        ),
-        feasibility_weight=0.8,      # 0.0=ignore feasibility, 1.0=full scaling
-        sigmoid_k=0.2,               # Steepness of sigmoid for ΔH
-        sigmoid_threshold=15.0,      # Center point in kcal/mol
-        use_dora_xgb_for_enzymatic=True,  # Use DORA-XGB for enzymatic reactions
-        aggregation="geometric_mean",     # How to aggregate pathway scores
-    )
+    # selected_rollout_policy = ThermodynamicScaledRolloutPolicy(
+    #     base_policy=SAScore_and_SpawnRetroTideOnDatabaseCheck(success_reward=1.0, sa_max_reward=1.0),
+    #     #base_policy=PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(),
+    #     feasibility_weight=0.8,      # 0.0=ignore feasibility, 1.0=full scaling
+    #     sigmoid_k=0.2,               # Steepness of sigmoid for ΔH
+    #     sigmoid_threshold=15.0,      # Center point in kcal/mol
+    #     use_dora_xgb_for_enzymatic=True,  # Use DORA-XGB for enzymatic reactions
+    #     aggregation="geometric_mean",     # How to aggregate pathway scores
+    # )
 
     # selected_reward_policy = SparseTerminalRewardPolicy(sink_terminal_reward=1.0)
 
@@ -337,13 +336,14 @@ if __name__ == "__main__":
     )
 
     main(
-        target_smiles="COC1=CC=C(CCC2=CC(OC)=CC(O2)=O)C=C1",
-        molecule_name="7_8-dihydroyangonin",
-        total_iterations=200,
+        target_smiles="CC=CC(=O)O",
+        molecule_name="tiglic_acid",
+        total_iterations=100,
         max_depth=3,
         max_children_per_expand=50,
         rollout_policy=selected_rollout_policy,
         reward_policy=selected_reward_policy,
         results_subfolder="thermo_policies",
-        MW_multiple_to_exclude=1.2,
+        MW_multiple_to_exclude=1.5,
+        child_downselection_strategy="most_thermo_feasible",
     )
