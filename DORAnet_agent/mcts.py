@@ -118,6 +118,55 @@ def clear_smiles_cache() -> None:
     _canonicalize_smiles.cache_clear()
 
 
+def preprocess_target_molecule(mol: Chem.Mol) -> Tuple[Chem.Mol, str]:
+    """
+    Preprocess a target molecule for MCTS search.
+
+    Performs the following steps:
+    1. Remove stereochemistry (chiral centers, E/Z bonds)
+    2. Sanitize the molecule (kekulize, set aromaticity, etc.)
+    3. Convert to canonical SMILES and re-parse to ensure canonical form
+
+    This ensures consistent representation regardless of input SMILES format
+    and removes stereochemistry that DORAnet operators may not preserve.
+
+    Args:
+        mol: RDKit Mol object to preprocess
+
+    Returns:
+        Tuple of (preprocessed_mol, canonical_smiles)
+
+    Raises:
+        ValueError: If the molecule cannot be sanitized or canonicalized
+    """
+    if mol is None:
+        raise ValueError("Cannot preprocess None molecule")
+
+    # Work on a copy to avoid modifying the original
+    mol = Chem.RWMol(mol)
+
+    # Step 1: Remove stereochemistry
+    Chem.RemoveStereochemistry(mol)
+
+    # Step 2: Sanitize the molecule
+    try:
+        Chem.SanitizeMol(mol)
+    except Exception as e:
+        raise ValueError(f"Failed to sanitize molecule: {e}")
+
+    # Step 3: Convert to canonical SMILES and re-parse
+    canonical_smiles = Chem.MolToSmiles(mol, canonical=True)
+    if not canonical_smiles:
+        raise ValueError("Failed to generate canonical SMILES")
+
+    # Re-parse to get a fresh, canonical molecule
+    canonical_mol = Chem.MolFromSmiles(canonical_smiles)
+    if canonical_mol is None:
+        raise ValueError(f"Failed to re-parse canonical SMILES: {canonical_smiles}")
+
+    return canonical_mol, canonical_smiles
+
+
 def get_smiles_cache_info():
     """Get statistics about the SMILES canonicalization cache.
 
@@ -773,8 +822,19 @@ class DORAnetMCTS:
             reward_policy: Policy for computing rewards for nodes.
                 If None, uses SparseTerminalRewardPolicy with sink_terminal_reward.
         """
+        # Preprocess target molecule: remove stereochemistry, sanitize, canonicalize
+        original_smiles = Chem.MolToSmiles(target_molecule) if target_molecule else "None"
+        preprocessed_mol, canonical_smiles = preprocess_target_molecule(target_molecule)
+        print(f"[DORAnet] Preprocessed target molecule:")
+        print(f"[DORAnet]   Original SMILES: {original_smiles}")
+        print(f"[DORAnet]   Canonical SMILES (no stereo): {canonical_smiles}")
+
+        # Update root node's fragment to use the preprocessed molecule
+        root.fragment = preprocessed_mol
+        root._smiles = canonical_smiles  # Update cached SMILES if present
+
         self.root = root
-        self.target_molecule = target_molecule
+        self.target_molecule = preprocessed_mol
         self.total_iterations = total_iterations
         self.max_depth = max_depth
         self.use_enzymatic = use_enzymatic

@@ -843,3 +843,104 @@ class TestPKSSimScoreAndSpawnRetroTideOnDatabaseCheck:
         ):
             policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck()
         assert isinstance(policy, RolloutPolicy)
+
+
+class TestPreprocessTargetMolecule:
+    """Tests for preprocess_target_molecule helper function."""
+
+    def test_removes_stereochemistry(self):
+        """Test that stereochemistry is removed from molecules."""
+        from DORAnet_agent.mcts import preprocess_target_molecule
+
+        # Molecule with chiral center (2-butanol)
+        mol_with_stereo = Chem.MolFromSmiles("C[C@H](O)CC")
+        preprocessed, smiles = preprocess_target_molecule(mol_with_stereo)
+
+        # Resulting SMILES should not contain @ symbols
+        assert "@" not in smiles
+        # The canonical SMILES for 2-butanol without stereo is "CCC(C)O"
+        assert smiles == "CCC(C)O"
+
+    def test_removes_ez_stereochemistry(self):
+        """Test that E/Z double bond stereochemistry is removed."""
+        from DORAnet_agent.mcts import preprocess_target_molecule
+
+        # Molecule with E/Z stereochemistry
+        mol_with_ez = Chem.MolFromSmiles("C/C=C/C")
+        preprocessed, smiles = preprocess_target_molecule(mol_with_ez)
+
+        # Resulting SMILES should not contain / or \ symbols
+        assert "/" not in smiles
+        assert "\\" not in smiles
+
+    def test_produces_canonical_smiles(self):
+        """Test that output SMILES is canonical."""
+        from DORAnet_agent.mcts import preprocess_target_molecule
+
+        # Two equivalent but different SMILES representations
+        mol1 = Chem.MolFromSmiles("CCO")
+        mol2 = Chem.MolFromSmiles("OCC")
+
+        _, smiles1 = preprocess_target_molecule(mol1)
+        _, smiles2 = preprocess_target_molecule(mol2)
+
+        # Both should produce the same canonical SMILES
+        assert smiles1 == smiles2
+
+    def test_sanitizes_molecule(self):
+        """Test that molecule is sanitized."""
+        from DORAnet_agent.mcts import preprocess_target_molecule
+
+        # Valid molecule
+        mol = Chem.MolFromSmiles("c1ccccc1")  # benzene
+        preprocessed, smiles = preprocess_target_molecule(mol)
+
+        # Should produce valid aromatic SMILES
+        assert preprocessed is not None
+        assert "c" in smiles.lower()  # Should contain aromatic carbons
+
+    def test_raises_on_none_molecule(self):
+        """Test that None molecule raises ValueError."""
+        from DORAnet_agent.mcts import preprocess_target_molecule
+
+        with pytest.raises(ValueError, match="Cannot preprocess None"):
+            preprocess_target_molecule(None)
+
+    def test_returns_valid_mol_object(self):
+        """Test that returned molecule is a valid RDKit Mol."""
+        from DORAnet_agent.mcts import preprocess_target_molecule
+
+        mol = Chem.MolFromSmiles("CCO")
+        preprocessed, smiles = preprocess_target_molecule(mol)
+
+        # Should be a valid Mol object
+        assert preprocessed is not None
+        assert isinstance(preprocessed, Chem.Mol)
+        assert preprocessed.GetNumAtoms() == mol.GetNumAtoms()
+
+    def test_complex_molecule_with_multiple_stereocenters(self):
+        """Test preprocessing of complex molecule with multiple stereocenters."""
+        from DORAnet_agent.mcts import preprocess_target_molecule
+
+        # Molecule with multiple chiral centers (e.g., a sugar-like structure)
+        mol = Chem.MolFromSmiles("C[C@H](O)[C@@H](O)[C@H](O)C")
+        preprocessed, smiles = preprocess_target_molecule(mol)
+
+        # No stereochemistry in output
+        assert "@" not in smiles
+
+        # Atom count should be preserved
+        assert preprocessed.GetNumAtoms() == mol.GetNumAtoms()
+
+    def test_kavalactone_with_stereo(self):
+        """Test preprocessing of kavalactone-like structure with stereochemistry."""
+        from DORAnet_agent.mcts import preprocess_target_molecule
+
+        # Kavain with added stereochemistry
+        mol = Chem.MolFromSmiles("COC1=CC(OC(/C=C/C2=CC=CC=C2)C1)=O")
+        preprocessed, smiles = preprocess_target_molecule(mol)
+
+        # Should succeed and remove E/Z stereochemistry
+        assert preprocessed is not None
+        assert "/" not in smiles
+        assert "\\" not in smiles
