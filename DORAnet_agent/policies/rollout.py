@@ -421,29 +421,39 @@ class SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
 class SAScore_and_SpawnRetroTideOnDatabaseCheck(RolloutPolicy):
     """
     Rollout policy combining SA Score rewards with RetroTide spawning.
-    
-    This policy provides dense intermediate rewards based on synthetic 
+
+    .. note::
+
+        Consider using the cleaner architecture that separates rollout from reward:
+
+        - Rollout: ``SpawnRetroTideOnDatabaseCheck`` (PKS matching + RetroTide)
+        - Reward: ``SAScore_and_TerminalRewardPolicy`` (terminals + SA score)
+
+        This separation provides better modularity and allows thermodynamic scaling
+        via ``ThermodynamicScaledRewardPolicy`` wrapper.
+
+    This policy provides dense intermediate rewards based on synthetic
     accessibility while still spawning RetroTide for PKS library matches.
-    
+
     Reward Logic:
         1. Terminal Nodes (sink compounds): success_reward (default 1.0)
         2. PKS Library Match + RetroTide Success: success_reward (default 1.0)
         3. PKS Library Match + RetroTide Failure: SA Score reward (0.0-0.9)
         4. Non-PKS Nodes: SA Score reward (0.0-0.9)
-    
+
     SA Score Reward Formula:
         reward = (10 - sa_score) / 10
-        
+
     This produces rewards in range [0.0, 0.9] for typical SA scores (1-10).
     Lower SA scores (easier synthesis) → higher rewards.
-    
+
     Example SA Score rewards:
         - SA Score 1.0 (very easy) → reward 0.9
         - SA Score 3.0 (easy) → reward 0.7
         - SA Score 5.0 (moderate) → reward 0.5
         - SA Score 8.0 (hard) → reward 0.2
         - SA Score 10.0 (very hard) → reward 0.0
-    
+
     This provides denser training signals compared to SpawnRetroTideOnDatabaseCheck
     which only rewards successful PKS designs (sparse rewards).
     """

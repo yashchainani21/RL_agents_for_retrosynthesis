@@ -27,6 +27,9 @@ from DORAnet_agent.policies import (
     PKSLibraryRewardPolicy,
     ComposedRewardPolicy,
     PKSSimilarityRewardPolicy,
+    SAScore_and_TerminalRewardPolicy,
+    # Thermodynamic scaling
+    ThermodynamicScaledRewardPolicy,
 )
 from DORAnet_agent.node import Node
 
@@ -375,6 +378,113 @@ class TestSAScoreHelpers:
         sa_score = _calculate_sa_score(mol)
         assert sa_score is not None
         assert sa_score < 2.5  # Very easy
+
+
+class TestSAScore_and_TerminalRewardPolicy:
+    """Tests for SAScore_and_TerminalRewardPolicy."""
+
+    def test_initialization_defaults(self):
+        """Test default initialization."""
+        policy = SAScore_and_TerminalRewardPolicy()
+        assert policy.sink_terminal_reward == 1.0
+        assert policy.pks_terminal_reward == 1.0
+        assert policy.sa_max_reward == 1.0
+        assert policy.sa_fallback_reward == 0.0
+        assert "SAScore" in policy.name
+        assert "Terminal" in policy.name
+
+    def test_sink_compound_gets_terminal_reward(self):
+        """Sink compounds should get full terminal reward."""
+        policy = SAScore_and_TerminalRewardPolicy(sink_terminal_reward=1.0)
+        mol = Chem.MolFromSmiles("CCO")
+        node = Node(fragment=mol, parent=None)
+        node.is_sink_compound = True
+        reward = policy.calculate_reward(node, {})
+        assert reward == 1.0
+
+    def test_pks_terminal_gets_terminal_reward(self):
+        """PKS terminals should get full terminal reward."""
+        policy = SAScore_and_TerminalRewardPolicy(pks_terminal_reward=1.0)
+        mol = Chem.MolFromSmiles("CCCCCC(=O)O")
+        node = Node(fragment=mol, parent=None)
+        node.is_pks_terminal = True
+        reward = policy.calculate_reward(node, {})
+        assert reward == 1.0
+
+    def test_non_terminal_gets_sa_score(self):
+        """Non-terminal compounds should get SA score reward."""
+        policy = SAScore_and_TerminalRewardPolicy()
+        mol = Chem.MolFromSmiles("CCO")  # Ethanol - easy to synthesize
+        node = Node(fragment=mol, parent=None)
+        node.is_sink_compound = False
+        node.is_pks_terminal = False
+        reward = policy.calculate_reward(node, {})
+        # SA score for ethanol is ~1.5, so reward should be ~0.85
+        assert 0.5 < reward < 1.0
+
+    def test_complex_non_terminal_lower_reward(self):
+        """Complex non-terminals should get lower SA score reward."""
+        policy = SAScore_and_TerminalRewardPolicy()
+        # Complex natural product-like structure
+        mol = Chem.MolFromSmiles("CC1=C2C(=O)C3=C(C=CC=C3O)C(=O)C2=CC=C1")
+        node = Node(fragment=mol, parent=None)
+        node.is_sink_compound = False
+        node.is_pks_terminal = False
+        reward = policy.calculate_reward(node, {})
+        assert 0.0 <= reward <= 1.0
+
+    def test_priority_sink_over_pks(self):
+        """Sink compound takes priority over PKS terminal."""
+        policy = SAScore_and_TerminalRewardPolicy(
+            sink_terminal_reward=0.8,
+            pks_terminal_reward=0.9,
+        )
+        mol = Chem.MolFromSmiles("CCO")
+        node = Node(fragment=mol, parent=None)
+        node.is_sink_compound = True
+        node.is_pks_terminal = True  # Both flags set
+        reward = policy.calculate_reward(node, {})
+        assert reward == 0.8  # Sink reward takes priority
+
+    def test_pks_library_match_fallback(self):
+        """PKS library match should give terminal reward."""
+        pks_library = {"CCO"}  # Ethanol in PKS library
+        policy = SAScore_and_TerminalRewardPolicy(
+            pks_terminal_reward=1.0,
+            pks_library=pks_library,
+        )
+        mol = Chem.MolFromSmiles("CCO")
+        node = Node(fragment=mol, parent=None)
+        # node.smiles is computed from fragment, so it should be "CCO"
+        node.is_sink_compound = False
+        node.is_pks_terminal = False  # Not marked, but in library
+        reward = policy.calculate_reward(node, {})
+        assert reward == 1.0
+
+    def test_sa_max_reward_cap(self):
+        """SA score should be capped at sa_max_reward."""
+        policy = SAScore_and_TerminalRewardPolicy(sa_max_reward=0.5)
+        mol = Chem.MolFromSmiles("C")  # Methane - trivially easy
+        node = Node(fragment=mol, parent=None)
+        node.is_sink_compound = False
+        node.is_pks_terminal = False
+        reward = policy.calculate_reward(node, {})
+        assert reward <= 0.5
+
+    def test_inherits_from_reward_policy(self):
+        """Test proper inheritance."""
+        policy = SAScore_and_TerminalRewardPolicy()
+        assert isinstance(policy, RewardPolicy)
+
+    def test_thermodynamic_scaling_wrapper(self):
+        """Test wrapping with ThermodynamicScaledRewardPolicy."""
+        base = SAScore_and_TerminalRewardPolicy()
+        scaled = ThermodynamicScaledRewardPolicy(
+            base_policy=base,
+            feasibility_weight=0.5,
+        )
+        assert "ThermodynamicScaled" in scaled.name
+        assert "SAScore" in scaled.name
 
 
 class TestSAScoreAndSpawnRetroTideOnDatabaseCheck:

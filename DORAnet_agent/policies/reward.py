@@ -1,3 +1,4 @@
+
 """
 Reward policies for DORAnet MCTS.
 
@@ -7,15 +8,29 @@ Rewards are computed based on node properties without simulation.
 
 from __future__ import annotations
 
+import os
 import pickle
+import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 
-from rdkit import Chem, DataStructs
+from rdkit import Chem, DataStructs, RDConfig
 from rdkit.Chem import AllChem
 
 from .base import RewardPolicy
+
+# SA Score import setup
+_SA_SCORE_PATH = os.path.join(RDConfig.RDContribDir, 'SA_Score')
+if _SA_SCORE_PATH not in sys.path:
+    sys.path.insert(0, _SA_SCORE_PATH)
+
+try:
+    import sascorer  # type: ignore[import-not-found]
+    _SA_SCORE_AVAILABLE = True
+except ImportError:
+    _SA_SCORE_AVAILABLE = False
+    sascorer = None
 
 if TYPE_CHECKING:
     from ..node import Node
@@ -28,6 +43,42 @@ def _canonicalize_smiles(smiles: str) -> Optional[str]:
     if mol is None:
         return None
     return Chem.MolToSmiles(mol)
+
+
+def _calculate_sa_score(mol: Chem.Mol) -> Optional[float]:
+    """
+    Calculate SA Score for a molecule.
+
+    Args:
+        mol: RDKit Mol object
+
+    Returns:
+        SA Score (1-10, 1=easy, 10=hard) or None if calculation fails
+    """
+    if not _SA_SCORE_AVAILABLE or sascorer is None:
+        return None
+    try:
+        return sascorer.calculateScore(mol)
+    except Exception:
+        return None
+
+
+def _sa_score_to_reward(sa_score: float, max_reward: float = 1.0) -> float:
+    """
+    Convert SA Score to reward.
+
+    Formula: (10 - sa_score) / 10
+    This gives range 0.0-0.9 for typical SA scores (1-10).
+
+    Args:
+        sa_score: SA Score from RDKit (1-10 scale)
+        max_reward: Optional cap on the reward (default 1.0, no effective cap)
+
+    Returns:
+        Reward in range [0.0, min(0.9, max_reward)]
+    """
+    reward = (10.0 - sa_score) / 10.0
+    return min(reward, max_reward)
 
 
 def _generate_morgan_fingerprint(
@@ -504,4 +555,162 @@ class PKSSimilarityRewardPolicy(RewardPolicy):
             f"radius={self.fingerprint_radius}, "
             f"bits={self.fingerprint_bits}, "
             f"pks_building_blocks={len(self._pks_building_blocks)})"
+        )
+
+
+class SAScore_and_TerminalRewardPolicy(RewardPolicy):
+    """
+    Unified reward policy combining terminal rewards with SA score for non-terminals.
+
+    This policy provides:
+    - Full terminal rewards for sink compounds (chemical/biological building blocks)
+    - Full terminal rewards for PKS-synthesizable compounds (RetroTide verified)
+    - SA score-based dense rewards for all other compounds
+
+    This cleanly separates reward computation from rollout behavior. Use with
+    SpawnRetroTideOnDatabaseCheck rollout policy for the recommended architecture:
+
+    Recommended clean setup (rollout + reward separation)::
+
+        from DORAnet_agent.policies import (
+            SpawnRetroTideOnDatabaseCheck,       # Rollout: PKS matching + RetroTide
+            SAScore_and_TerminalRewardPolicy,    # Reward: terminals + SA score
+            ThermodynamicScaledRewardPolicy,     # Optional: thermodynamic scaling
+        )
+
+        # Rollout policy: handles PKS matching and RetroTide spawning only
+        rollout_policy = SpawnRetroTideOnDatabaseCheck(
+            success_reward=1.0,
+            retrotide_kwargs={"max_depth": 6, "total_iterations": 100},
+        )
+
+        # Reward policy: terminal rewards + SA score for non-terminals
+        base_reward = SAScore_and_TerminalRewardPolicy(
+            sink_terminal_reward=1.0,
+            pks_terminal_reward=1.0,
+        )
+
+        # Optional: wrap with thermodynamic scaling
+        reward_policy = ThermodynamicScaledRewardPolicy(
+            base_policy=base_reward,
+            feasibility_weight=0.8,
+        )
+
+    Priority order:
+        1. Sink compound (is_sink_compound=True) → sink_terminal_reward
+        2. PKS terminal (is_pks_terminal=True) → pks_terminal_reward
+        3. PKS library match (optional check) → pks_terminal_reward
+        4. Non-terminal → SA score reward (dense signal)
+
+    Args:
+        sink_terminal_reward: Reward for chemical/biological sink compounds (default 1.0)
+        pks_terminal_reward: Reward for PKS-synthesizable compounds (default 1.0)
+        sa_max_reward: Cap on SA score reward (default 1.0, no effective cap)
+        sa_fallback_reward: Reward when SA score cannot be computed (default 0.0)
+        pks_library: Optional set of PKS SMILES for library matching
+    """
+
+    def __init__(
+        self,
+        sink_terminal_reward: float = 1.0,
+        pks_terminal_reward: float = 1.0,
+        sa_max_reward: float = 1.0,
+        sa_fallback_reward: float = 0.0,
+        pks_library: Optional[Set[str]] = None,
+    ):
+        """
+        Args:
+            sink_terminal_reward: Reward for sink compounds. Default 1.0.
+            pks_terminal_reward: Reward for PKS terminals. Default 1.0.
+            sa_max_reward: Cap on SA Score rewards. Default 1.0 (no effective cap
+                since SA rewards max at 0.9).
+            sa_fallback_reward: Fallback reward when SA score cannot be computed.
+                Default 0.0.
+            pks_library: Optional set of canonical PKS product SMILES. If provided,
+                nodes matching the library will receive pks_terminal_reward even if
+                not marked as is_pks_terminal.
+        """
+        self.sink_terminal_reward = sink_terminal_reward
+        self.pks_terminal_reward = pks_terminal_reward
+        self.sa_max_reward = sa_max_reward
+        self.sa_fallback_reward = sa_fallback_reward
+        self._pks_library = pks_library
+
+    def calculate_reward(self, node: "Node", context: Dict[str, Any]) -> float:
+        """
+        Calculate reward based on terminal status or SA score.
+
+        Priority:
+            1. Sink compounds → sink_terminal_reward
+            2. PKS terminals → pks_terminal_reward
+            3. PKS library match → pks_terminal_reward
+            4. Non-terminals → SA score reward
+
+        Args:
+            node: The node to compute reward for
+            context: Context dictionary, may contain "pks_library" set
+
+        Returns:
+            Reward value
+        """
+        # Priority 1: Sink compounds (chemical/biological building blocks)
+        if getattr(node, 'is_sink_compound', False):
+            return self.sink_terminal_reward
+
+        # Priority 2: PKS terminals (RetroTide verified)
+        if getattr(node, 'is_pks_terminal', False):
+            return self.pks_terminal_reward
+
+        # Priority 3: PKS library match (optional)
+        pks_library = self._get_pks_library(context)
+        if pks_library and self._is_pks_library_match(node, pks_library):
+            return self.pks_terminal_reward
+
+        # Default: SA score for non-terminals
+        return self._compute_sa_reward(node)
+
+    def _get_pks_library(self, context: Dict[str, Any]) -> Optional[Set[str]]:
+        """Get PKS library from init or context."""
+        if self._pks_library is not None:
+            return self._pks_library
+        return context.get("pks_library")
+
+    def _is_pks_library_match(self, node: "Node", pks_library: Set[str]) -> bool:
+        """Check if node's SMILES is in PKS library."""
+        smiles = getattr(node, 'smiles', None)
+        if smiles is None:
+            return False
+        canonical = _canonicalize_smiles(smiles)
+        return canonical in pks_library if canonical else False
+
+    def _compute_sa_reward(self, node: "Node") -> float:
+        """Compute SA score reward for non-terminal node."""
+        mol = self._get_molecule(node)
+        if mol is None:
+            return self.sa_fallback_reward
+
+        sa_score = _calculate_sa_score(mol)
+        if sa_score is None:
+            return self.sa_fallback_reward
+
+        return _sa_score_to_reward(sa_score, self.sa_max_reward)
+
+    def _get_molecule(self, node: "Node") -> Optional[Chem.Mol]:
+        """Extract RDKit Mol from node."""
+        if hasattr(node, 'fragment') and node.fragment is not None:
+            return node.fragment
+        if hasattr(node, 'smiles') and node.smiles is not None:
+            return Chem.MolFromSmiles(node.smiles)
+        return None
+
+    @property
+    def name(self) -> str:
+        return f"SAScore+Terminal(sink={self.sink_terminal_reward}, pks={self.pks_terminal_reward})"
+
+    def __repr__(self) -> str:
+        return (
+            f"SAScore_and_TerminalRewardPolicy("
+            f"sink_terminal_reward={self.sink_terminal_reward}, "
+            f"pks_terminal_reward={self.pks_terminal_reward}, "
+            f"sa_max_reward={self.sa_max_reward})"
         )
