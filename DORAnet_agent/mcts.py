@@ -2818,7 +2818,9 @@ class DORAnetMCTS:
                 # Edge case: no steps (shouldn't happen for successful pathways)
                 return "unknown"
 
-    def _get_pathway_type_counts(self, nodes: List[Node]) -> Tuple[Dict[str, int], Dict[str, List[int]]]:
+    def _get_pathway_type_counts(
+        self, nodes: List[Node]
+    ) -> Tuple[Dict[str, int], Dict[str, List[int]], Dict[str, Tuple[int, int]]]:
         """
         Count pathways by category and track which pathways belong to each category.
 
@@ -2827,8 +2829,9 @@ class DORAnetMCTS:
 
         Returns:
             Tuple of:
-            - Dictionary mapping category names to counts
+            - Dictionary mapping category names to pathway counts
             - Dictionary mapping category names to list of pathway numbers (1-indexed)
+            - Dictionary mapping category names to (exact_designs, simulated_designs) counts
         """
         counts: Dict[str, int] = {
             "purely_synthetic": 0,
@@ -2841,6 +2844,7 @@ class DORAnetMCTS:
             "unknown": 0,
         }
         pathway_numbers: Dict[str, List[int]] = {key: [] for key in counts}
+        design_counts: Dict[str, Tuple[int, int]] = {key: (0, 0) for key in counts}
 
         for i, node in enumerate(nodes):
             pathway_num = i + 1  # 1-indexed pathway number
@@ -2848,11 +2852,16 @@ class DORAnetMCTS:
             if category in counts:
                 counts[category] = counts.get(category, 0) + 1
                 pathway_numbers[category].append(pathway_num)
+                # Count RetroTide designs for PKS categories
+                if category in ("synthetic_pks", "enzymatic_pks", "synthetic_enzymatic_pks", "direct_pks"):
+                    exact, simulated = self._count_retrotide_designs_for_pathway(node)
+                    prev_exact, prev_sim = design_counts[category]
+                    design_counts[category] = (prev_exact + exact, prev_sim + simulated)
             else:
                 counts["unknown"] = counts.get("unknown", 0) + 1
                 pathway_numbers["unknown"].append(pathway_num)
 
-        return counts, pathway_numbers
+        return counts, pathway_numbers, design_counts
 
     def save_successful_pathways(self, output_path: str) -> None:
         """
@@ -2938,13 +2947,22 @@ class DORAnetMCTS:
                 successful_nodes.append(node)
 
         # Get pathway type counts and pathway numbers
-        pathway_counts, pathway_numbers = self._get_pathway_type_counts(successful_nodes)
+        pathway_counts, pathway_numbers, design_counts = self._get_pathway_type_counts(successful_nodes)
 
         def format_pathway_list(nums: List[int]) -> str:
             """Format pathway numbers as comma-separated list with # prefix."""
             if not nums:
                 return ""
             return "(" + ", ".join(f"#{n}" for n in nums) + ")"
+
+        # Calculate total design counts for PKS categories
+        pks_categories = ["direct_pks", "synthetic_pks", "enzymatic_pks", "synthetic_enzymatic_pks"]
+        total_exact = sum(design_counts[cat][0] for cat in pks_categories)
+        total_simulated = sum(design_counts[cat][1] for cat in pks_categories)
+        total_pks_pathways = sum(pathway_counts[cat] for cat in pks_categories)
+        total_non_pks = (pathway_counts['purely_synthetic'] +
+                         pathway_counts['purely_enzymatic'] +
+                         pathway_counts['synthetic_enzymatic'])
 
         with open(path, "w") as f:
             f.write("=" * 70 + "\n")
@@ -2962,15 +2980,45 @@ class DORAnetMCTS:
             f.write(f"  Purely enzymatic:        {pathway_counts['purely_enzymatic']}  {format_pathway_list(pathway_numbers['purely_enzymatic'])}\n")
             f.write(f"  Synthetic + enzymatic:   {pathway_counts['synthetic_enzymatic']}  {format_pathway_list(pathway_numbers['synthetic_enzymatic'])}\n")
 
-            # PKS pathways
+            # PKS pathways with design counts
             f.write("\nPKS-Synthesizable Pathways:\n")
-            f.write(f"  Direct PKS match:        {pathway_counts['direct_pks']}  {format_pathway_list(pathway_numbers['direct_pks'])}\n")
-            f.write(f"  Synthetic + PKS:         {pathway_counts['synthetic_pks']}  {format_pathway_list(pathway_numbers['synthetic_pks'])}\n")
-            f.write(f"  Enzymatic + PKS:         {pathway_counts['enzymatic_pks']}  {format_pathway_list(pathway_numbers['enzymatic_pks'])}\n")
-            f.write(f"  Synthetic + enz + PKS:   {pathway_counts['synthetic_enzymatic_pks']}  {format_pathway_list(pathway_numbers['synthetic_enzymatic_pks'])}\n")
+            for cat, display_name in [
+                ("direct_pks", "Direct PKS match"),
+                ("synthetic_pks", "Synthetic + PKS"),
+                ("enzymatic_pks", "Enzymatic + PKS"),
+                ("synthetic_enzymatic_pks", "Synthetic + enz + PKS"),
+            ]:
+                exact, sim = design_counts[cat]
+                count = pathway_counts[cat]
+                pathway_list = format_pathway_list(pathway_numbers[cat])
+                if count > 0 and (exact > 0 or sim > 0):
+                    f.write(f"  {display_name:22} {count:3} pathways -> {exact:4} exact, {sim:4} simulated designs  {pathway_list}\n")
+                else:
+                    f.write(f"  {display_name:22} {count:3}  {pathway_list}\n")
 
             if pathway_counts['unknown'] > 0:
                 f.write(f"\nUnknown/Other:             {pathway_counts['unknown']}  {format_pathway_list(pathway_numbers['unknown'])}\n")
+
+            # Write design-based proportions summary
+            if total_pks_pathways > 0:
+                f.write("\nRETROTIDE DESIGN SUMMARY\n")
+                f.write("-" * 40 + "\n")
+                f.write(f"Total PKS pathways:        {total_pks_pathways}\n")
+                f.write(f"Total exact match designs: {total_exact}\n")
+                f.write(f"Total simulated designs:   {total_simulated}\n")
+                f.write(f"Total all designs:         {total_exact + total_simulated}\n")
+                f.write(f"Avg designs per PKS path:  {(total_exact + total_simulated) / total_pks_pathways:.1f}\n")
+                f.write("\n")
+
+                # Proportions counting each design as a route
+                f.write("Proportions (counting each design as a synthesis route):\n")
+                total_with_exact = total_non_pks + total_exact
+                pct_exact = 100 * total_exact / total_with_exact if total_with_exact > 0 else 0
+                f.write(f"  Exact match designs:     {total_exact:4} PKS + {total_non_pks} non-PKS = {total_with_exact} routes ({pct_exact:.1f}% PKS)\n")
+
+                total_all = total_non_pks + total_exact + total_simulated
+                pct_all = 100 * (total_exact + total_simulated) / total_all if total_all > 0 else 0
+                f.write(f"  All designs:             {total_exact + total_simulated:4} PKS + {total_non_pks} non-PKS = {total_all} routes ({pct_all:.1f}% PKS)\n")
 
             f.write("\n" + "=" * 70 + "\n\n")
 
@@ -3095,6 +3143,70 @@ class DORAnetMCTS:
                     pks_byproducts.append((step_idx, prod, result))
         
         return pks_byproducts
+
+    def _count_retrotide_designs(self, result: "RetroTideResult") -> Tuple[int, int]:
+        """
+        Count the number of RetroTide designs in a result.
+
+        Args:
+            result: RetroTideResult containing the PKS designs
+
+        Returns:
+            Tuple of (exact_match_count, simulated_count)
+        """
+        exact_count = 0
+        simulated_count = 0
+
+        agent = result.retrotide_agent
+        if agent:
+            succ_nodes = getattr(agent, 'successful_nodes', set())
+            exact_count = len(succ_nodes) if succ_nodes else 0
+
+            sim_designs = getattr(agent, 'successful_simulated_designs', [])
+            simulated_count = len(sim_designs) if sim_designs else 0
+
+        return exact_count, simulated_count
+
+    def _count_retrotide_designs_for_pathway(self, node: Node) -> Tuple[int, int]:
+        """
+        Count all RetroTide designs for a pathway (terminal + byproducts).
+
+        Args:
+            node: Terminal node of the pathway
+
+        Returns:
+            Tuple of (total_exact_match_count, total_simulated_count)
+        """
+        total_exact = 0
+        total_simulated = 0
+
+        # Check terminal node's RetroTide result
+        is_pks_terminal = getattr(node, 'is_pks_terminal', False)
+        if is_pks_terminal:
+            # Find the RetroTide result for this terminal
+            for r in self.retrotide_results:
+                if r.doranet_node_id == node.node_id and r.retrotide_successful:
+                    exact, sim = self._count_retrotide_designs(r)
+                    total_exact += exact
+                    total_simulated += sim
+                    break
+        else:
+            # Check retrotide_results for terminal (may have been found via SMILES match)
+            for r in self.retrotide_results:
+                if r.doranet_node_id == node.node_id and r.retrotide_successful:
+                    exact, sim = self._count_retrotide_designs(r)
+                    total_exact += exact
+                    total_simulated += sim
+                    break
+
+        # Count designs from PKS byproducts
+        pks_byproducts = self._collect_pks_byproducts_for_pathway(node)
+        for _, _, result in pks_byproducts:
+            exact, sim = self._count_retrotide_designs(result)
+            total_exact += exact
+            total_simulated += sim
+
+        return total_exact, total_simulated
 
     def _write_pathway_block(self, f, index: int, node: Node, include_pks_byproducts: bool = True) -> None:
         """Write a single pathway block with reaction and RetroTide details.

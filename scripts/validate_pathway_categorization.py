@@ -90,9 +90,25 @@ def has_enzymatic_rule(pathway_content: str) -> bool:
     return bool(re.search(r'rule\d+_\d+', pathway_content))
 
 
-def validate_pathways(filepath: str) -> Tuple[bool, List[str]]:
+def count_retrotide_designs(pathway_content: str) -> Tuple[int, int]:
+    """
+    Count RetroTide designs in a pathway.
+
+    Returns:
+        Tuple of (exact_match_designs, simulated_designs)
+    """
+    exact_matches = len(re.findall(r'^\s+Design #\d+:', pathway_content, re.MULTILINE))
+    simulated = len(re.findall(r'Simulated Design #\d+:', pathway_content))
+    return exact_matches, simulated
+
+
+def validate_pathways(filepath: str, count_designs: bool = True) -> Tuple[bool, List[str]]:
     """
     Validate pathway categorization.
+
+    Args:
+        filepath: Path to the successful_pathways.txt file
+        count_designs: If True, also count RetroTide designs per category
 
     Returns:
         Tuple of (all_passed, list_of_error_messages)
@@ -126,6 +142,63 @@ def validate_pathways(filepath: str) -> Tuple[bool, List[str]]:
     print(f"Found {len(categories['purely_enzymatic'])} purely enzymatic pathways")
     print(f"Found {len(categories['purely_synthetic'])} purely synthetic pathways")
     print()
+
+    # Count RetroTide designs per category if requested
+    if count_designs:
+        print("RetroTide Design Counts by Category:")
+        print("-" * 50)
+
+        category_design_counts: Dict[str, Tuple[int, int]] = {}
+        total_exact = 0
+        total_simulated = 0
+
+        for cat in pks_categories:
+            cat_exact = 0
+            cat_simulated = 0
+            for pathway_num in categories[cat]:
+                if pathway_num in pathways:
+                    exact, simulated = count_retrotide_designs(pathways[pathway_num])
+                    cat_exact += exact
+                    cat_simulated += simulated
+            category_design_counts[cat] = (cat_exact, cat_simulated)
+            total_exact += cat_exact
+            total_simulated += cat_simulated
+
+        # Display counts
+        cat_display_names = {
+            'direct_pks': 'Direct PKS match',
+            'synthetic_pks': 'Synthetic + PKS',
+            'enzymatic_pks': 'Enzymatic + PKS',
+            'synthetic_enzymatic_pks': 'Synthetic + enz + PKS',
+        }
+
+        for cat in ['direct_pks', 'synthetic_pks', 'enzymatic_pks', 'synthetic_enzymatic_pks']:
+            exact, simulated = category_design_counts.get(cat, (0, 0))
+            num_pathways = len(categories[cat])
+            if num_pathways > 0:
+                print(f"  {cat_display_names[cat]:25} {num_pathways:3} pathways -> {exact:4} exact, {simulated:4} simulated designs")
+            else:
+                print(f"  {cat_display_names[cat]:25} {num_pathways:3} pathways")
+
+        print("-" * 50)
+        print(f"  {'TOTAL PKS':25} {len(pks_pathways):3} pathways -> {total_exact:4} exact, {total_simulated:4} simulated designs")
+        print()
+
+        # Calculate proportions
+        print("Pathway Proportions (counting each design as a route):")
+        print("-" * 50)
+        total_non_pks = len(non_pks_pathways)
+
+        # Exact match designs only
+        total_with_exact = total_non_pks + total_exact
+        pct_pks_exact = 100 * total_exact / total_with_exact if total_with_exact > 0 else 0
+        print(f"  With exact match designs:    {total_exact:4} PKS + {total_non_pks} non-PKS = {total_with_exact} total ({pct_pks_exact:.1f}% PKS)")
+
+        # All designs (exact + simulated)
+        total_all = total_non_pks + total_exact + total_simulated
+        pct_pks_all = 100 * (total_exact + total_simulated) / total_all if total_all > 0 else 0
+        print(f"  With all designs:            {total_exact + total_simulated:4} PKS + {total_non_pks} non-PKS = {total_all} total ({pct_pks_all:.1f}% PKS)")
+        print()
 
     # Validate Rule 1: PKS-dependent pathways should have RetroTide PKS designs
     print("Checking Rule 1: PKS pathways should have RetroTide PKS designs...")
