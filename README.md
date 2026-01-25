@@ -74,6 +74,7 @@ RL_agents_for_retrosynthesis/
 │   └── run_RetroTide_single_agent.py # Standalone RetroTide runner
 ├── tests/
 │   ├── test_async_expansion_mcts.py
+│   ├── test_categorize_pathway.py      # Pathway categorization tests
 │   ├── test_policies.py
 │   └── fixtures/
 ├── data/
@@ -293,6 +294,21 @@ policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(
 
 Reward policies define how to compute rewards for terminal states.
 
+### SAScore_and_TerminalRewardPolicy (Recommended)
+
+Combines terminal rewards with SA Score for non-terminal nodes. Provides dense signals via synthetic accessibility scoring while giving full rewards for terminals.
+
+```python
+from DORAnet_agent.policies import SAScore_and_TerminalRewardPolicy
+
+reward_policy = SAScore_and_TerminalRewardPolicy(
+    sink_terminal_reward=1.0,
+    pks_terminal_reward=1.0,
+)
+```
+
+### Other Reward Policies
+
 ```python
 from DORAnet_agent.policies import (
     SparseTerminalRewardPolicy,
@@ -310,6 +326,42 @@ reward_policy = ComposedRewardPolicy([
     (PKSLibraryRewardPolicy(), 0.5),
 ])
 ```
+
+## Recommended Policy Configuration
+
+The recommended configuration uses **ThermodynamicScaledRewardPolicy** wrapping **SAScore_and_TerminalRewardPolicy** for optimal balance of dense signals and thermodynamic feasibility:
+
+```python
+from DORAnet_agent.policies import (
+    SpawnRetroTideOnDatabaseCheck,
+    ThermodynamicScaledRewardPolicy,
+    SAScore_and_TerminalRewardPolicy,
+)
+
+# Rollout policy: handles PKS matching and RetroTide spawning
+rollout_policy = SpawnRetroTideOnDatabaseCheck(
+    success_reward=1.0,
+    failure_reward=0.0,
+)
+
+# Reward policy: terminal rewards + SA score, scaled by thermodynamic feasibility
+reward_policy = ThermodynamicScaledRewardPolicy(
+    base_policy=SAScore_and_TerminalRewardPolicy(
+        sink_terminal_reward=1.0,
+        pks_terminal_reward=1.0,
+    ),
+    feasibility_weight=0.8,
+    sigmoid_k=0.2,
+    sigmoid_threshold=15.0,
+    use_dora_xgb_for_enzymatic=True,
+    aggregation="geometric_mean",
+)
+```
+
+This configuration:
+- Uses **SpawnRetroTideOnDatabaseCheck** for rollout: spawns RetroTide verification for PKS library matches
+- Uses **ThermodynamicScaledRewardPolicy** for rewards: scales rewards by pathway thermodynamic feasibility
+- Wraps **SAScore_and_TerminalRewardPolicy**: provides dense SA score signals for non-terminals
 
 ## Thermodynamic Scoring
 
@@ -557,6 +609,22 @@ pytest tests/test_async_expansion_mcts.py -v
 pytest tests/ --cov=DORAnet_agent --cov-report=term-missing
 ```
 
+### Pathway Categorization Validation
+
+A validation script is available to verify pathway categorization in `successful_pathways.txt` files:
+
+```bash
+python scripts/validate_pathway_categorization.py results/successful_pathways_*.txt
+```
+
+This validates:
+1. **PKS pathways have RetroTide designs**: All pathways categorized as PKS-dependent have RetroTide PKS designs (terminal or byproduct)
+2. **Non-PKS pathways have no RetroTide designs**: Pathways categorized as non-PKS do not have any PKS designs
+3. **Purely enzymatic have rule signatures**: All purely enzymatic pathways contain `ruleXXXX_XX` enzyme rule patterns
+4. **Purely synthetic have no rule signatures**: Purely synthetic pathways do not contain enzyme rule patterns
+
+The script also displays RetroTide design counts by category and design-based pathway proportions.
+
 ## Output Files
 
 Each run generates:
@@ -565,10 +633,72 @@ Each run generates:
 results/<subfolder>/
 ├── doranet_results_<name>_<timestamp>.txt       # Full tree and node details
 ├── finalized_pathways_<name>_<timestamp>.txt    # Extracted synthesis pathways
-├── successful_pathways_<name>_<timestamp>.txt   # Verified PKS pathways
+├── successful_pathways_<name>_<timestamp>.txt   # Verified PKS pathways with statistics
 ├── doranet_interactive_<name>_<timestamp>.html  # Interactive tree visualization
 └── doranet_pathways_<name>_<timestamp>.html     # Pathways-only visualization
 ```
+
+### successful_pathways.txt Format
+
+The `successful_pathways.txt` file includes comprehensive run statistics:
+
+```
+======================================================================
+SUCCESSFUL PATHWAYS (PKS OR SINK PRODUCTS ONLY)
+======================================================================
+
+RUN CONFIGURATION
+----------------------------------------
+Target molecule:           CCCCC(=O)O
+Total iterations:          100
+Max depth:                 4
+Max children per expand:   30
+Selection policy:          UCB1
+Child downselection:       most_thermo_feasible
+MW multiple to exclude:    1.5
+Rollout policy:            SpawnRetroTideOnDatabaseCheck
+Reward policy:             ThermodynamicScaled(SAScore_and_Terminal)
+RetroTide max depth:       5
+RetroTide iterations:      50
+
+Total pathways: 955
+
+PATHWAY TYPE BREAKDOWN
+----------------------------------------
+Sink Compound Pathways:
+  Purely synthetic:        162
+  Purely enzymatic:        105
+  Synthetic + enzymatic:   634
+
+PKS-Synthesizable Pathways:
+  Direct PKS match            0
+  Synthetic + PKS            58 pathways -> 10 entries (27 exact, 31 simulated)
+  Enzymatic + PKS            84 pathways -> 14 entries (38 exact, 46 simulated)
+  Synthetic + enz + PKS     153 pathways -> 29 entries (75 exact, 78 simulated)
+
+Summary (counting each PKS design as a synthesis route):
+  PKS-based routes:         295 / 1196 (24.7%)
+  Non-PKS routes:           901 / 1196 (75.3%)
+
+RETROTIDE DESIGN BREAKDOWN
+----------------------------------------
+Total PKS pathways:        53
+Total exact match designs: 140
+Total simulated designs:   155
+Total all designs:         295
+Avg designs per PKS path:  5.6
+```
+
+**Key features:**
+- **Run configuration**: All parameters used for the MCTS run
+- **Pathway categorization**: Pathways are categorized by synthesis modality (enzymatic, synthetic, PKS)
+- **PKS design counting**: Each RetroTide design counts as a distinct synthesis route
+- **Design-based percentages**: Summary shows percentage of routes that are PKS-based
+
+**Pathway categorization logic:**
+- A pathway is categorized as PKS-dependent if either:
+  1. The terminal node is PKS-synthesizable, OR
+  2. Any byproduct along the pathway is PKS-synthesizable
 
 ## Architecture
 
