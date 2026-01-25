@@ -2746,6 +2746,104 @@ class DORAnetMCTS:
 
         print(f"[DORAnet] Finalized pathways saved to: {path}")
 
+    def _categorize_pathway(self, node: Node) -> str:
+        """
+        Categorize a pathway based on the synthesis modalities used.
+
+        Categories:
+        - "purely_synthetic": All steps are synthetic chemistry, terminal is sink
+        - "purely_enzymatic": All steps are enzymatic, terminal is sink
+        - "synthetic_enzymatic": Mix of synthetic and enzymatic, terminal is sink
+        - "synthetic_pks": All steps are synthetic chemistry, terminal is PKS
+        - "enzymatic_pks": All steps are enzymatic, terminal is PKS
+        - "synthetic_enzymatic_pks": Mix of synthetic and enzymatic, terminal is PKS
+        - "direct_pks": No chemistry steps (target directly matches PKS)
+
+        Args:
+            node: Terminal node of the pathway
+
+        Returns:
+            Category string
+        """
+        pathway = self.get_pathway_to_node(node)
+
+        # Check if terminal is PKS-synthesizable
+        is_pks = getattr(node, 'is_pks_terminal', False)
+        if not is_pks:
+            # Also check retrotide results for this node
+            for r in self.retrotide_results:
+                if r.doranet_node_id == node.node_id and r.retrotide_successful:
+                    is_pks = True
+                    break
+
+        # Collect provenance types from pathway steps (excluding target)
+        has_synthetic = False
+        has_enzymatic = False
+
+        for step_node in pathway[1:]:  # Skip target (first node)
+            provenance = getattr(step_node, 'provenance', None)
+            if provenance == "synthetic":
+                has_synthetic = True
+            elif provenance == "enzymatic":
+                has_enzymatic = True
+
+        # Categorize based on combination
+        if is_pks:
+            if not has_synthetic and not has_enzymatic:
+                return "direct_pks"
+            elif has_synthetic and has_enzymatic:
+                return "synthetic_enzymatic_pks"
+            elif has_synthetic:
+                return "synthetic_pks"
+            else:  # has_enzymatic
+                return "enzymatic_pks"
+        else:
+            if has_synthetic and has_enzymatic:
+                return "synthetic_enzymatic"
+            elif has_synthetic:
+                return "purely_synthetic"
+            elif has_enzymatic:
+                return "purely_enzymatic"
+            else:
+                # Edge case: no steps (shouldn't happen for successful pathways)
+                return "unknown"
+
+    def _get_pathway_type_counts(self, nodes: List[Node]) -> Tuple[Dict[str, int], Dict[str, List[int]]]:
+        """
+        Count pathways by category and track which pathways belong to each category.
+
+        Args:
+            nodes: List of terminal nodes
+
+        Returns:
+            Tuple of:
+            - Dictionary mapping category names to counts
+            - Dictionary mapping category names to list of pathway numbers (1-indexed)
+        """
+        counts: Dict[str, int] = {
+            "purely_synthetic": 0,
+            "purely_enzymatic": 0,
+            "synthetic_enzymatic": 0,
+            "synthetic_pks": 0,
+            "enzymatic_pks": 0,
+            "synthetic_enzymatic_pks": 0,
+            "direct_pks": 0,
+            "unknown": 0,
+        }
+        pathway_numbers: Dict[str, List[int]] = {key: [] for key in counts}
+
+        for i, node in enumerate(nodes):
+            pathway_num = i + 1  # 1-indexed pathway number
+            category = self._categorize_pathway(node)
+            if category in counts:
+                counts[category] = counts.get(category, 0) + 1
+                pathway_numbers[category].append(pathway_num)
+            else:
+                counts["unknown"] = counts.get("unknown", 0) + 1
+                pathway_numbers["unknown"].append(pathway_num)
+
+        return counts, pathway_numbers
+
     def save_successful_pathways(self, output_path: str) -> None:
         """
         Save pathways where all products are PKS-synthesizable or sink compounds.
@@ -2829,11 +2927,42 @@ class DORAnetMCTS:
             if all_covered:
                 successful_nodes.append(node)
 
+        # Get pathway type counts and pathway numbers
+        pathway_counts, pathway_numbers = self._get_pathway_type_counts(successful_nodes)
+
+        def format_pathway_list(nums: List[int]) -> str:
+            """Format pathway numbers as comma-separated list with # prefix."""
+            if not nums:
+                return ""
+            return "(" + ", ".join(f"#{n}" for n in nums) + ")"
+
         with open(path, "w") as f:
             f.write("=" * 70 + "\n")
             f.write("SUCCESSFUL PATHWAYS (PKS OR SINK PRODUCTS ONLY)\n")
             f.write("=" * 70 + "\n\n")
             f.write(f"Total pathways: {len(successful_nodes)}\n\n")
+
+            # Write pathway type breakdown
+            f.write("PATHWAY TYPE BREAKDOWN\n")
+            f.write("-" * 40 + "\n")
+
+            # Sink compound pathways (no PKS)
+            f.write("Sink Compound Pathways:\n")
+            f.write(f"  Purely synthetic:        {pathway_counts['purely_synthetic']}  {format_pathway_list(pathway_numbers['purely_synthetic'])}\n")
+            f.write(f"  Purely enzymatic:        {pathway_counts['purely_enzymatic']}  {format_pathway_list(pathway_numbers['purely_enzymatic'])}\n")
+            f.write(f"  Synthetic + enzymatic:   {pathway_counts['synthetic_enzymatic']}  {format_pathway_list(pathway_numbers['synthetic_enzymatic'])}\n")
+
+            # PKS pathways
+            f.write("\nPKS-Synthesizable Pathways:\n")
+            f.write(f"  Direct PKS match:        {pathway_counts['direct_pks']}  {format_pathway_list(pathway_numbers['direct_pks'])}\n")
+            f.write(f"  Synthetic + PKS:         {pathway_counts['synthetic_pks']}  {format_pathway_list(pathway_numbers['synthetic_pks'])}\n")
+            f.write(f"  Enzymatic + PKS:         {pathway_counts['enzymatic_pks']}  {format_pathway_list(pathway_numbers['enzymatic_pks'])}\n")
+            f.write(f"  Synthetic + enz + PKS:   {pathway_counts['synthetic_enzymatic_pks']}  {format_pathway_list(pathway_numbers['synthetic_enzymatic_pks'])}\n")
+
+            if pathway_counts['unknown'] > 0:
+                f.write(f"\nUnknown/Other:             {pathway_counts['unknown']}  {format_pathway_list(pathway_numbers['unknown'])}\n")
+
+            f.write("\n" + "=" * 70 + "\n\n")
 
             for i, node in enumerate(successful_nodes):
                 self._write_pathway_block(f, i + 1, node)
