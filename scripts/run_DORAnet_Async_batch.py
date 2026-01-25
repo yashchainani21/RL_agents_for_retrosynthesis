@@ -368,14 +368,14 @@ if __name__ == "__main__":
     #     use_dora_xgb_for_enzymatic=True,  # Use DORA-XGB for enzymatic reactions
     #     aggregation="geometric_mean",     # How to aggregate pathway scores
     # )
-    # selected_reward_policy = ThermodynamicScaledRewardPolicy(
-    #     base_policy=SAScore_and_TerminalRewardPolicy(sink_terminal_reward=1.0, pks_terminal_reward=1.0),
-    #     feasibility_weight=0.8,
-    #     sigmoid_k=0.2,
-    #     sigmoid_threshold=15.0,
-    #     use_dora_xgb_for_enzymatic=True,
-    #     aggregation="geometric_mean",
-    # )
+    selected_reward_policy = ThermodynamicScaledRewardPolicy(
+        base_policy=SAScore_and_TerminalRewardPolicy(sink_terminal_reward=1.0, pks_terminal_reward=1.0),
+        feasibility_weight=0.8,
+        sigmoid_k=0.2,
+        sigmoid_threshold=15.0,
+        use_dora_xgb_for_enzymatic=True,
+        aggregation="geometric_mean",
+    )
 
     main(
         target_smiles=args.smiles,
