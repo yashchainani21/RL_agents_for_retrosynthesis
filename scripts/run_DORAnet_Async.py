@@ -364,10 +364,14 @@ if __name__ == "__main__":
         success_reward=1.0,
         failure_reward=0.0,
     )
-    # Reward handles terminal rewards + SA score for non-terminals
-    selected_reward_policy = SAScore_and_TerminalRewardPolicy(
-        sink_terminal_reward=1.0,
-        pks_terminal_reward=1.0,
+    # Reward handles terminal rewards + SA score for non-terminals, scaled by thermodynamic feasibility
+    selected_reward_policy = ThermodynamicScaledRewardPolicy(
+        base_policy=SAScore_and_TerminalRewardPolicy(sink_terminal_reward=1.0, pks_terminal_reward=1.0),
+        feasibility_weight=0.8,
+        sigmoid_k=0.2,
+        sigmoid_threshold=15.0,
+        use_dora_xgb_for_enzymatic=True,
+        aggregation="geometric_mean",
     )
 
     # Alternative: PKS similarity + RetroTide (uses Tanimoto fingerprint similarity)
