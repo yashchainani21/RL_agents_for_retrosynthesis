@@ -2999,34 +2999,24 @@ class DORAnetMCTS:
             if pathway_counts['unknown'] > 0:
                 f.write(f"\nUnknown/Other:             {pathway_counts['unknown']}  {format_pathway_list(pathway_numbers['unknown'])}\n")
 
-            # Summary percentages
-            total_pathways = len(successful_nodes)
-            pct_pks = 100 * total_pks_pathways / total_pathways if total_pathways > 0 else 0
-            pct_non_pks = 100 * total_non_pks / total_pathways if total_pathways > 0 else 0
-            f.write("\nSummary:\n")
-            f.write(f"  PKS-based pathways:      {total_pks_pathways:3} / {total_pathways} ({pct_pks:.1f}%)\n")
-            f.write(f"  Non-PKS pathways:        {total_non_pks:3} / {total_pathways} ({pct_non_pks:.1f}%)\n")
-
             # Write design-based proportions summary
+            total_pks_designs = total_exact + total_simulated
+            total_routes = total_non_pks + total_pks_designs
+            pct_pks = 100 * total_pks_designs / total_routes if total_routes > 0 else 0
+            pct_non_pks = 100 * total_non_pks / total_routes if total_routes > 0 else 0
+
+            f.write("\nSummary (counting each PKS design as a synthesis route):\n")
+            f.write(f"  PKS-based routes:        {total_pks_designs:4} / {total_routes} ({pct_pks:.1f}%)\n")
+            f.write(f"  Non-PKS routes:          {total_non_pks:4} / {total_routes} ({pct_non_pks:.1f}%)\n")
+
             if total_pks_pathways > 0:
-                f.write("\nRETROTIDE DESIGN SUMMARY\n")
+                f.write("\nRETROTIDE DESIGN BREAKDOWN\n")
                 f.write("-" * 40 + "\n")
                 f.write(f"Total PKS pathways:        {total_pks_pathways}\n")
                 f.write(f"Total exact match designs: {total_exact}\n")
                 f.write(f"Total simulated designs:   {total_simulated}\n")
-                f.write(f"Total all designs:         {total_exact + total_simulated}\n")
-                f.write(f"Avg designs per PKS path:  {(total_exact + total_simulated) / total_pks_pathways:.1f}\n")
-                f.write("\n")
-
-                # Proportions counting each design as a route
-                f.write("Proportions (counting each design as a synthesis route):\n")
-                total_with_exact = total_non_pks + total_exact
-                pct_exact = 100 * total_exact / total_with_exact if total_with_exact > 0 else 0
-                f.write(f"  Exact match designs:     {total_exact:4} PKS + {total_non_pks} non-PKS = {total_with_exact} routes ({pct_exact:.1f}% PKS)\n")
-
-                total_all = total_non_pks + total_exact + total_simulated
-                pct_all = 100 * (total_exact + total_simulated) / total_all if total_all > 0 else 0
-                f.write(f"  All designs:             {total_exact + total_simulated:4} PKS + {total_non_pks} non-PKS = {total_all} routes ({pct_all:.1f}% PKS)\n")
+                f.write(f"Total all designs:         {total_pks_designs}\n")
+                f.write(f"Avg designs per PKS path:  {total_pks_designs / total_pks_pathways:.1f}\n")
 
             f.write("\n" + "=" * 70 + "\n\n")
 
