@@ -1,36 +1,48 @@
 """
-Runner for AsyncExpansionDORAnetMCTS (multiprocessing expansion).
+Runner for AsyncExpansionDORAnetMCTS (multiprocessing expansion) - Batch mode.
 
 This script runs DORAnet MCTS with parallel expansion using multiprocessing,
 significantly speeding up search on multi-core systems.
 
 Policy System:
-- rollout_policy: Controls what happens after expansion (default: NoOpRolloutPolicy)
+- rollout_policy: Controls what happens after expansion (default: SpawnRetroTideOnDatabaseCheck)
   - NoOpRolloutPolicy: No additional work after expansion (just returns 0 reward)
   - SpawnRetroTideOnDatabaseCheck: Spawns RetroTide for PKS library matches (sparse rewards)
-  - SAScore_and_SpawnRetroTideOnDatabaseCheck: SA Score rewards + RetroTide spawning (dense rewards)
+  - SAScore_and_SpawnRetroTideOnDatabaseCheck: SA Score rewards + RetroTide spawning (legacy)
   - PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck: PKS similarity + RetroTide (dense, PKS-focused)
-- reward_policy: Controls how terminal rewards are calculated (default: SparseTerminalRewardPolicy)
+- reward_policy: Controls how terminal rewards are calculated (default: SAScore_and_TerminalRewardPolicy)
+  - SAScore_and_TerminalRewardPolicy: Terminal rewards + SA score for non-terminals (RECOMMENDED)
+    - Provides dense signals via SA score for synthetic accessibility
+    - Full terminal reward for sink compounds and PKS terminals
+    - Cleanly separates reward from rollout concerns
   - SparseTerminalRewardPolicy: 1.0 for sink compounds, 1.0 for PKS matches, 0.0 otherwise
   - SinkCompoundRewardPolicy: Only rewards sink compounds
   - ComposedRewardPolicy: Combine multiple reward policies with weights
   - PKSSimilarityRewardPolicy: PKS Tanimoto similarity as sole reward signal
-    - Uses similarity^exponent as reward for ALL nodes (including sink compounds)
-    - Guides MCTS toward PKS-compatible chemical space
-    - Example: similarity=0.8 with exponent=2.0 → reward=0.64
 
-Example: PKS-focused MCTS configuration
+Example: Recommended clean setup (rollout + reward separation)
     from DORAnet_agent.policies import (
-        PKSSimilarityRewardPolicy,
-        PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck,
+        SpawnRetroTideOnDatabaseCheck,       # Rollout: PKS matching + RetroTide
+        SAScore_and_TerminalRewardPolicy,    # Reward: terminals + SA score
+        ThermodynamicScaledRewardPolicy,     # Optional: thermodynamic scaling
     )
 
-    reward_policy = PKSSimilarityRewardPolicy(
-        similarity_exponent=2.0,  # Square the similarity
+    # Rollout policy: handles PKS matching and RetroTide spawning only
+    rollout_policy = SpawnRetroTideOnDatabaseCheck(
+        success_reward=1.0,
+        retrotide_kwargs={"max_depth": 6, "total_iterations": 100},
     )
-    rollout_policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(
-        retrotide_spawn_threshold=0.9,
-        similarity_reward_exponent=2.0,
+
+    # Reward policy: terminal rewards + SA score for non-terminals
+    base_reward = SAScore_and_TerminalRewardPolicy(
+        sink_terminal_reward=1.0,
+        pks_terminal_reward=1.0,
+    )
+
+    # Optional: wrap with thermodynamic scaling
+    reward_policy = ThermodynamicScaledRewardPolicy(
+        base_policy=base_reward,
+        feasibility_weight=0.8,
     )
 
 Backward Compatibility:
@@ -70,6 +82,7 @@ from DORAnet_agent.policies import (
     PKSLibraryRewardPolicy,
     ComposedRewardPolicy,
     PKSSimilarityRewardPolicy,
+    SAScore_and_TerminalRewardPolicy,
     # Thermodynamic scaling wrappers
     ThermodynamicScaledRolloutPolicy,
     ThermodynamicScaledRewardPolicy,
@@ -183,13 +196,19 @@ def main(
 
     # ---- Policy Configuration ----
     # Use provided policies or create defaults
+    # Default: Clean architecture with separate rollout and reward policies
     if rollout_policy is None:
-        # Default: PKS similarity + RetroTide
-        rollout_policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(
-            pks_building_blocks_path=pks_library_file
+        # Rollout handles PKS matching + RetroTide spawning only
+        rollout_policy = SpawnRetroTideOnDatabaseCheck(
+            success_reward=1.0,
+            failure_reward=0.0,
         )
     if reward_policy is None:
-        reward_policy = SparseTerminalRewardPolicy(sink_terminal_reward=1.0)
+        # Reward handles terminal rewards + SA score for non-terminals
+        reward_policy = SAScore_and_TerminalRewardPolicy(
+            sink_terminal_reward=1.0,
+            pks_terminal_reward=1.0,
+        )
 
     agent = AsyncExpansionDORAnetMCTS(
         root=root,
@@ -312,48 +331,45 @@ if __name__ == "__main__":
     args = _parse_args()
 
     # ---- Configure Policies (shared across batch runs) ----
-    # Option 1: PKS similarity + RetroTide (DEFAULT, uses Tanimoto fingerprint similarity)
-    selected_rollout_policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck()
+    # RECOMMENDED: Clean architecture with separate rollout and reward policies
+    # Rollout handles PKS matching + RetroTide spawning only
+    selected_rollout_policy = SpawnRetroTideOnDatabaseCheck(
+        success_reward=1.0,
+        failure_reward=0.0,
+    )
+    # Reward handles terminal rewards + SA score for non-terminals
+    selected_reward_policy = SAScore_and_TerminalRewardPolicy(
+        sink_terminal_reward=1.0,
+        pks_terminal_reward=1.0,
+    )
 
-    # Option 2: Dense rewards - SA Score + RetroTide
+    # Alternative: PKS similarity + RetroTide (uses Tanimoto fingerprint similarity)
+    # selected_rollout_policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck()
+    # selected_reward_policy = PKSSimilarityRewardPolicy(similarity_exponent=2.0)
+
+    # Alternative: Dense rewards - SA Score + RetroTide (legacy, conflates concerns)
     # selected_rollout_policy = SAScore_and_SpawnRetroTideOnDatabaseCheck(
     #     success_reward=1.0,
     #     sa_max_reward=1.0,
     # )
+    # selected_reward_policy = SparseTerminalRewardPolicy(sink_terminal_reward=1.0)
 
-    # Option 3: Sparse rewards - RetroTide only for PKS library matches
-    # selected_rollout_policy = SpawnRetroTideOnDatabaseCheck(
-    #     success_reward=1.0,
-    #     failure_reward=0.0,
-    # )
-
-    # Option 4: No rollout (just expand, no RetroTide spawning)
+    # Alternative: No rollout (just expand, no RetroTide spawning)
     # selected_rollout_policy = NoOpRolloutPolicy()
 
-    # Option 5: Thermodynamic-scaled rollout (wrap any base policy)
+    # Alternative: Thermodynamic-scaled policies (wrap any base policy)
     # This scales rewards by pathway thermodynamic feasibility using DORA-XGB
     # for enzymatic reactions and sigmoid-transformed ΔH for synthetic reactions.
     # selected_rollout_policy = ThermodynamicScaledRolloutPolicy(
-    #     base_policy=PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(),
+    #     base_policy=SpawnRetroTideOnDatabaseCheck(success_reward=1.0),
     #     feasibility_weight=0.8,      # 0.0=ignore feasibility, 1.0=full scaling
     #     sigmoid_k=0.2,               # Steepness of sigmoid for ΔH
     #     sigmoid_threshold=15.0,      # Center point in kcal/mol
     #     use_dora_xgb_for_enzymatic=True,  # Use DORA-XGB for enzymatic reactions
     #     aggregation="geometric_mean",     # How to aggregate pathway scores
     # )
-
-    selected_reward_policy = SparseTerminalRewardPolicy(sink_terminal_reward=1.0)
-
-    # Option 6: PKS similarity reward policy (replaces flat 1.0 for sink compounds)
-    # This uses PKS Tanimoto similarity as the reward signal for ALL nodes.
-    # selected_reward_policy = PKSSimilarityRewardPolicy(
-    #     similarity_exponent=2.0,  # Square the similarity (penalize low PKS similarity)
-    # )
-
-    # Alternative: Thermodynamic-scaled reward policy (wrap any base policy)
-    # This scales terminal rewards by pathway thermodynamic feasibility.
     # selected_reward_policy = ThermodynamicScaledRewardPolicy(
-    #     base_policy=SparseTerminalRewardPolicy(sink_terminal_reward=1.0),
+    #     base_policy=SAScore_and_TerminalRewardPolicy(sink_terminal_reward=1.0, pks_terminal_reward=1.0),
     #     feasibility_weight=0.8,
     #     sigmoid_k=0.2,
     #     sigmoid_threshold=15.0,
