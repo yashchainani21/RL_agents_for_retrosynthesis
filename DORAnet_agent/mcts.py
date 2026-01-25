@@ -2999,6 +2999,14 @@ class DORAnetMCTS:
             if pathway_counts['unknown'] > 0:
                 f.write(f"\nUnknown/Other:             {pathway_counts['unknown']}  {format_pathway_list(pathway_numbers['unknown'])}\n")
 
+            # Summary percentages
+            total_pathways = len(successful_nodes)
+            pct_pks = 100 * total_pks_pathways / total_pathways if total_pathways > 0 else 0
+            pct_non_pks = 100 * total_non_pks / total_pathways if total_pathways > 0 else 0
+            f.write("\nSummary:\n")
+            f.write(f"  PKS-based pathways:      {total_pks_pathways:3} / {total_pathways} ({pct_pks:.1f}%)\n")
+            f.write(f"  Non-PKS pathways:        {total_non_pks:3} / {total_pathways} ({pct_non_pks:.1f}%)\n")
+
             # Write design-based proportions summary
             if total_pks_pathways > 0:
                 f.write("\nRETROTIDE DESIGN SUMMARY\n")
