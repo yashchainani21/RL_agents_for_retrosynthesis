@@ -412,14 +412,14 @@ if __name__ == "__main__":
     # )
 
     main(
-        target_smiles="CC=CC(=O)O",
-        molecule_name="tiglic_acid",
+        target_smiles="CCCCC(=O)O",
+        molecule_name="pentanoic_acid",
         total_iterations=100,
-        max_depth=3,
-        max_children_per_expand=50,
+        max_depth=4,
+        max_children_per_expand=30,
         rollout_policy=selected_rollout_policy,
         reward_policy=selected_reward_policy,
-        results_subfolder="thermo_policies",
+        results_subfolder=None,
         MW_multiple_to_exclude=1.5,
         child_downselection_strategy="most_thermo_feasible",
     )
