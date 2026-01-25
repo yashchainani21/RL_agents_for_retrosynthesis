@@ -2751,13 +2751,17 @@ class DORAnetMCTS:
         Categorize a pathway based on the synthesis modalities used.
 
         Categories:
-        - "purely_synthetic": All steps are synthetic chemistry, terminal is sink
-        - "purely_enzymatic": All steps are enzymatic, terminal is sink
-        - "synthetic_enzymatic": Mix of synthetic and enzymatic, terminal is sink
-        - "synthetic_pks": All steps are synthetic chemistry, terminal is PKS
-        - "enzymatic_pks": All steps are enzymatic, terminal is PKS
-        - "synthetic_enzymatic_pks": Mix of synthetic and enzymatic, terminal is PKS
+        - "purely_synthetic": All steps are synthetic chemistry, no PKS involvement
+        - "purely_enzymatic": All steps are enzymatic, no PKS involvement
+        - "synthetic_enzymatic": Mix of synthetic and enzymatic, no PKS involvement
+        - "synthetic_pks": All steps are synthetic chemistry, has PKS terminal or byproduct
+        - "enzymatic_pks": All steps are enzymatic, has PKS terminal or byproduct
+        - "synthetic_enzymatic_pks": Mix of synthetic and enzymatic, has PKS terminal or byproduct
         - "direct_pks": No chemistry steps (target directly matches PKS)
+
+        A pathway is considered PKS-involved if either:
+        1. The terminal node is PKS-synthesizable, OR
+        2. Any byproduct along the pathway is PKS-synthesizable
 
         Args:
             node: Terminal node of the pathway
@@ -2786,6 +2790,12 @@ class DORAnetMCTS:
                 has_synthetic = True
             elif provenance == "enzymatic":
                 has_enzymatic = True
+
+        # Check if any byproduct requires PKS synthesis
+        if not is_pks:
+            pks_byproducts = self._collect_pks_byproducts_for_pathway(node)
+            if pks_byproducts:
+                is_pks = True
 
         # Categorize based on combination
         if is_pks:
