@@ -456,8 +456,8 @@ if __name__ == "__main__":
         aggregation="geometric_mean")
 
     main(
-        target_smiles="CCCCC(=O)O",
-        molecule_name="pentanoic_acid",
+        target_smiles="COC1=CC(OC(CCC2=CC3=C(OCO3)C=C2)C1)=O",
+        molecule_name="7_8_dihydromethysticin",
         total_iterations=100,
         max_depth=4,
         max_children_per_expand=30,
