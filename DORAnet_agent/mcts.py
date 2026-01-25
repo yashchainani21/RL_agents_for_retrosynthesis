@@ -2968,6 +2968,29 @@ class DORAnetMCTS:
             f.write("=" * 70 + "\n")
             f.write("SUCCESSFUL PATHWAYS (PKS OR SINK PRODUCTS ONLY)\n")
             f.write("=" * 70 + "\n\n")
+
+            # Write run configuration
+            f.write("RUN CONFIGURATION\n")
+            f.write("-" * 40 + "\n")
+            target_smiles = Chem.MolToSmiles(self.target_molecule) if self.target_molecule else "N/A"
+            f.write(f"Target molecule:           {target_smiles}\n")
+            f.write(f"Total iterations:          {self.total_iterations}\n")
+            f.write(f"Max depth:                 {self.max_depth}\n")
+            f.write(f"Max children per expand:   {self.max_children_per_expand}\n")
+            f.write(f"Use enzymatic:             {self.use_enzymatic}\n")
+            f.write(f"Use synthetic:             {self.use_synthetic}\n")
+            f.write(f"Selection policy:          {self.selection_policy}\n")
+            if self.selection_policy == "depth_biased":
+                f.write(f"Depth bonus coefficient:   {self.depth_bonus_coefficient}\n")
+            f.write(f"Child downselection:       {self.child_downselection_strategy}\n")
+            f.write(f"MW multiple to exclude:    {self.MW_multiple_to_exclude}\n")
+            f.write(f"Rollout policy:            {self.rollout_policy.name if self.rollout_policy else 'None'}\n")
+            f.write(f"Reward policy:             {self.reward_policy.name if self.reward_policy else 'None'}\n")
+            if self.spawn_retrotide and self.retrotide_kwargs:
+                f.write(f"RetroTide max depth:       {self.retrotide_kwargs.get('max_depth', 'N/A')}\n")
+                f.write(f"RetroTide iterations:      {self.retrotide_kwargs.get('total_iterations', 'N/A')}\n")
+            f.write("\n")
+
             f.write(f"Total pathways: {len(successful_nodes)}\n\n")
 
             # Write pathway type breakdown
