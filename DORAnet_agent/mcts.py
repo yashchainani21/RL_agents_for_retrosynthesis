@@ -2989,10 +2989,11 @@ class DORAnetMCTS:
                 ("synthetic_enzymatic_pks", "Synthetic + enz + PKS"),
             ]:
                 exact, sim = design_counts[cat]
+                total_designs = exact + sim
                 count = pathway_counts[cat]
                 pathway_list = format_pathway_list(pathway_numbers[cat])
                 if count > 0 and (exact > 0 or sim > 0):
-                    f.write(f"  {display_name:22} {count:3} pathways -> {exact:4} exact, {sim:4} simulated designs  {pathway_list}\n")
+                    f.write(f"  {display_name:22} {count:3} pathways -> {exact:4} exact, {sim:4} simulated, {total_designs:4} total designs  {pathway_list}\n")
                 else:
                     f.write(f"  {display_name:22} {count:3}  {pathway_list}\n")
 
