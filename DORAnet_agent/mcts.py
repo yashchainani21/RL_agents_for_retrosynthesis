@@ -2993,7 +2993,7 @@ class DORAnetMCTS:
                 count = pathway_counts[cat]
                 pathway_list = format_pathway_list(pathway_numbers[cat])
                 if count > 0 and (exact > 0 or sim > 0):
-                    f.write(f"  {display_name:22} {count:3} pathways -> {exact:4} exact, {sim:4} simulated, {total_designs:4} total designs  {pathway_list}\n")
+                    f.write(f"  {display_name:22} {total_designs:4} pathways -> {count} entries ({exact} exact, {sim} simulated)  {pathway_list}\n")
                 else:
                     f.write(f"  {display_name:22} {count:3}  {pathway_list}\n")
 
