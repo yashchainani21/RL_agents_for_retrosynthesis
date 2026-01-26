@@ -747,6 +747,9 @@ class DORAnetMCTS:
         sink_compounds_file: Optional[str] = None,
         sink_compounds_files: Optional[List[str]] = None,
         prohibited_chemicals_file: Optional[str] = None,
+        use_chem_building_blocksDB: bool = True,
+        use_bio_building_blocksDB: bool = True,
+        use_PKS_building_blocksDB: bool = True,
         MW_multiple_to_exclude: float = 1.5,
         spawn_retrotide: bool = False,
         retrotide_kwargs: Optional[Dict] = None,
@@ -793,6 +796,12 @@ class DORAnetMCTS:
             prohibited_chemicals_file: Path to text file with prohibited chemical SMILES.
                 If the target molecule matches a prohibited chemical, a ValueError is raised.
                 Intermediate fragments matching prohibited chemicals are filtered out.
+            use_chem_building_blocksDB: Whether to load chemical building blocks as sink compounds.
+                Default True. Set False for ablation studies excluding commercial chemicals.
+            use_bio_building_blocksDB: Whether to load biological building blocks as sink compounds.
+                Default True. Set False for ablation studies excluding metabolites.
+            use_PKS_building_blocksDB: Whether to load PKS library for reward calculation.
+                Default True. Set False for ablation studies excluding PKS products.
             MW_multiple_to_exclude: Maximum molecular weight ratio for fragments relative to target.
                 Fragments with MW > target_MW * MW_multiple_to_exclude are filtered out.
                 This prevents unrealistic dimerization products from enzymatic operators.
@@ -839,6 +848,9 @@ class DORAnetMCTS:
         self.max_depth = max_depth
         self.use_enzymatic = use_enzymatic
         self.use_synthetic = use_synthetic
+        self.use_chem_building_blocksDB = use_chem_building_blocksDB
+        self.use_bio_building_blocksDB = use_bio_building_blocksDB
+        self.use_PKS_building_blocksDB = use_PKS_building_blocksDB
         self.generations_per_expand = generations_per_expand
         self.max_children_per_expand = max_children_per_expand
 
@@ -940,8 +952,10 @@ class DORAnetMCTS:
 
         # Load PKS product library for reward calculation
         self.pks_library: Set[str] = set()
-        if pks_library_file:
+        if pks_library_file and use_PKS_building_blocksDB:
             self.pks_library = _load_pks_library(pks_library_file)
+        elif pks_library_file and not use_PKS_building_blocksDB:
+            print("[DORAnet] PKS building blocks database disabled (use_PKS_building_blocksDB=False)")
 
         # Load sink compounds (commercially available building blocks)
         # Support both single file (deprecated) and list of files
@@ -957,14 +971,26 @@ class DORAnetMCTS:
             sink_files_to_load.extend(sink_compounds_files)
 
         for sink_file_path in sink_files_to_load:
+            # Categorize by file name and respect toggle settings
+            file_name_lower = str(sink_file_path).lower()
+            is_biological = "biological" in file_name_lower
+            is_chemical = "chemical" in file_name_lower
+
+            # Skip loading if the corresponding toggle is disabled
+            if is_biological and not use_bio_building_blocksDB:
+                print(f"[DORAnet] Skipping biological building blocks (use_bio_building_blocksDB=False)")
+                continue
+            if is_chemical and not use_chem_building_blocksDB:
+                print(f"[DORAnet] Skipping chemical building blocks (use_chem_building_blocksDB=False)")
+                continue
+
             sink_smiles = _load_sink_compounds(sink_file_path)
             self.sink_compounds.update(sink_smiles)
 
-            # Categorize by file name
-            file_name_lower = str(sink_file_path).lower()
-            if "biological" in file_name_lower:
+            # Track biological vs chemical separately for reporting
+            if is_biological:
                 self.biological_sink_compounds.update(sink_smiles)
-            elif "chemical" in file_name_lower:
+            elif is_chemical:
                 self.chemical_sink_compounds.update(sink_smiles)
 
         if sink_files_to_load:
@@ -2317,6 +2343,9 @@ class DORAnetMCTS:
             f.write(f"Max depth: {self.max_depth}\n")
             f.write(f"Use enzymatic: {self.use_enzymatic}\n")
             f.write(f"Use synthetic: {self.use_synthetic}\n")
+            f.write(f"Use chem building blocks: {self.use_chem_building_blocksDB}\n")
+            f.write(f"Use bio building blocks: {self.use_bio_building_blocksDB}\n")
+            f.write(f"Use PKS building blocks: {self.use_PKS_building_blocksDB}\n")
             f.write(f"Max children per expand: {self.max_children_per_expand}\n")
             f.write(f"Child downselection strategy: {self.child_downselection_strategy}\n")
             f.write(f"Spawn RetroTide: {self.spawn_retrotide}\n")
@@ -2737,6 +2766,26 @@ class DORAnetMCTS:
             f.write("=" * 70 + "\n")
             f.write("FINALIZED REACTION-BASED PATHWAYS\n")
             f.write("=" * 70 + "\n\n")
+
+            # Write run configuration
+            f.write("RUN CONFIGURATION\n")
+            f.write("-" * 40 + "\n")
+            target_smiles = Chem.MolToSmiles(self.target_molecule) if self.target_molecule else "N/A"
+            f.write(f"Target molecule:           {target_smiles}\n")
+            f.write(f"Total iterations:          {self.total_iterations}\n")
+            f.write(f"Max depth:                 {self.max_depth}\n")
+            f.write(f"Max children per expand:   {self.max_children_per_expand}\n")
+            f.write(f"Use enzymatic:             {self.use_enzymatic}\n")
+            f.write(f"Use synthetic:             {self.use_synthetic}\n")
+            f.write(f"Use chem building blocks:  {self.use_chem_building_blocksDB}\n")
+            f.write(f"Use bio building blocks:   {self.use_bio_building_blocksDB}\n")
+            f.write(f"Use PKS building blocks:   {self.use_PKS_building_blocksDB}\n")
+            f.write(f"Selection policy:          {self.selection_policy}\n")
+            if self.selection_policy == "depth_biased":
+                f.write(f"Depth bonus coefficient:   {self.depth_bonus_coefficient}\n")
+            f.write(f"Child downselection:       {self.child_downselection_strategy}\n")
+            f.write("\n")
+
             f.write(f"Total pathways: {len(terminal_nodes)}\n\n")
             if total_runtime_seconds is not None:
                 f.write(f"Total runtime (seconds): {total_runtime_seconds:.2f}\n\n")
@@ -2979,6 +3028,9 @@ class DORAnetMCTS:
             f.write(f"Max children per expand:   {self.max_children_per_expand}\n")
             f.write(f"Use enzymatic:             {self.use_enzymatic}\n")
             f.write(f"Use synthetic:             {self.use_synthetic}\n")
+            f.write(f"Use chem building blocks:  {self.use_chem_building_blocksDB}\n")
+            f.write(f"Use bio building blocks:   {self.use_bio_building_blocksDB}\n")
+            f.write(f"Use PKS building blocks:   {self.use_PKS_building_blocksDB}\n")
             f.write(f"Selection policy:          {self.selection_policy}\n")
             if self.selection_policy == "depth_biased":
                 f.write(f"Depth bonus coefficient:   {self.depth_bonus_coefficient}\n")

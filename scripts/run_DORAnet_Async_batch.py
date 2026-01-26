@@ -120,6 +120,11 @@ def main(
     reward_policy: Optional[RewardPolicy] = None,
     MW_multiple_to_exclude: float = 1.5,
     child_downselection_strategy: str = "most_thermo_feasible",
+    use_enzymatic: bool = True,
+    use_synthetic: bool = True,
+    use_chem_building_blocksDB: bool = True,
+    use_bio_building_blocksDB: bool = True,
+    use_PKS_building_blocksDB: bool = True,
 ) -> None:
     """
     Run the async DORAnet MCTS agent for batch processing.
@@ -154,6 +159,14 @@ def main(
               (DORA-XGB for enzymatic, sigmoid-transformed ΔH for synthetic),
               with bonuses for sink compounds (+1000) and PKS matches (+500)
             Default is "most_thermo_feasible".
+        use_enzymatic: Whether to use enzymatic retro-transformations. Default True.
+        use_synthetic: Whether to use synthetic retro-transformations. Default True.
+        use_chem_building_blocksDB: Whether to load chemical building blocks as sink
+            compounds. Default True. Set False for ablation studies.
+        use_bio_building_blocksDB: Whether to load biological building blocks as sink
+            compounds. Default True. Set False for ablation studies.
+        use_PKS_building_blocksDB: Whether to load PKS library for reward calculation.
+            Default True. Set False for ablation studies.
     """
     # ---- Runner configuration ----
     create_interactive_visualization = False
@@ -215,8 +228,8 @@ def main(
         target_molecule=target_molecule,
         total_iterations=200,
         max_depth=4,
-        use_enzymatic=True,
-        use_synthetic=True,
+        use_enzymatic=use_enzymatic,
+        use_synthetic=use_synthetic,
         generations_per_expand=1,
         max_children_per_expand=30,
         child_downselection_strategy=child_downselection_strategy,
@@ -224,6 +237,9 @@ def main(
         pks_library_file=str(pks_library_file),
         sink_compounds_files=[str(f) for f in sink_compounds_files],
         prohibited_chemicals_file=str(prohibited_chemicals_file),
+        use_chem_building_blocksDB=use_chem_building_blocksDB,
+        use_bio_building_blocksDB=use_bio_building_blocksDB,
+        use_PKS_building_blocksDB=use_PKS_building_blocksDB,
         MW_multiple_to_exclude=MW_multiple_to_exclude,
 
         # Policies passed as explicit arguments
@@ -384,4 +400,9 @@ if __name__ == "__main__":
         reward_policy=selected_reward_policy,
         MW_multiple_to_exclude=1.5,
         child_downselection_strategy=args.child_downselection_strategy.replace("-", "_"),
+        use_enzymatic=True,
+        use_synthetic=True,
+        use_chem_building_blocksDB=True,
+        use_bio_building_blocksDB=True,
+        use_PKS_building_blocksDB=True,
     )

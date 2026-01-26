@@ -133,7 +133,12 @@ def main(target_smiles: str,
          reward_policy: Optional[RewardPolicy] = None,
          results_subfolder: str = None,
          MW_multiple_to_exclude: float = 1.5,
-         child_downselection_strategy: str = "most_thermo_feasible") -> None:
+         child_downselection_strategy: str = "most_thermo_feasible",
+         use_enzymatic: bool = True,
+         use_synthetic: bool = True,
+         use_chem_building_blocksDB: bool = True,
+         use_bio_building_blocksDB: bool = True,
+         use_PKS_building_blocksDB: bool = True) -> None:
     """
     Run the DORAnet MCTS agent.
 
@@ -172,6 +177,14 @@ def main(target_smiles: str,
               (DORA-XGB for enzymatic, sigmoid-transformed ΔH for synthetic),
               with bonuses for sink compounds (+1000) and PKS matches (+500)
             Default is "most_thermo_feasible".
+        use_enzymatic: Whether to use enzymatic retro-transformations. Default True.
+        use_synthetic: Whether to use synthetic retro-transformations. Default True.
+        use_chem_building_blocksDB: Whether to load chemical building blocks as sink
+            compounds. Default True. Set False for ablation studies.
+        use_bio_building_blocksDB: Whether to load biological building blocks as sink
+            compounds. Default True. Set False for ablation studies.
+        use_PKS_building_blocksDB: Whether to load PKS library for reward calculation.
+            Default True. Set False for ablation studies.
     """
     create_interactive_visualization = False
     enable_iteration_viz = False
@@ -233,8 +246,8 @@ def main(target_smiles: str,
         target_molecule=target_molecule,
         total_iterations=total_iterations,
         max_depth=max_depth,
-        use_enzymatic=True,
-        use_synthetic=True,
+        use_enzymatic=use_enzymatic,
+        use_synthetic=use_synthetic,
         generations_per_expand=1,
         max_children_per_expand=max_children_per_expand,
         child_downselection_strategy=child_downselection_strategy,
@@ -242,6 +255,9 @@ def main(target_smiles: str,
         pks_library_file=str(pks_library_file),
         sink_compounds_files=[str(f) for f in sink_compounds_files],
         prohibited_chemicals_file=str(prohibited_chemicals_file),
+        use_chem_building_blocksDB=use_chem_building_blocksDB,
+        use_bio_building_blocksDB=use_bio_building_blocksDB,
+        use_PKS_building_blocksDB=use_PKS_building_blocksDB,
         MW_multiple_to_exclude=MW_multiple_to_exclude,
 
         # Policies passed as explicit arguments
@@ -456,8 +472,8 @@ if __name__ == "__main__":
         aggregation="geometric_mean")
 
     main(
-        target_smiles="COC1=CC(OC(CCC2=CC3=C(OCO3)C=C2)C1)=O",
-        molecule_name="7_8_dihydromethysticin",
+        target_smiles="CCCCC(=O)O",
+        molecule_name="pentanoic_acid",
         total_iterations=100,
         max_depth=4,
         max_children_per_expand=30,
@@ -466,4 +482,9 @@ if __name__ == "__main__":
         results_subfolder=None,
         MW_multiple_to_exclude=1.5,
         child_downselection_strategy="most_thermo_feasible",
+        use_enzymatic=True,
+        use_synthetic=True,
+        use_chem_building_blocksDB=True,
+        use_bio_building_blocksDB=True,
+        use_PKS_building_blocksDB=True,
     )
