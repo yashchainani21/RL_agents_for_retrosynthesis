@@ -3251,15 +3251,6 @@ class DORAnetMCTS:
         f.write("-" * 40 + "\n")
         f.write(f"Terminal Fragment: {node.smiles}\n")
         f.write(f"Depth: {node.depth}, Provenance: {node.provenance}\n")
-        # Use unified sink labeling for all terminal types
-        sink_type = self._get_sink_compound_type(node.smiles)
-        if sink_type:
-            f.write(f"Sink Compound: Yes ({sink_type})\n")
-        elif node.is_pks_terminal:
-            # RetroTide-verified but not in library (edge case)
-            f.write("PKS Terminal: Yes (retrotide_verified)\n")
-        else:
-            f.write("Terminal: Leaf\n")
         f.write("\nReaction Pathway:\n")
         f.write(self.format_reaction_pathway(node) + "\n\n")
 
