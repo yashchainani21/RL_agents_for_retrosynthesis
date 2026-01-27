@@ -379,64 +379,6 @@ class ThermodynamicScorer:
             return None, None
 
 
-def _load_enzymatic_rule_labels() -> List[str]:
-    """
-    Load enzymatic reaction rule labels from DORAnet.
-
-    Returns:
-        List of rule names indexed by operator position.
-    """
-    try:
-        import doranet.modules.enzymatic as enzymatic
-        import os
-        import pandas as pd
-
-        # Load rule labels from TSV file
-        enzymatic_path = os.path.dirname(enzymatic.__file__)
-        rules_file = os.path.join(enzymatic_path, 'JN3604IMT_rules.tsv')
-        df = pd.read_csv(rules_file, sep='\t')
-
-        # Create list of names indexed by position (same order as in file)
-        labels = []
-        for _, row in df.iterrows():
-            name = row['Name']
-            if pd.notna(name):
-                labels.append(name)
-            else:
-                labels.append(None)
-
-        return labels
-
-    except Exception as e:
-        print(f"[WARN] Could not load enzymatic rule labels: {e}")
-        return []
-
-
-def _load_synthetic_reaction_labels() -> List[str]:
-    """
-    Load synthetic reaction labels from DORAnet.
-
-    Returns:
-        List of reaction names indexed by operator position.
-    """
-    try:
-        import doranet.modules.synthetic.Reaction_Smarts_Retro as retro_smarts
-
-        # Create list of names indexed by position
-        labels = []
-        for op_def in retro_smarts.op_retro_smarts:
-            if hasattr(op_def, 'name'):
-                labels.append(op_def.name)
-            else:
-                labels.append(None)
-
-        return labels
-
-    except Exception as e:
-        print(f"[WARN] Could not load synthetic reaction labels: {e}")
-        return []
-
-
 # Small molecules to exclude (common byproducts, not useful fragments)
 DEFAULT_EXCLUDED_FRAGMENTS = (
     "O",           # water
@@ -941,6 +883,8 @@ class DORAnetMCTS:
 
         # Track chemistry helpers separately for DORAnet synthetic network generation
         self.chemistry_helpers: Set[str] = set()
+        # Track biology cofactors separately for output labeling
+        self.bio_cofactors: Set[str] = set()
 
         for cofactor_file_path in cofactor_files_to_load:
             cofactor_smiles = _load_cofactors_from_csv(cofactor_file_path)
@@ -949,6 +893,8 @@ class DORAnetMCTS:
             # If this is the chemistry_helpers file, also store for DORAnet
             if "chemistry_helpers" in str(cofactor_file_path).lower():
                 self.chemistry_helpers.update(cofactor_smiles)
+            elif "cofactors" in str(cofactor_file_path).lower():
+                self.bio_cofactors.update(cofactor_smiles)
 
         # Load PKS product library for reward calculation
         self.pks_library: Set[str] = set()
@@ -1013,12 +959,6 @@ class DORAnetMCTS:
                     f"  Canonical SMILES: {target_canonical}\n"
                     f"Please choose a different target molecule."
                 )
-
-        # Load reaction label mappings for human-readable names
-        self._enzymatic_labels = _load_enzymatic_rule_labels()
-        self._synthetic_labels = _load_synthetic_reaction_labels()
-        print(f"[DORAnet] Loaded {len(self._enzymatic_labels)} enzymatic rule labels")
-        print(f"[DORAnet] Loaded {len(self._synthetic_labels)} synthetic reaction labels")
 
         # Report chemistry helpers for synthetic networks
         if self.chemistry_helpers:
@@ -1277,16 +1217,14 @@ class DORAnetMCTS:
                 else:
                     rxn_smarts = str(op) if op else None
 
-                # Get human-readable reaction label using operator index
+                # Get human-readable reaction label from network metadata
                 rxn_label = None
                 if op_idx is not None:
-                    # Look up label by operator index
-                    if mode == "enzymatic":
-                        if op_idx < len(self._enzymatic_labels):
-                            rxn_label = self._enzymatic_labels[op_idx]
-                    else:  # synthetic
-                        if op_idx < len(self._synthetic_labels):
-                            rxn_label = self._synthetic_labels[op_idx]
+                    try:
+                        meta = network.ops.meta(op_idx)
+                        rxn_label = meta.get('name')
+                    except Exception:
+                        rxn_label = None
 
                 # Fallback to truncated SMARTS if no label found
                 if not rxn_label and rxn_smarts:
@@ -1588,6 +1526,9 @@ class DORAnetMCTS:
         Returns:
             "biological" if in biological building blocks,
             "chemical" if in chemical building blocks,
+            "bio_cofactor" if in biology cofactors (SAM, SAH, NADPH, etc.),
+            "chem_helper" if in chemistry helpers (H2O, CO2, etc.),
+            "pks" if in PKS library (polyketide synthase products),
             None if not a sink compound.
         """
         canonical = _canonicalize_smiles(smiles)
@@ -1599,6 +1540,13 @@ class DORAnetMCTS:
             return "biological"
         if canonical in self.chemical_sink_compounds:
             return "chemical"
+        if canonical in self.bio_cofactors:
+            return "bio_cofactor"
+        if canonical in self.chemistry_helpers:
+            return "chem_helper"
+        # Check PKS library as final fallback for non-building-block terminals
+        if self.pks_library and canonical in self.pks_library:
+            return "pks"
 
         return None
 
@@ -2934,9 +2882,12 @@ class DORAnetMCTS:
             Check if a product is 'covered' (available as a building block).
 
             A product is covered if:
-            1. It's a sink compound (commercially available)
+            1. It's a sink compound (biological or chemical building blocks)
             2. It's in the PKS success list (can be synthesized by PKS)
-            3. It's an excluded fragment (common small molecule like H2, H2O, CO2)
+            3. It's an excluded fragment which includes:
+               - Biology cofactors (SAM, SAH, NADPH, etc.)
+               - Chemistry helpers (H2O, CO2, etc.)
+               - Other common small molecules
             """
             # Check if it's a sink compound
             if self._get_sink_compound_type(smiles):
@@ -2968,6 +2919,11 @@ class DORAnetMCTS:
 
         successful_nodes: List[Node] = []
         for node in terminal_nodes:
+            # First check that the terminal node itself is covered
+            # (sink compound, PKS library, or excluded fragment)
+            if not is_product_covered(node.smiles):
+                continue  # Terminal fragment not synthesizable, skip this pathway
+
             pathway = self.get_pathway_to_node(node)
             all_covered = True
 
@@ -3295,11 +3251,13 @@ class DORAnetMCTS:
         f.write("-" * 40 + "\n")
         f.write(f"Terminal Fragment: {node.smiles}\n")
         f.write(f"Depth: {node.depth}, Provenance: {node.provenance}\n")
-        if node.is_sink_compound:
-            sink_type = node.sink_compound_type or "unknown"
+        # Use unified sink labeling for all terminal types
+        sink_type = self._get_sink_compound_type(node.smiles)
+        if sink_type:
             f.write(f"Sink Compound: Yes ({sink_type})\n")
-        elif self.calculate_reward(node) > 0:
-            f.write("PKS Match: Yes\n")
+        elif node.is_pks_terminal:
+            # RetroTide-verified but not in library (edge case)
+            f.write("PKS Terminal: Yes (retrotide_verified)\n")
         else:
             f.write("Terminal: Leaf\n")
         f.write("\nReaction Pathway:\n")

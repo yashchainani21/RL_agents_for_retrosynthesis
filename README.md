@@ -700,6 +700,86 @@ Avg designs per PKS path:  5.6
   1. The terminal node is PKS-synthesizable, OR
   2. Any byproduct along the pathway is PKS-synthesizable
 
+## Pathway Definition and Tracking
+
+### What Constitutes a Successful Pathway?
+
+A synthesis pathway is considered **successful** if and only if:
+
+1. **Terminal Fragment Coverage**: The terminal fragment (leaf node) must be synthesizable from one of:
+   - Biological building blocks (334 metabolites)
+   - Chemical building blocks (278K commercial compounds)
+   - PKS library matches (106K polyketide products)
+   - Excluded fragments (cofactors, chemistry helpers)
+
+2. **Byproduct Coverage**: Every byproduct generated along the pathway must also be covered by the same sets above.
+
+This ensures that all fragments produced during retrosynthetic decomposition can actually be obtained—either purchased, biosynthesized, or are common reaction byproducts.
+
+### Sink Compound Types
+
+The system categorizes sink compounds (terminal building blocks) into distinct types for output labeling:
+
+| Type | Description | Examples |
+|------|-------------|----------|
+| `biological` | Biologically-derived metabolites | Amino acids, sugars, fatty acids |
+| `chemical` | Commercially available building blocks | Reagents, solvents, starting materials |
+| `pks` | PKS library matches | Polyketide intermediates and products |
+| `bio_cofactor` | Enzymatic cofactors | SAM, SAH, NADPH, ATP |
+| `chem_helper` | Chemistry helper molecules | H₂O, CO₂, H₂ |
+
+### Coverage Validation
+
+During pathway enumeration, the `is_product_covered()` function checks each fragment:
+
+```python
+def is_product_covered(smiles: str) -> bool:
+    """
+    A product is covered if:
+    1. It's a sink compound (biological or chemical building blocks)
+    2. It's in the PKS library (can be synthesized by PKS)
+    3. It's an excluded fragment which includes:
+       - Biology cofactors (SAM, SAH, NADPH, etc.)
+       - Chemistry helpers (H2O, CO2, etc.)
+       - Other common small molecules
+    """
+```
+
+### Pathway Categorization Logic
+
+Pathways in `successful_pathways.txt` are categorized by synthesis modality:
+
+**Non-PKS Pathways (Sink Compound Terminals)**:
+- **Purely synthetic**: All steps use synthetic organic chemistry
+- **Purely enzymatic**: All steps use enzymatic transformations
+- **Synthetic + enzymatic**: Mixed modality pathway
+
+**PKS-Dependent Pathways** (counted by RetroTide designs):
+- **Direct PKS match**: Target molecule directly matches PKS library
+- **Synthetic + PKS**: Synthetic steps leading to PKS-synthesizable terminal
+- **Enzymatic + PKS**: Enzymatic steps leading to PKS-synthesizable terminal
+- **Synthetic + enzymatic + PKS**: Mixed modality with PKS terminal
+
+A pathway is classified as PKS-dependent if:
+1. The terminal node is PKS-synthesizable, OR
+2. Any byproduct along the pathway is PKS-synthesizable
+
+### Integration Testing
+
+The pathway validation logic is verified by an integration test that:
+1. Runs a minimal MCTS search on a simple target (pentanoic acid)
+2. Verifies all pathways in `successful_pathways.txt` satisfy the pathway definition
+3. Confirms every terminal fragment is in coverage sets
+4. Confirms every byproduct is covered (not marked as `sink=No`)
+
+```bash
+# Run the integration test
+pytest tests/test_policies.py::TestSaveSuccessfulPathways::test_pentanoic_acid_integration_all_modalities -v
+
+# Skip slow integration tests for quick CI
+pytest tests/test_policies.py -v -m "not slow"
+```
+
 ## Architecture
 
 ### Hierarchical Agent Flow

@@ -24,8 +24,6 @@ from .mcts import (
     DORAnetMCTS,
     RetroTideResult,
     _canonicalize_smiles,
-    _load_enzymatic_rule_labels,
-    _load_synthetic_reaction_labels,
 )
 from .node import Node
 from .policies import (
@@ -59,8 +57,6 @@ def _expand_worker(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     pks_library = set(payload["pks_library"])
     sink_compounds = set(payload["sink_compounds"])
     target_mw = payload["target_mw"]
-    enzymatic_labels = payload["enzymatic_labels"]
-    synthetic_labels = payload["synthetic_labels"]
     fragment_cache_dir = payload.get("fragment_cache_dir")
 
     mol = Chem.MolFromSmiles(starter_smiles)
@@ -216,10 +212,8 @@ def _expand_worker(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     def _generate_fragments_for_mode(mode: str) -> List[Dict[str, Any]]:
         if mode == "enzymatic":
             module = enzymatic
-            labels = enzymatic_labels
         else:
             module = synthetic
-            labels = synthetic_labels
 
         job_name = f"doranet_{mode}_retro_{uuid.uuid4().hex[:8]}"
 
@@ -271,9 +265,15 @@ def _expand_worker(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
                 else:
                     rxn_smarts = str(op) if op else None
 
+                # Get human-readable reaction label from network metadata
                 rxn_label = None
-                if op_idx is not None and op_idx < len(labels):
-                    rxn_label = labels[op_idx]
+                if op_idx is not None:
+                    try:
+                        meta = network.ops.meta(op_idx)
+                        rxn_label = meta.get('name')
+                    except Exception:
+                        pass
+                # Fallback to truncated SMARTS if no label found
                 if not rxn_label and rxn_smarts:
                     rxn_label = rxn_smarts[:60] + "..." if len(rxn_smarts) > 60 else rxn_smarts
 
@@ -478,11 +478,10 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
             "child_downselection_strategy": self.child_downselection_strategy,
             "excluded_fragments": list(self.excluded_fragments),
             "chemistry_helpers": list(self.chemistry_helpers),
+            "bio_cofactors": list(self.bio_cofactors),
             "pks_library": list(self.pks_library),
             "sink_compounds": list(self.sink_compounds),
             "target_mw": self.target_MW,
-            "enzymatic_labels": self._enzymatic_labels,
-            "synthetic_labels": self._synthetic_labels,
             "fragment_cache_dir": str(self.fragment_cache_dir),
         }
 
