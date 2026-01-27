@@ -73,6 +73,11 @@ retrotide-mcts = "scripts.run_RetroTide_single_agent:main"
 [project.urls]
 Homepage = "https://github.com/yashchainani/RL_agents_for_retrosynthesis"
 
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
+
 [tool.setuptools.packages.find]
 exclude = ["tests", "tests.*", "notebooks", "scripts", "archives"]
 

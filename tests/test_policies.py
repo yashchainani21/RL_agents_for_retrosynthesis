@@ -1430,3 +1430,430 @@ class TestPreprocessTargetMolecule:
         assert preprocessed is not None
         assert "/" not in smiles
         assert "\\" not in smiles
+
+
+class TestGetSinkCompoundType:
+    """Tests for _get_sink_compound_type method which labels byproducts in pathway output."""
+
+    @pytest.fixture
+    def mcts_agent(self):
+        """Create a minimal DORAnetMCTS agent for testing sink compound type labeling."""
+        from DORAnet_agent.mcts import DORAnetMCTS
+        from DORAnet_agent.node import Node
+
+        mol = Chem.MolFromSmiles("CCCCC(=O)O")  # pentanoic acid
+        root = Node(fragment=mol, parent=None, depth=0, provenance="target")
+
+        agent = DORAnetMCTS(
+            root=root,
+            target_molecule=mol,
+            total_iterations=1,
+            max_depth=1,
+            use_enzymatic=False,
+            use_synthetic=False,
+        )
+
+        # Manually set up test data for the various categories
+        agent.biological_sink_compounds = {"CCO", "CCC"}  # ethanol, propane
+        agent.chemical_sink_compounds = {"C", "CC"}  # methane, ethane
+        agent.bio_cofactors = {
+            "Nc1ncnc2c1ncn2[C@@H]1O[C@H](CSCC[C@H](N)C(=O)O)[C@@H](O)[C@H]1O"  # SAH (canonical)
+        }
+        agent.chemistry_helpers = {"O", "[H][H]"}  # water, hydrogen
+
+        return agent
+
+    def test_biological_sink_compound(self, mcts_agent):
+        """Test that biological building blocks return 'biological'."""
+        result = mcts_agent._get_sink_compound_type("CCO")  # ethanol
+        assert result == "biological"
+
+    def test_chemical_sink_compound(self, mcts_agent):
+        """Test that chemical building blocks return 'chemical'."""
+        result = mcts_agent._get_sink_compound_type("C")  # methane
+        assert result == "chemical"
+
+    def test_bio_cofactor(self, mcts_agent):
+        """Test that biology cofactors return 'bio_cofactor'."""
+        # SAH (S-adenosyl-L-homocysteine) - a common enzymatic cofactor byproduct
+        sah_smiles = "NC1=NC=NC2=C1N=CN2[C@@H]1O[C@H](CSCC[C@H](N)C(=O)O)[C@@H](O)[C@H]1O"
+        result = mcts_agent._get_sink_compound_type(sah_smiles)
+        assert result == "bio_cofactor"
+
+    def test_chemistry_helper(self, mcts_agent):
+        """Test that chemistry helpers return 'chem_helper'."""
+        result = mcts_agent._get_sink_compound_type("O")  # water
+        assert result == "chem_helper"
+
+        result = mcts_agent._get_sink_compound_type("[H][H]")  # hydrogen
+        assert result == "chem_helper"
+
+    def test_unknown_compound_returns_none(self, mcts_agent):
+        """Test that unknown compounds return None."""
+        result = mcts_agent._get_sink_compound_type("CCCCCCCCCC")  # decane
+        assert result is None
+
+    def test_invalid_smiles_returns_none(self, mcts_agent):
+        """Test that invalid SMILES return None."""
+        result = mcts_agent._get_sink_compound_type("invalid_smiles_xyz")
+        assert result is None
+
+    def test_priority_biological_over_bio_cofactor(self, mcts_agent):
+        """Test that biological sink compounds take priority over bio_cofactors."""
+        # Add the same compound to both sets
+        test_smiles = "CCCC"
+        mcts_agent.biological_sink_compounds.add(test_smiles)
+        mcts_agent.bio_cofactors.add(test_smiles)
+
+        result = mcts_agent._get_sink_compound_type(test_smiles)
+        assert result == "biological"  # biological takes priority
+
+    def test_priority_chemical_over_chem_helper(self, mcts_agent):
+        """Test that chemical sink compounds take priority over chem_helpers."""
+        # Add the same compound to both sets
+        test_smiles = "CCCCC"
+        mcts_agent.chemical_sink_compounds.add(test_smiles)
+        mcts_agent.chemistry_helpers.add(test_smiles)
+
+        result = mcts_agent._get_sink_compound_type(test_smiles)
+        assert result == "chemical"  # chemical takes priority
+
+    def test_pks_library_match(self, mcts_agent):
+        """Test that PKS library matches return 'pks'."""
+        # Add a test SMILES to pks_library
+        mcts_agent.pks_library = {"CCCCC(=O)O"}  # pentanoic acid
+        result = mcts_agent._get_sink_compound_type("CCCCC(=O)O")
+        assert result == "pks"
+
+    def test_pks_library_lower_priority_than_building_blocks(self, mcts_agent):
+        """Test that PKS library has lower priority than building blocks."""
+        # Add the same compound to biological and pks_library
+        test_smiles = "CCCCCC"  # hexane
+        mcts_agent.biological_sink_compounds.add(test_smiles)
+        mcts_agent.pks_library = {test_smiles}
+
+        result = mcts_agent._get_sink_compound_type(test_smiles)
+        assert result == "biological"  # building block takes priority over pks
+
+    def test_pks_library_lower_priority_than_cofactors(self, mcts_agent):
+        """Test that PKS library has lower priority than cofactors."""
+        # Add the same compound to bio_cofactors and pks_library
+        test_smiles = "CCCCCCC"  # heptane
+        mcts_agent.bio_cofactors.add(test_smiles)
+        mcts_agent.pks_library = {test_smiles}
+
+        result = mcts_agent._get_sink_compound_type(test_smiles)
+        assert result == "bio_cofactor"  # cofactor takes priority over pks
+
+
+class TestBioCofactorsTracking:
+    """Tests for bio_cofactors set initialization and tracking."""
+
+    def test_bio_cofactors_set_exists(self):
+        """Test that bio_cofactors set is created during initialization."""
+        from DORAnet_agent.mcts import DORAnetMCTS
+        from DORAnet_agent.node import Node
+
+        mol = Chem.MolFromSmiles("CCCCC(=O)O")
+        root = Node(fragment=mol, parent=None, depth=0, provenance="target")
+
+        agent = DORAnetMCTS(
+            root=root,
+            target_molecule=mol,
+            total_iterations=1,
+            max_depth=1,
+            use_enzymatic=False,
+            use_synthetic=False,
+        )
+
+        assert hasattr(agent, 'bio_cofactors')
+        assert isinstance(agent.bio_cofactors, set)
+
+    def test_bio_cofactors_populated_from_cofactors_file(self, tmp_path):
+        """Test that cofactor files populate bio_cofactors set."""
+        from DORAnet_agent.mcts import DORAnetMCTS
+        from DORAnet_agent.node import Node
+
+        # Create a temporary cofactors CSV file (name must contain 'cofactors')
+        # Note: CSV reader expects column named "SMILES" (uppercase)
+        cofactors_file = tmp_path / "biology_cofactors.csv"
+        cofactors_file.write_text("SMILES,name\nCCO,ethanol\nCCC,propane\n")
+
+        mol = Chem.MolFromSmiles("CCCCC(=O)O")
+        root = Node(fragment=mol, parent=None, depth=0, provenance="target")
+
+        agent = DORAnetMCTS(
+            root=root,
+            target_molecule=mol,
+            total_iterations=1,
+            max_depth=1,
+            use_enzymatic=False,
+            use_synthetic=False,
+            cofactors_files=[str(cofactors_file)],
+        )
+
+        # bio_cofactors should contain the loaded cofactors
+        assert "CCO" in agent.bio_cofactors
+        assert "CCC" in agent.bio_cofactors
+        # They should also be in excluded_fragments
+        assert "CCO" in agent.excluded_fragments
+        assert "CCC" in agent.excluded_fragments
+
+    def test_chemistry_helpers_not_in_bio_cofactors(self, tmp_path):
+        """Test that chemistry_helpers file populates chemistry_helpers, not bio_cofactors."""
+        from DORAnet_agent.mcts import DORAnetMCTS
+        from DORAnet_agent.node import Node
+
+        # Create a temporary chemistry_helpers CSV file
+        # Note: CSV reader expects column named "SMILES" (uppercase)
+        helpers_file = tmp_path / "test_chemistry_helpers.csv"
+        helpers_file.write_text("SMILES,name\nO,water\n[H][H],hydrogen\n")
+
+        mol = Chem.MolFromSmiles("CCCCC(=O)O")
+        root = Node(fragment=mol, parent=None, depth=0, provenance="target")
+
+        agent = DORAnetMCTS(
+            root=root,
+            target_molecule=mol,
+            total_iterations=1,
+            max_depth=1,
+            use_enzymatic=False,
+            use_synthetic=False,
+            cofactors_files=[str(helpers_file)],
+        )
+
+        # chemistry_helpers should contain the loaded helpers
+        assert "O" in agent.chemistry_helpers
+        # They should NOT be in bio_cofactors (file name has 'chemistry_helpers')
+        assert "O" not in agent.bio_cofactors
+        # They should also be in excluded_fragments
+        assert "O" in agent.excluded_fragments
+
+
+class TestSaveSuccessfulPathways:
+    """Tests for save_successful_pathways method."""
+
+    def test_leaf_node_without_sink_or_pks_excluded(self, tmp_path):
+        """Test that leaf nodes without sink/PKS status are excluded from successful pathways."""
+        from DORAnet_agent.mcts import DORAnetMCTS
+        from DORAnet_agent.node import Node
+
+        mol = Chem.MolFromSmiles("CCCCC(=O)O")
+        root = Node(fragment=mol, parent=None, depth=0, provenance="target")
+
+        agent = DORAnetMCTS(
+            root=root,
+            target_molecule=mol,
+            total_iterations=1,
+            max_depth=1,
+            use_enzymatic=False,
+            use_synthetic=False,
+        )
+
+        # Create a leaf node that is NOT a sink compound
+        leaf_mol = Chem.MolFromSmiles("CCCCCCCCCCCCCCCC")  # Long chain, not in any library
+        leaf = Node(fragment=leaf_mol, parent=root, depth=1, provenance="enzymatic")
+        leaf.is_sink_compound = False
+        leaf.is_pks_terminal = False
+        root.children.append(leaf)
+        agent.nodes.append(leaf)
+
+        # Save successful pathways
+        output_file = tmp_path / "test_successful.txt"
+        agent.save_successful_pathways(str(output_file))
+
+        # Read the file and verify the leaf node is NOT included
+        content = output_file.read_text()
+        assert "CCCCCCCCCCCCCCCC" not in content
+
+    def test_leaf_node_with_sink_compound_included(self, tmp_path):
+        """Test that leaf nodes with sink compound status ARE included in successful pathways."""
+        from DORAnet_agent.mcts import DORAnetMCTS
+        from DORAnet_agent.node import Node
+
+        mol = Chem.MolFromSmiles("CCCCC(=O)O")
+        root = Node(fragment=mol, parent=None, depth=0, provenance="target")
+
+        agent = DORAnetMCTS(
+            root=root,
+            target_molecule=mol,
+            total_iterations=1,
+            max_depth=1,
+            use_enzymatic=False,
+            use_synthetic=False,
+        )
+
+        # Add a known sink compound to the biological_sink_compounds set
+        sink_smiles = "CCO"  # ethanol
+        agent.biological_sink_compounds.add(sink_smiles)
+
+        # Create a leaf node that IS a sink compound
+        leaf_mol = Chem.MolFromSmiles(sink_smiles)
+        leaf = Node(fragment=leaf_mol, parent=root, depth=1, provenance="enzymatic")
+        leaf.is_sink_compound = True
+        root.children.append(leaf)
+        agent.nodes.append(leaf)
+
+        # Save successful pathways
+        output_file = tmp_path / "test_successful.txt"
+        agent.save_successful_pathways(str(output_file))
+
+        # Read the file and verify the leaf node IS included
+        content = output_file.read_text()
+        assert "CCO" in content or "OCC" in content  # canonical SMILES may vary
+
+    def test_leaf_node_with_pks_terminal_included(self, tmp_path):
+        """Test that leaf nodes with PKS terminal status ARE included in successful pathways."""
+        from DORAnet_agent.mcts import DORAnetMCTS
+        from DORAnet_agent.node import Node
+        from DORAnet_agent.mcts import RetroTideResult
+
+        mol = Chem.MolFromSmiles("CCCCC(=O)O")
+        root = Node(fragment=mol, parent=None, depth=0, provenance="target")
+
+        agent = DORAnetMCTS(
+            root=root,
+            target_molecule=mol,
+            total_iterations=1,
+            max_depth=1,
+            use_enzymatic=False,
+            use_synthetic=False,
+        )
+
+        # Create a leaf node that is a PKS terminal
+        pks_smiles = "CCCC(=O)O"  # butyric acid
+        leaf_mol = Chem.MolFromSmiles(pks_smiles)
+        leaf = Node(fragment=leaf_mol, parent=root, depth=1, provenance="enzymatic")
+        leaf.is_sink_compound = False
+        leaf.is_pks_terminal = True
+        root.children.append(leaf)
+        agent.nodes.append(leaf)
+
+        # Add a successful RetroTide result for this node
+        agent.retrotide_results.append(
+            RetroTideResult(
+                doranet_node_id=1,
+                doranet_node_smiles=pks_smiles,
+                doranet_node_depth=1,
+                doranet_node_provenance="enzymatic",
+                retrotide_successful=True,
+            )
+        )
+
+        # Save successful pathways
+        output_file = tmp_path / "test_successful.txt"
+        agent.save_successful_pathways(str(output_file))
+
+        # Read the file and verify the leaf node IS included
+        content = output_file.read_text()
+        assert "CCCC(=O)O" in content or pks_smiles in content
+
+    @pytest.mark.slow
+    def test_pentanoic_acid_integration_all_modalities(self, tmp_path):
+        """
+        Integration test: Run minimal MCTS on pentanoic acid and verify
+        all successful pathways have covered terminal fragments and byproducts.
+
+        This test runs a real (but minimal) search to verify end-to-end
+        pathway validation logic.
+        """
+        from pathlib import Path
+        import re
+        from DORAnet_agent.async_expansion_mcts import AsyncExpansionDORAnetMCTS
+        from DORAnet_agent.node import Node
+
+        REPO_ROOT = Path(__file__).resolve().parents[1]
+
+        # Target: pentanoic acid
+        target_smiles = "CCCCC(=O)O"
+        mol = Chem.MolFromSmiles(target_smiles)
+        root = Node(fragment=mol, parent=None, depth=0, provenance="target")
+
+        # Minimal MCTS configuration
+        agent = AsyncExpansionDORAnetMCTS(
+            root=root,
+            target_molecule=mol,
+            total_iterations=20,
+            max_depth=2,
+            max_children_per_expand=10,
+            use_enzymatic=True,
+            use_synthetic=True,
+            use_chem_building_blocksDB=True,
+            use_bio_building_blocksDB=True,
+            use_PKS_building_blocksDB=True,
+            cofactors_files=[
+                str(REPO_ROOT / "data" / "raw" / "all_cofactors.csv"),
+                str(REPO_ROOT / "data" / "raw" / "chemistry_helpers.csv"),
+            ],
+            pks_library_file=str(REPO_ROOT / "data" / "processed" / "expanded_PKS_SMILES_V3.txt"),
+            sink_compounds_files=[
+                str(REPO_ROOT / "data" / "processed" / "biological_building_blocks.txt"),
+                str(REPO_ROOT / "data" / "processed" / "chemical_building_blocks.txt"),
+            ],
+            rollout_policy=NoOpRolloutPolicy(),
+            reward_policy=SparseTerminalRewardPolicy(sink_terminal_reward=1.0),
+            spawn_retrotide=False,  # Disable RetroTide for speed
+            num_workers=2,
+        )
+
+        # Run the search
+        agent.run()
+
+        # Save successful pathways
+        output_file = tmp_path / "successful_pathways.txt"
+        agent.save_successful_pathways(str(output_file))
+
+        # Read and parse the output
+        content = output_file.read_text()
+
+        # === VERIFICATION 1: File format ===
+        assert "SUCCESSFUL PATHWAYS (PKS OR SINK PRODUCTS ONLY)" in content
+        assert "RUN CONFIGURATION" in content
+        assert "PATHWAY TYPE BREAKDOWN" in content
+
+        # Extract total pathways count from header
+        total_match = re.search(r"Total pathways:\s*(\d+)", content)
+        assert total_match is not None, "Could not find 'Total pathways' in output"
+        total_pathways = int(total_match.group(1))
+
+        # Count actual pathway blocks
+        pathway_blocks = re.findall(r"PATHWAY #(\d+):", content)
+        assert len(pathway_blocks) == total_pathways, \
+            f"Header says {total_pathways} pathways but found {len(pathway_blocks)} blocks"
+
+        # If no pathways found, test passes (nothing to validate)
+        if total_pathways == 0:
+            return
+
+        # === VERIFICATION 2: All terminal fragments are covered ===
+        # Build the coverage sets
+        coverage_sets = (
+            agent.biological_sink_compounds |
+            agent.chemical_sink_compounds |
+            agent.pks_library |
+            agent.excluded_fragments
+        )
+
+        # Extract terminal fragments from each pathway
+        terminal_pattern = r"Terminal Fragment:\s*(\S+)"
+        terminals = re.findall(terminal_pattern, content)
+
+        for terminal_smiles in terminals:
+            canonical = Chem.MolToSmiles(Chem.MolFromSmiles(terminal_smiles))
+            assert canonical in coverage_sets, \
+                f"Terminal fragment '{terminal_smiles}' (canonical: {canonical}) is not covered"
+
+        # === VERIFICATION 3: All byproducts are covered ===
+        # Extract products from each step, check non-primary ones
+        # Pattern matches lines like: "- SMILES [branch, sink=chemical]"
+        product_pattern = r"-\s*(\S+)\s*\[(\w+),\s*sink=(\w+)\]"
+        products = re.findall(product_pattern, content)
+
+        for smiles, role, sink_type in products:
+            if role == "primary":
+                continue  # Primary products continue along pathway
+            # Byproducts must be covered
+            if sink_type == "No":
+                # If marked as sink=No, it should NOT be in successful pathways
+                # This would indicate a bug
+                pytest.fail(f"Byproduct '{smiles}' marked as sink=No in successful pathway")
