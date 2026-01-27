@@ -872,6 +872,44 @@ if child.is_sink_compound or child.is_pks_terminal:
 - Increasing iteration budget significantly
 - Using `child_downselection_strategy="most_thermo_feasible"` to prioritize promising branches
 
+### Why are enzymatic reaction labels incorrect (e.g., rule shows water but reaction has none)?
+
+If you notice enzymatic reaction labels that don't match the actual reaction (e.g., a rule labeled as producing water but the reaction products don't include water), this is likely due to **stale fragment cache** containing incorrect labels from a previous bug.
+
+**Root Cause**: An earlier version of the code had an index mismatch bug where reaction labels were looked up by TSV row number, but DORAnet network operator indices are different because some rules are skipped during network construction (rules containing excluded cofactors like `CARBONYL_CoF` and `AMINO_CoF`).
+
+For example:
+- TSV row 2931 contains `rule0124_07` (Products: `WATER;Any`)
+- But network operator index 2931 is actually `rule0126_2` (Products: `Any;Any`)
+
+The old code incorrectly returned `rule0124_07` when the actual rule used was `rule0126_2`.
+
+**The Fix**: This bug was fixed by fetching reaction labels directly from the network operator's metadata:
+
+```python
+# OLD (buggy): Used pre-loaded list indexed by TSV row
+rxn_label = self._enzymatic_labels[op_idx]
+
+# NEW (correct): Uses operator's own metadata
+meta = network.ops.meta(op_idx)
+rxn_label = meta.get('name')
+```
+
+**Solution**: Clear the fragment cache and re-run your MCTS expansion:
+
+```bash
+# Clear the cache
+rm -rf .cache/doranet_fragments/*.pkl
+
+# Or use the cache clearing script
+python scripts/clear_cache.py
+
+# Then re-run your MCTS agent
+python scripts/run_DORAnet_Async.py
+```
+
+This will force fresh DORAnet expansions that use the corrected labeling code.
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
