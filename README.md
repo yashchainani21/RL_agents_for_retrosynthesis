@@ -839,6 +839,39 @@ Target Molecule (SMILES)
 
 See [ARCHITECTURE_AND_ROADMAP.md](ARCHITECTURE_AND_ROADMAP.md) for detailed architecture documentation.
 
+## FAQ
+
+### Why does the search run much slower when `use_chem_building_blocksDB=False`?
+
+This is due to **terminal node density**. Sink compounds (building blocks) act as "stopping conditions" that prevent further tree expansion.
+
+**With chemical building blocks enabled (`use_chem_building_blocksDB=True`):**
+- You have **278,779 chemical building blocks** as potential sink compounds
+- Fragments quickly match these building blocks and become terminal nodes
+- Terminal nodes are **not expanded further**—they're leaf nodes
+- The tree stays shallow and pruned
+
+**With chemical building blocks disabled (`use_chem_building_blocksDB=False`):**
+- You only have **334 biological building blocks** as sink compounds
+- Far fewer fragments match → fewer terminal nodes
+- Non-terminal nodes **continue to be expanded** by DORAnet
+- Each DORAnet expansion is expensive (network generation, reaction enumeration, thermodynamic calculations)
+- The tree grows much deeper and wider before finding terminals
+
+The selection algorithm explicitly skips terminal nodes (see `mcts.py` lines 1464-1467):
+
+```python
+# Skip terminal nodes - they don't need further expansion
+if child.is_sink_compound or child.is_pks_terminal:
+    continue
+```
+
+**Practical implications:** If you want to run without chemical building blocks (for cleaner biosynthetic pathways), consider:
+- Reducing `max_depth` to limit tree growth
+- Reducing `max_children_per_expand` to limit branching factor
+- Increasing iteration budget significantly
+- Using `child_downselection_strategy="most_thermo_feasible"` to prioritize promising branches
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
