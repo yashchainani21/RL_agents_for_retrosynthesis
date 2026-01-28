@@ -71,7 +71,8 @@ RL_agents_for_retrosynthesis/
 │   ├── run_DORAnet_single_agent.py   # Sequential MCTS runner
 │   ├── run_DORAnet_Async.py          # Async MCTS runner (recommended)
 │   ├── run_DORAnet_Async_batch.py    # Batch processing runner
-│   └── run_RetroTide_single_agent.py # Standalone RetroTide runner
+│   ├── run_RetroTide_single_agent.py # Standalone RetroTide runner
+│   └── benchmark_runtimes.py         # Runtime benchmarking script
 ├── tests/
 │   ├── test_async_expansion_mcts.py
 │   ├── test_categorize_pathway.py      # Pathway categorization tests
@@ -531,6 +532,98 @@ python scripts/run_DORAnet_single_agent.py
 # Batch processing
 python scripts/run_DORAnet_Async_batch.py
 ```
+
+### Benchmarking Runtime Performance
+
+The `benchmark_runtimes.py` script provides modular runtime benchmarking for three synthesis modes:
+
+1. **DORAnet Standalone** - Raw library expansion (no MCTS)
+2. **DORAnetMCTS Sequential** - Single-threaded MCTS
+3. **AsyncExpansionDORAnetMCTS** - Multiprocessing MCTS
+
+**Configuration**: Edit toggle variables at the top of the `__main__` block:
+
+```python
+# In scripts/benchmark_runtimes.py
+if __name__ == "__main__":
+    # ========== BENCHMARK MODE SELECTION (enable exactly ONE) ==========
+    RUN_DORANET_STANDALONE = False      # Raw DORAnet library expansion
+    RUN_DORANET_MCTS_SEQUENTIAL = True  # DORAnetMCTS (single-threaded)
+    RUN_DORANET_MCTS_ASYNC = False      # AsyncExpansionDORAnetMCTS
+
+    # ========== EXPANSION MODE TOGGLES ==========
+    use_enzymatic = True
+    use_synthetic = True
+
+    # ========== TARGET MOLECULE ==========
+    target_smiles = "CCCCC(=O)O"
+    molecule_name = "pentanoic_acid"
+
+    # ========== MCTS PARAMETERS ==========
+    total_iterations = 50
+    max_depth = 3
+    max_children_per_expand = None  # None = no limit
+    child_downselection_strategy = None  # None = no filtering
+
+    # ========== ASYNC PARAMETERS ==========
+    num_workers = None  # None = auto-detect CPU count
+```
+
+Then run:
+
+```bash
+python scripts/benchmark_runtimes.py
+```
+
+**Output**: Human-readable `.txt` files saved to `results/benchmarks/` with the naming pattern:
+```
+benchmark_runtime_{mode}_{molecule_name}_{YYYYMMDD_HHMMSS}.txt
+```
+
+**Example output**:
+```
+======================================================================
+RUNTIME BENCHMARK RESULTS
+======================================================================
+
+RUN INFORMATION
+----------------------------------------------------------------------
+Mode:                      sequential
+Molecule:                  pentanoic_acid
+SMILES:                    CCCCC(=O)O
+Timestamp:                 20260128_152109
+Expansion modes:           enzymatic=True, synthetic=True
+
+CONFIGURATION
+----------------------------------------------------------------------
+Total iterations:          50
+Max depth:                 3
+Max children per expand:   None (unlimited)
+Downselection strategy:    None (no filtering)
+
+RUNTIME METRICS
+----------------------------------------------------------------------
+Total runtime:             0.5738 seconds
+
+TREE METRICS (MCTS)
+----------------------------------------------------------------------
+Total nodes:               120
+Terminal nodes:            123
+  - Sink compounds:        61
+  - PKS matches:           62
+Iterations completed:      50
+
+STATUS
+----------------------------------------------------------------------
+Error:                     None
+
+======================================================================
+```
+
+**Notes**:
+- Both MCTS modes have `stop_on_first_pathway=True` enabled for benchmarking time-to-first-solution
+- RetroTide spawning is disabled for faster benchmarks
+- The standalone mode measures raw DORAnet network generation time without MCTS overhead
 
 ## MCTS Parameters
 
