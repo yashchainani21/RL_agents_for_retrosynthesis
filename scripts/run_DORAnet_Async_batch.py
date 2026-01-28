@@ -116,6 +116,7 @@ RDLogger.DisableLog("rdApp.*")
 def main(
     target_smiles: str,
     molecule_name: str,
+    results_subfolder: Optional[str] = None,
     rollout_policy: Optional[RolloutPolicy] = None,
     reward_policy: Optional[RewardPolicy] = None,
     MW_multiple_to_exclude: float = 1.5,
@@ -132,6 +133,8 @@ def main(
     Args:
         target_smiles: SMILES string of the target molecule
         molecule_name: Human-readable name for the molecule (used in filenames)
+        results_subfolder: Optional subfolder within results/ to save outputs.
+            If None, saves directly to results/. Useful for batch runs.
         rollout_policy: Policy controlling what happens after node expansion.
             Options include:
             - NoOpRolloutPolicy(): No additional work (returns 0 reward)
@@ -281,6 +284,9 @@ def main(
     print("\n" + agent.get_tree_summary())
 
     results_dir = REPO_ROOT / "results"
+    if results_subfolder:
+        results_dir = results_dir / results_subfolder
+    results_dir.mkdir(parents=True, exist_ok=True)
     timestamp = __import__("datetime").datetime.now().strftime("%Y%m%d_%H%M%S")
 
     if molecule_name:
@@ -340,6 +346,11 @@ def _parse_args() -> argparse.Namespace:
              "Options: first_N (fastest), hybrid (sink > PKS > smaller MW), "
              "most_thermo_feasible (thermodynamic feasibility). Default: most_thermo_feasible."
     )
+    parser.add_argument(
+        "--results-subfolder",
+        default=None,
+        help="Subfolder within results/ to save outputs. If not specified, saves directly to results/."
+    )
     return parser.parse_args()
 
 
@@ -396,6 +407,7 @@ if __name__ == "__main__":
     main(
         target_smiles=args.smiles,
         molecule_name=args.name,
+        results_subfolder=args.results_subfolder,
         rollout_policy=selected_rollout_policy,
         reward_policy=selected_reward_policy,
         MW_multiple_to_exclude=1.5,
