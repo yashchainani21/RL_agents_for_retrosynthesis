@@ -126,6 +126,7 @@ def main(
     use_chem_building_blocksDB: bool = True,
     use_bio_building_blocksDB: bool = True,
     use_PKS_building_blocksDB: bool = True,
+    stop_on_first_pathway: bool = False,
 ) -> None:
     """
     Run the async DORAnet MCTS agent for batch processing.
@@ -170,6 +171,8 @@ def main(
             compounds. Default True. Set False for ablation studies.
         use_PKS_building_blocksDB: Whether to load PKS library for reward calculation.
             Default True. Set False for ablation studies.
+        stop_on_first_pathway: If True, stop MCTS as soon as a complete pathway is found.
+            Useful for benchmarking time-to-first-solution. Default False.
     """
     # ---- Runner configuration ----
     create_interactive_visualization = False
@@ -275,6 +278,9 @@ def main(
         # ---- Async Configuration ----
         num_workers=num_workers,
         max_inflight_expansions=max_inflight_expansions,
+
+        # ---- Early Stopping Configuration ----
+        stop_on_first_pathway=stop_on_first_pathway,
     )
 
     start_time = time.time()
@@ -351,6 +357,12 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Subfolder within results/ to save outputs. If not specified, saves directly to results/."
     )
+    parser.add_argument(
+        "--stop-on-first-pathway",
+        action="store_true",
+        default=False,
+        help="Stop MCTS as soon as a complete pathway is found. Useful for benchmarking time-to-first-solution."
+    )
     return parser.parse_args()
 
 
@@ -417,4 +429,5 @@ if __name__ == "__main__":
         use_chem_building_blocksDB=True,
         use_bio_building_blocksDB=True,
         use_PKS_building_blocksDB=True,
+        stop_on_first_pathway=args.stop_on_first_pathway,
     )

@@ -161,7 +161,8 @@ def main(target_smiles: str,
          use_synthetic: bool = True,
          use_chem_building_blocksDB: bool = True,
          use_bio_building_blocksDB: bool = True,
-         use_PKS_building_blocksDB: bool = True) -> None:
+         use_PKS_building_blocksDB: bool = True,
+         stop_on_first_pathway: bool = False) -> None:
     """
     Run the async DORAnet MCTS agent with multiprocessing expansion.
 
@@ -208,6 +209,8 @@ def main(target_smiles: str,
             compounds. Default True. Set False for ablation studies.
         use_PKS_building_blocksDB: Whether to load PKS library for reward calculation.
             Default True. Set False for ablation studies.
+        stop_on_first_pathway: If True, stop MCTS as soon as a complete pathway is found.
+            Useful for benchmarking time-to-first-solution. Default False.
     """
     # ---- Runner configuration ----
     create_interactive_visualization = False
@@ -312,6 +315,9 @@ def main(target_smiles: str,
         # ---- Async Configuration ----
         num_workers=num_workers,
         max_inflight_expansions=max_inflight_expansions,
+
+        # ---- Early Stopping Configuration ----
+        stop_on_first_pathway=stop_on_first_pathway,
     )
 
     start_time = time.time()
@@ -428,9 +434,9 @@ if __name__ == "__main__":
     # )
 
     main(
-        target_smiles="CCCCC(=O)O",
+        target_smiles="CCCCC(O)=O",
         molecule_name="pentanoic_acid",
-        total_iterations=100,
+        total_iterations=10,
         max_depth=4,
         max_children_per_expand=30,
         rollout_policy=selected_rollout_policy,
@@ -440,7 +446,8 @@ if __name__ == "__main__":
         child_downselection_strategy="most_thermo_feasible",
         use_enzymatic=True,
         use_synthetic=True,
-        use_chem_building_blocksDB=True,
+        use_chem_building_blocksDB=False,
         use_bio_building_blocksDB=True,
         use_PKS_building_blocksDB=True,
+        stop_on_first_pathway=False,  # Set to True to enable early stopping
     )

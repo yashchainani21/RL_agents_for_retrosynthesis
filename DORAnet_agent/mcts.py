@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import csv
 import math
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -680,8 +681,8 @@ class DORAnetMCTS:
         use_enzymatic: bool = True,
         use_synthetic: bool = True,
         generations_per_expand: int = 1,
-        max_children_per_expand: int = 10,
-        child_downselection_strategy: str = "first_N",
+        max_children_per_expand: Optional[int] = 10,
+        child_downselection_strategy: Optional[str] = "first_N",
         excluded_fragments: Optional[Iterable[str]] = None,
         cofactors_file: Optional[str] = None,
         cofactors_files: Optional[List[str]] = None,
@@ -709,6 +710,8 @@ class DORAnetMCTS:
         # New policy parameters
         rollout_policy: Optional[RolloutPolicy] = None,
         reward_policy: Optional[RewardPolicy] = None,
+        # Early stopping parameter
+        stop_on_first_pathway: bool = False,
     ) -> None:
         """
         Args:
@@ -719,7 +722,8 @@ class DORAnetMCTS:
             use_enzymatic: Whether to use enzymatic retro-transformations.
             use_synthetic: Whether to use synthetic retro-transformations.
             generations_per_expand: DORAnet generations per expansion step.
-            max_children_per_expand: Max fragments to retain per expansion.
+            max_children_per_expand: Max fragments to retain per expansion. Set to None
+                to keep all fragments (only valid with strict_thermo_filtering or None strategy).
             child_downselection_strategy: Strategy for selecting which fragments to keep
                 when more than max_children_per_expand are generated. Options:
                 - "first_N": Keep the first N fragments in DORAnet's order (default, fastest)
@@ -727,6 +731,11 @@ class DORAnetMCTS:
                 - "most_thermo_feasible": Prioritize by thermodynamic feasibility score
                   (DORA-XGB for enzymatic, sigmoid-transformed ΔH for synthetic), with priority
                   bonuses for sink compounds (+1000) and PKS library matches (+500)
+                - "strict_thermo_filtering": Keep only thermodynamically feasible reactions
+                  (enzymatic: DORA-XGB label=1, synthetic: ΔH ≤ 15 kcal/mol). Can be used
+                  with max_children_per_expand=None to keep ALL feasible fragments.
+                - None: No filtering - keep all fragments (requires max_children_per_expand=None
+                  or an integer limit)
             excluded_fragments: SMILES of fragments to ignore (small byproducts).
             cofactors_file: Path to CSV file with cofactor SMILES to exclude (deprecated, use cofactors_files).
             cofactors_files: List of paths to CSV files with cofactor SMILES to exclude.
@@ -772,6 +781,10 @@ class DORAnetMCTS:
                 If None and spawn_retrotide=False, uses NoOpRolloutPolicy (no rollouts).
             reward_policy: Policy for computing rewards for nodes.
                 If None, uses SparseTerminalRewardPolicy with sink_terminal_reward.
+            stop_on_first_pathway: If True, stop MCTS as soon as a complete pathway is found.
+                A complete pathway is one where the terminal node and all byproducts at
+                every step are covered (sink compounds, PKS-verified, or excluded fragments).
+                Default False runs all iterations and extracts pathways at end.
         """
         # Preprocess target molecule: remove stereochemistry, sanitize, canonicalize
         original_smiles = Chem.MolToSmiles(target_molecule) if target_molecule else "None"
@@ -797,10 +810,20 @@ class DORAnetMCTS:
         self.max_children_per_expand = max_children_per_expand
 
         # Child downselection strategy configuration
-        valid_downselection_strategies = ["first_N", "hybrid", "most_thermo_feasible"]
+        valid_downselection_strategies = ["first_N", "hybrid", "most_thermo_feasible", "strict_thermo_filtering", None]
         if child_downselection_strategy not in valid_downselection_strategies:
             raise ValueError(f"Invalid child_downselection_strategy '{child_downselection_strategy}'. "
                            f"Must be one of: {valid_downselection_strategies}")
+
+        # Validate max_children_per_expand=None combinations
+        if max_children_per_expand is None:
+            if child_downselection_strategy not in ["strict_thermo_filtering", None]:
+                raise ValueError(
+                    f"max_children_per_expand=None is only valid with "
+                    f"child_downselection_strategy='strict_thermo_filtering' or None. "
+                    f"Got: '{child_downselection_strategy}'"
+                )
+
         self.child_downselection_strategy = child_downselection_strategy
 
         self.spawn_retrotide = spawn_retrotide and RETROTIDE_AVAILABLE
@@ -837,6 +860,12 @@ class DORAnetMCTS:
             print(f"[DORAnet] Child downselection: hybrid (sink > PKS > smaller MW)")
         elif self.child_downselection_strategy == "most_thermo_feasible":
             print(f"[DORAnet] Child downselection: most_thermo_feasible (sink > PKS > thermodynamic feasibility)")
+        elif self.child_downselection_strategy == "strict_thermo_filtering":
+            limit_str = f"max {self.max_children_per_expand}" if self.max_children_per_expand is not None else "unlimited"
+            print(f"[DORAnet] Child downselection: strict_thermo_filtering (only feasible reactions, {limit_str})")
+        elif self.child_downselection_strategy is None:
+            limit_str = f"max {self.max_children_per_expand}" if self.max_children_per_expand is not None else "unlimited"
+            print(f"[DORAnet] Child downselection: None (no filtering, {limit_str})")
         else:
             print(f"[DORAnet] Child downselection: first_N (DORAnet order)")
 
@@ -861,6 +890,14 @@ class DORAnetMCTS:
 
         # Track all RetroTide runs with full traceability
         self.retrotide_results: List[RetroTideResult] = []
+
+        # Early stopping configuration and tracking
+        self.stop_on_first_pathway = stop_on_first_pathway
+        self.first_pathway_found: bool = False
+        self.first_pathway_iteration: Optional[int] = None
+        self.first_pathway_time: Optional[float] = None
+        self.first_pathway_node: Optional[Node] = None
+        self._run_start_time: Optional[float] = None
 
         # Build excluded fragments set from default small molecules
         excluded_iterable = (
@@ -1142,10 +1179,12 @@ class DORAnetMCTS:
         helpers_hash = hashlib.md5(
             "\n".join(sorted(self.chemistry_helpers)).encode()
         ).hexdigest()[:12]
+        max_children_str = str(self.max_children_per_expand) if self.max_children_per_expand is not None else "none"
+        strategy_str = self.child_downselection_strategy if self.child_downselection_strategy is not None else "none"
         cache_key = hashlib.md5(
             f"{starter_smiles}|{mode}|gen={self.generations_per_expand}"
-            f"|max_children={self.max_children_per_expand}"
-            f"|strategy={self.child_downselection_strategy}"
+            f"|max_children={max_children_str}"
+            f"|strategy={strategy_str}"
             f"|excluded={excluded_hash}|helpers={helpers_hash}".encode()
         ).hexdigest()[:16]
         cache_file = self.fragment_cache_dir / f"{cache_key}.pkl"
@@ -1297,19 +1336,25 @@ class DORAnetMCTS:
                 products_smiles=rxn_info.get('products', []),
             )
 
-            # Compute feasibility scores for most_thermo_feasible strategy
-            if self.child_downselection_strategy == "most_thermo_feasible":
+            # Compute feasibility scores for strategies that need them
+            if self.child_downselection_strategy in ["most_thermo_feasible", "strict_thermo_filtering"]:
                 frag_info = self._compute_fragment_feasibility_score(frag_info, mode)
 
             fragments.append(frag_info)
 
             # For first_N strategy, stop early once we have enough fragments
             if self.child_downselection_strategy == "first_N":
-                if len(fragments) >= self.max_children_per_expand:
+                if self.max_children_per_expand is not None and len(fragments) >= self.max_children_per_expand:
                     break
 
-        # Apply downselection strategy if we have more fragments than the limit
-        if len(fragments) > self.max_children_per_expand:
+        # Apply downselection strategy if needed:
+        # - Count limit exceeded, OR
+        # - Using strict_thermo_filtering (needs to filter by feasibility)
+        needs_downselection = (
+            (self.max_children_per_expand is not None and len(fragments) > self.max_children_per_expand) or
+            self.child_downselection_strategy == "strict_thermo_filtering"
+        )
+        if needs_downselection:
             fragments = self._downselect_fragments(fragments)
 
         # Cache filtered fragments for future reuse.
@@ -1351,6 +1396,9 @@ class DORAnetMCTS:
         - "hybrid": Score by sink compounds, PKS library matches, and MW.
         - "most_thermo_feasible": Score by thermodynamic feasibility with priority
           bonuses for known terminals.
+        - "strict_thermo_filtering": Keep only thermodynamically feasible reactions
+          (enzymatic: DORA-XGB label=1, synthetic: ΔH ≤ 15 kcal/mol).
+        - None: No filtering - return all fragments (with optional count limit).
 
         For "hybrid" strategy, fragments are scored and sorted by priority:
         1. Sink compounds (highest priority) - commercially available building blocks
@@ -1371,11 +1419,13 @@ class DORAnetMCTS:
             fragments: List of all valid fragments from DORAnet expansion.
 
         Returns:
-            List of top-scoring fragments, limited to max_children_per_expand.
+            List of top-scoring fragments, limited to max_children_per_expand (if set).
         """
         if self.child_downselection_strategy == "first_N":
             # Simple truncation (shouldn't reach here, but just in case)
-            return fragments[:self.max_children_per_expand]
+            if self.max_children_per_expand is not None:
+                return fragments[:self.max_children_per_expand]
+            return fragments
 
         elif self.child_downselection_strategy == "hybrid":
             # Score each fragment based on priority criteria
@@ -1407,8 +1457,10 @@ class DORAnetMCTS:
             # Sort by score descending (higher score = higher priority)
             scored_fragments.sort(key=lambda x: (x[0], x[1]), reverse=True)
 
-            # Return top N fragments
-            return [frag for _, _, frag in scored_fragments[:self.max_children_per_expand]]
+            # Return top N fragments (or all if no limit)
+            if self.max_children_per_expand is not None:
+                return [frag for _, _, frag in scored_fragments[:self.max_children_per_expand]]
+            return [frag for _, _, frag in scored_fragments]
 
         elif self.child_downselection_strategy == "most_thermo_feasible":
             # Score fragments by thermodynamic feasibility with priority bonuses
@@ -1433,12 +1485,60 @@ class DORAnetMCTS:
             # Sort by score descending (higher score = higher priority)
             scored_fragments.sort(key=lambda x: (x[0], x[1]), reverse=True)
 
-            # Return top N fragments
-            return [frag for _, _, frag in scored_fragments[:self.max_children_per_expand]]
+            # Return top N fragments (or all if no limit)
+            if self.max_children_per_expand is not None:
+                return [frag for _, _, frag in scored_fragments[:self.max_children_per_expand]]
+            return [frag for _, _, frag in scored_fragments]
+
+        elif self.child_downselection_strategy == "strict_thermo_filtering":
+            # Filter to only thermodynamically feasible reactions
+            feasible_fragments = []
+            for frag in fragments:
+                if self._is_thermodynamically_feasible(frag):
+                    feasible_fragments.append(frag)
+
+            # Apply count limit if specified
+            if self.max_children_per_expand is not None:
+                return feasible_fragments[:self.max_children_per_expand]
+            return feasible_fragments
+
+        elif self.child_downselection_strategy is None:
+            # No filtering - return all fragments (with optional count limit)
+            if self.max_children_per_expand is not None:
+                return fragments[:self.max_children_per_expand]
+            return fragments
 
         else:
-            # Unknown strategy, fall back to first_N
-            return fragments[:self.max_children_per_expand]
+            # Unknown strategy, fall back to first_N behavior
+            if self.max_children_per_expand is not None:
+                return fragments[:self.max_children_per_expand]
+            return fragments
+
+    def _is_thermodynamically_feasible(self, fragment_info: "DORAnetMCTS.FragmentInfo") -> bool:
+        """Check if reaction is thermodynamically feasible.
+
+        For enzymatic: DORA-XGB label must be 1
+        For synthetic: ΔH must be ≤ 15 kcal/mol
+
+        Returns False if scoring failed (None values).
+
+        Args:
+            fragment_info: FragmentInfo with pre-computed feasibility scores.
+
+        Returns:
+            True if the reaction is predicted feasible, False otherwise.
+        """
+        provenance = fragment_info.provenance
+
+        if provenance == "enzymatic":
+            label = fragment_info.dora_xgb_label
+            return label == 1 if label is not None else False
+
+        elif provenance == "synthetic":
+            delta_h = fragment_info.enthalpy_of_reaction
+            return delta_h <= 15.0 if delta_h is not None else False
+
+        return False  # Unknown provenance
 
     def select(self, node: Node) -> Optional[Node]:
         """
@@ -1790,12 +1890,17 @@ class DORAnetMCTS:
         """
         print(f"[DORAnet] Starting MCTS with {self.total_iterations} iterations, "
               f"max_depth={self.max_depth}")
+        if self.stop_on_first_pathway:
+            print(f"[DORAnet] Early stopping enabled: will stop on first complete pathway")
 
         # Build context for policies
         context = self._build_rollout_context()
 
         # Track current iteration for visualization
         self.current_iteration = 0
+
+        # Track start time for early stopping metrics
+        self._run_start_time = time.time()
 
         for iteration in range(self.total_iterations):
             self.current_iteration = iteration
@@ -1884,6 +1989,15 @@ class DORAnetMCTS:
 
                     self.backpropagate(child, reward)
 
+                    # Check for early stopping on terminal nodes
+                    if self.stop_on_first_pathway and (child.is_sink_compound or child.is_pks_terminal):
+                        if self._check_and_record_first_pathway(child):
+                            break  # Exit child loop
+
+                # Check if we should stop after processing children
+                if self.stop_on_first_pathway and self.first_pathway_found:
+                    break  # Exit main iteration loop
+
                 # Log iteration progress
                 log_parts = [
                     f"[DORAnet] Iteration {iteration}: expanded node {leaf.node_id} (depth={leaf.depth})",
@@ -1899,6 +2013,10 @@ class DORAnetMCTS:
                 reward = self.calculate_reward(leaf)
                 self.backpropagate(leaf, reward)
 
+            # Check for early stopping after iteration
+            if self.stop_on_first_pathway and self.first_pathway_found:
+                break  # Exit main iteration loop
+
             # Generate iteration visualization if enabled
             if self.enable_iteration_visualizations:
                 if (iteration + 1) % self.iteration_viz_interval == 0:
@@ -1910,6 +2028,12 @@ class DORAnetMCTS:
         print(f"[DORAnet] MCTS complete. Total nodes: {len(self.nodes)}, "
               f"PKS terminals: {pks_terminal_count}, Sink compounds: {sink_count}, "
               f"RetroTide results: {len(self.retrotide_results)}")
+
+        # Print early stopping summary if applicable
+        if self.first_pathway_found:
+            print(f"[DORAnet] Early stopping: First pathway found at iteration {self.first_pathway_iteration}")
+            if self.first_pathway_time is not None:
+                print(f"[DORAnet] Time to first pathway: {self.first_pathway_time:.2f}s")
 
         # Log SMILES canonicalization cache statistics
         cache_info = _canonicalize_smiles.cache_info()
@@ -2022,6 +2146,107 @@ class DORAnetMCTS:
             pathway.append(current)
             current = current.parent
         return list(reversed(pathway))
+
+    def _is_complete_pathway(self, node: Node) -> bool:
+        """
+        Check if a pathway from root to node is complete (all products covered).
+
+        A pathway is complete when:
+        1. The terminal node itself is covered (sink compound, PKS-verified, or excluded fragment)
+        2. All byproducts along the pathway are covered
+
+        This extracts the completeness logic from save_successful_pathways() for
+        use in early stopping checks.
+
+        Args:
+            node: The terminal node to check.
+
+        Returns:
+            True if the pathway is complete, False otherwise.
+        """
+        # Build set of PKS-verified SMILES from current retrotide results
+        pks_success_smiles: Set[str] = set()
+        for r in self.retrotide_results:
+            if r.retrotide_successful:
+                smi = _canonicalize_smiles(r.doranet_node_smiles or "")
+                if smi:
+                    pks_success_smiles.add(smi)
+
+        def is_product_covered(smiles: str) -> bool:
+            """Check if a product is 'covered' (available as a building block)."""
+            # Check if it's a sink compound
+            if self._get_sink_compound_type(smiles):
+                return True
+
+            canonical = _canonicalize_smiles(smiles)
+            if canonical is None:
+                return False
+
+            # Check if it's a PKS-synthesizable molecule
+            if canonical in pks_success_smiles:
+                return True
+
+            # Check if it's an excluded fragment (common reagent/byproduct)
+            if canonical in self.excluded_fragments:
+                return True
+
+            return False
+
+        # Check that the terminal node itself is covered
+        if not is_product_covered(node.smiles):
+            return False
+
+        # Check all byproducts along the pathway
+        pathway = self.get_pathway_to_node(node)
+        for step_node in pathway[1:]:
+            primary_smiles = _canonicalize_smiles(step_node.smiles or "")
+
+            for prod in step_node.products_smiles or []:
+                prod_canonical = _canonicalize_smiles(prod)
+
+                # Skip the primary product - it continues along the pathway
+                if prod_canonical == primary_smiles:
+                    continue
+
+                # Check if this byproduct is covered
+                if not is_product_covered(prod):
+                    return False
+
+        return True
+
+    def _check_and_record_first_pathway(self, node: Node) -> bool:
+        """
+        Check if a complete pathway has been found and record it if so.
+
+        This method is called after creating terminal nodes when stop_on_first_pathway
+        is enabled. It only records the first complete pathway found.
+
+        Args:
+            node: The terminal node to check.
+
+        Returns:
+            True if this is the first complete pathway, False otherwise.
+        """
+        # Already found a pathway - nothing to do
+        if self.first_pathway_found:
+            return False
+
+        # Check if this node completes a pathway
+        if not self._is_complete_pathway(node):
+            return False
+
+        # Record the first pathway
+        self.first_pathway_found = True
+        self.first_pathway_iteration = self.current_iteration
+        self.first_pathway_time = time.time() - self._run_start_time if self._run_start_time else None
+        self.first_pathway_node = node
+
+        print(f"[DORAnet] First complete pathway found at iteration {self.current_iteration}")
+        if self.first_pathway_time is not None:
+            print(f"[DORAnet] Time to first pathway: {self.first_pathway_time:.2f}s")
+        print(f"[DORAnet] Terminal node: {node.smiles} (depth={node.depth})")
+
+        return True
 
     def format_pathway(self, node: Node) -> str:
         """

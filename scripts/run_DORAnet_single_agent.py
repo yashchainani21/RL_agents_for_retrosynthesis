@@ -138,7 +138,8 @@ def main(target_smiles: str,
          use_synthetic: bool = True,
          use_chem_building_blocksDB: bool = True,
          use_bio_building_blocksDB: bool = True,
-         use_PKS_building_blocksDB: bool = True) -> None:
+         use_PKS_building_blocksDB: bool = True,
+         stop_on_first_pathway: bool = False) -> None:
     """
     Run the DORAnet MCTS agent.
 
@@ -185,6 +186,8 @@ def main(target_smiles: str,
             compounds. Default True. Set False for ablation studies.
         use_PKS_building_blocksDB: Whether to load PKS library for reward calculation.
             Default True. Set False for ablation studies.
+        stop_on_first_pathway: If True, stop MCTS as soon as a complete pathway is found.
+            Useful for benchmarking time-to-first-solution. Default False.
     """
     create_interactive_visualization = False
     enable_iteration_viz = False
@@ -286,6 +289,9 @@ def main(target_smiles: str,
         iteration_viz_interval=iteration_interval,   # how often to generate iteration visualizations
         auto_open_iteration_viz=auto_open_iteration_viz,  # auto-open iteration visualizations in browser
         visualization_output_dir=str(REPO_ROOT / "results"),
+
+        # ---- Early Stopping Configuration ----
+        stop_on_first_pathway=stop_on_first_pathway,
     )
 
     print("[Runner] Using sequential DORAnetMCTS")
@@ -487,4 +493,5 @@ if __name__ == "__main__":
         use_chem_building_blocksDB=True,
         use_bio_building_blocksDB=True,
         use_PKS_building_blocksDB=True,
+        stop_on_first_pathway=False,  # Set to True to enable early stopping
     )

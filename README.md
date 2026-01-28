@@ -550,6 +550,7 @@ python scripts/run_DORAnet_Async_batch.py
 | `child_downselection_strategy` | str | "first_N" | "first_N", "hybrid", or "most_thermo_feasible" |
 | `MW_multiple_to_exclude` | float | 1.5 | Filter fragments > target_MW × this |
 | `num_workers` | int | None | Worker processes (None = auto) |
+| `stop_on_first_pathway` | bool | False | Stop MCTS when first complete pathway is found |
 
 ### Selection Policies
 
@@ -583,6 +584,40 @@ agent = AsyncExpansionDORAnetMCTS(
     max_children_per_expand=50,
     # ... other parameters
 )
+```
+
+### Early Stopping
+
+The `stop_on_first_pathway` parameter enables early termination when the first complete pathway is found. This is useful for benchmarking time-to-first-solution or when you only need one valid pathway.
+
+```python
+agent = AsyncExpansionDORAnetMCTS(
+    root=root,
+    target_molecule=target_mol,
+    stop_on_first_pathway=True,  # Stop when first pathway found
+    # ... other parameters
+)
+
+agent.run()
+
+# After run, check early stopping results
+if agent.first_pathway_found:
+    print(f"First pathway found at iteration {agent.first_pathway_iteration}")
+    print(f"Time to first pathway: {agent.first_pathway_time:.2f}s")
+    print(f"Terminal node: {agent.first_pathway_node.smiles}")
+```
+
+A **complete pathway** is one where:
+1. The terminal node is covered (sink compound, PKS-verified, or excluded fragment)
+2. All byproducts along the pathway are also covered
+
+The batch runner script supports this via CLI:
+
+```bash
+python scripts/run_DORAnet_Async_batch.py \
+    --name kavain \
+    --smiles "COC1=CC(OC(C=CC2=CC=CC=C2)C1)=O" \
+    --stop-on-first-pathway
 ```
 
 ## Building Block Libraries

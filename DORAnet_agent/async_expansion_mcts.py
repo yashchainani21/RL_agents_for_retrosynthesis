@@ -63,10 +63,10 @@ def _expand_worker(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     if mol is None:
         return []
 
-    # Lazy init scorers for most_thermo_feasible strategy
+    # Lazy init scorers for strategies that need feasibility scoring
     dora_model = None
     pathermo_Hf = None
-    if child_downselection_strategy == "most_thermo_feasible":
+    if child_downselection_strategy in ["most_thermo_feasible", "strict_thermo_filtering"]:
         # Initialize DORA-XGB for enzymatic reactions
         try:
             from DORA_XGB import DORA_XGB
@@ -96,7 +96,7 @@ def _expand_worker(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
 
         Returns the fragment dict with score fields added.
         """
-        if child_downselection_strategy != "most_thermo_feasible":
+        if child_downselection_strategy not in ["most_thermo_feasible", "strict_thermo_filtering"]:
             return frag
 
         reactants = frag.get("reactants_smiles", [])
@@ -150,13 +150,29 @@ def _expand_worker(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
 
         return frag
 
+    def _is_thermo_feasible(frag: Dict[str, Any]) -> bool:
+        """Check if reaction is thermodynamically feasible."""
+        provenance = frag.get("provenance")
+        if provenance == "enzymatic":
+            label = frag.get("dora_xgb_label")
+            return label == 1 if label is not None else False
+        elif provenance == "synthetic":
+            delta_h = frag.get("enthalpy_of_reaction")
+            return delta_h <= 15.0 if delta_h is not None else False
+        return False  # Unknown provenance
+
     def _downselect_fragments(
         fragments: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
-        if len(fragments) <= max_children_per_expand:
-            return fragments
+        # Check if we need to downselect at all
+        if max_children_per_expand is not None and len(fragments) <= max_children_per_expand:
+            if child_downselection_strategy != "strict_thermo_filtering":
+                return fragments
+
         if child_downselection_strategy == "first_N":
-            return fragments[:max_children_per_expand]
+            if max_children_per_expand is not None:
+                return fragments[:max_children_per_expand]
+            return fragments
 
         if child_downselection_strategy == "hybrid":
             scored: List[Tuple[float, int, Dict[str, Any]]] = []
@@ -180,7 +196,9 @@ def _expand_worker(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
                 scored.append((score, -idx, frag))
 
             scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
-            return [frag for _, _, frag in scored[:max_children_per_expand]]
+            if max_children_per_expand is not None:
+                return [frag for _, _, frag in scored[:max_children_per_expand]]
+            return [frag for _, _, frag in scored]
 
         elif child_downselection_strategy == "most_thermo_feasible":
             # Score fragments by thermodynamic feasibility with priority bonuses
@@ -203,11 +221,28 @@ def _expand_worker(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
                 scored.append((score, -idx, frag))
 
             scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
-            return [frag for _, _, frag in scored[:max_children_per_expand]]
+            if max_children_per_expand is not None:
+                return [frag for _, _, frag in scored[:max_children_per_expand]]
+            return [frag for _, _, frag in scored]
+
+        elif child_downselection_strategy == "strict_thermo_filtering":
+            # Filter to only thermodynamically feasible reactions
+            feasible_fragments = [frag for frag in fragments if _is_thermo_feasible(frag)]
+            if max_children_per_expand is not None:
+                return feasible_fragments[:max_children_per_expand]
+            return feasible_fragments
+
+        elif child_downselection_strategy is None:
+            # No filtering - return all fragments (with optional count limit)
+            if max_children_per_expand is not None:
+                return fragments[:max_children_per_expand]
+            return fragments
 
         else:
-            # Unknown strategy, fall back to first_N
-            return fragments[:max_children_per_expand]
+            # Unknown strategy, fall back to first_N behavior
+            if max_children_per_expand is not None:
+                return fragments[:max_children_per_expand]
+            return fragments
 
     def _generate_fragments_for_mode(mode: str) -> List[Dict[str, Any]]:
         if mode == "enzymatic":
@@ -225,9 +260,11 @@ def _expand_worker(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
             helpers_hash = hashlib.md5(
                 "\n".join(sorted(chemistry_helpers)).encode()
             ).hexdigest()[:12]
+            max_children_str = str(max_children_per_expand) if max_children_per_expand is not None else "none"
+            strategy_str = child_downselection_strategy if child_downselection_strategy is not None else "none"
             cache_key = hashlib.md5(
                 f"{starter_smiles}|{mode}|gen={generations_per_expand}"
-                f"|max_children={max_children_per_expand}|strategy={child_downselection_strategy}"
+                f"|max_children={max_children_str}|strategy={strategy_str}"
                 f"|excluded={excluded_hash}|helpers={helpers_hash}|target_mw={target_mw:.3f}".encode()
             ).hexdigest()[:16]
             cache_dir = Path(fragment_cache_dir)
@@ -343,7 +380,7 @@ def _expand_worker(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
             fragments.append(frag)
 
             if child_downselection_strategy == "first_N":
-                if len(fragments) >= max_children_per_expand:
+                if max_children_per_expand is not None and len(fragments) >= max_children_per_expand:
                     break
 
         fragments = _downselect_fragments(fragments)
@@ -629,6 +666,10 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
 
             self.backpropagate(child, reward)
 
+            # Check for early stopping on terminal nodes
+            if self.stop_on_first_pathway and (child.is_sink_compound or child.is_pks_terminal):
+                self._check_and_record_first_pathway(child)
+
     def _drain_completed(self, block: bool) -> None:
         if not self._pending:
             return
@@ -664,8 +705,13 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
         print(f"[AsyncExpansion] Starting async MCTS with {self.num_workers} workers, "
               f"{self.total_iterations} iterations, max_inflight={self.max_inflight_expansions}")
         print(f"[AsyncExpansion] max_depth={self.max_depth}")
+        if self.stop_on_first_pathway:
+            print(f"[AsyncExpansion] Early stopping enabled: will stop on first complete pathway")
 
         self.current_iteration = 0
+
+        # Track start time for early stopping metrics
+        self._run_start_time = __import__('time').time()
 
         with ProcessPoolExecutor(max_workers=self.num_workers) as executor:
             for iteration in range(self.total_iterations):
@@ -674,9 +720,23 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
                 # Drain completed expansions without blocking.
                 self._drain_completed(block=False)
 
+                # Check for early stopping after draining
+                if self.stop_on_first_pathway and self.first_pathway_found:
+                    # Drain remaining expansions before exiting
+                    while self._pending:
+                        self._drain_completed(block=True)
+                    break
+
                 # If inflight is full, wait for one expansion to finish.
                 if len(self._pending) >= self.max_inflight_expansions:
                     self._drain_completed(block=True)
+
+                # Check for early stopping after draining
+                if self.stop_on_first_pathway and self.first_pathway_found:
+                    # Drain remaining expansions before exiting
+                    while self._pending:
+                        self._drain_completed(block=True)
+                    break
 
                 leaf = self.select(self.root)
                 if leaf is None:
@@ -712,3 +772,9 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
         print(f"[AsyncExpansion] MCTS complete. Total nodes: {len(self.nodes)}, "
               f"PKS terminals: {pks_terminal_count}, Sink compounds: {sink_count}, "
               f"RetroTide results: {len(self.retrotide_results)}")
+
+        # Print early stopping summary if applicable
+        if self.first_pathway_found:
+            print(f"[AsyncExpansion] Early stopping: First pathway found at iteration {self.first_pathway_iteration}")
+            if self.first_pathway_time is not None:
+                print(f"[AsyncExpansion] Time to first pathway: {self.first_pathway_time:.2f}s")
