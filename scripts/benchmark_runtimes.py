@@ -112,6 +112,7 @@ class RuntimeBenchmarkResult:
 
     # MCTS metrics (only populated for sequential/async modes)
     total_nodes: Optional[int] = None
+    unique_smiles: Optional[int] = None  # Number of unique molecules explored
     iterations_completed: Optional[int] = None
     terminal_nodes: Optional[int] = None
     sink_compounds: Optional[int] = None
@@ -281,6 +282,13 @@ def run_doranet_mcts_sequential(
         pks_matches = agent.get_pks_matches()
         terminal_nodes = len(sink_compounds) + len(pks_matches)
 
+        # Count unique SMILES across all nodes
+        unique_smiles_set = set()
+        for node in agent.nodes:
+            if node.fragment is not None:
+                smiles = Chem.MolToSmiles(node.fragment, canonical=True)
+                unique_smiles_set.add(smiles)
+
         return RuntimeBenchmarkResult(
             molecule_name=molecule_name,
             molecule_smiles=target_smiles,
@@ -290,6 +298,7 @@ def run_doranet_mcts_sequential(
             use_synthetic=config.use_synthetic,
             runtime_seconds=runtime,
             total_nodes=len(agent.nodes),
+            unique_smiles=len(unique_smiles_set),
             iterations_completed=config.total_iterations,
             terminal_nodes=terminal_nodes,
             sink_compounds=len(sink_compounds),
@@ -369,6 +378,13 @@ def run_doranet_mcts_async(
         pks_matches = agent.get_pks_matches()
         terminal_nodes = len(sink_compounds) + len(pks_matches)
 
+        # Count unique SMILES across all nodes
+        unique_smiles_set = set()
+        for node in agent.nodes:
+            if node.fragment is not None:
+                smiles = Chem.MolToSmiles(node.fragment, canonical=True)
+                unique_smiles_set.add(smiles)
+
         return RuntimeBenchmarkResult(
             molecule_name=molecule_name,
             molecule_smiles=target_smiles,
@@ -378,6 +394,7 @@ def run_doranet_mcts_async(
             use_synthetic=config.use_synthetic,
             runtime_seconds=runtime,
             total_nodes=len(agent.nodes),
+            unique_smiles=len(unique_smiles_set),
             iterations_completed=config.total_iterations,
             terminal_nodes=terminal_nodes,
             sink_compounds=len(sink_compounds),
@@ -468,6 +485,7 @@ def save_results_txt(
             "TREE METRICS (MCTS)",
             "-" * 70,
             f"Total nodes:               {result.total_nodes}",
+            f"Unique SMILES:             {result.unique_smiles}",
             f"Terminal nodes:            {result.terminal_nodes}",
             f"  - Sink compounds:        {result.sink_compounds}",
             f"  - PKS matches:           {result.pks_matches}",
@@ -504,8 +522,8 @@ if __name__ == "__main__":
     use_synthetic = True
 
     # ========== TARGET MOLECULE ==========
-    target_smiles = "CCCCC(=O)O"
-    molecule_name = "pentanoic_acid"
+    target_smiles = "COC1=CC(OC(C=CC2=CC=C(OC)C=C2)C1)=O"
+    molecule_name = "5_6_dihydroyangonin"
 
     # ========== MCTS PARAMETERS ==========
     total_iterations = 50
