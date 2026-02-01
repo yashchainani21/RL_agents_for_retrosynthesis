@@ -15,6 +15,7 @@ and no rollouts for non-terminal nodes. To enable RetroTide rollouts, either:
 from __future__ import annotations
 
 import csv
+import heapq
 import math
 import time
 import uuid
@@ -712,6 +713,8 @@ class DORAnetMCTS:
         reward_policy: Optional[RewardPolicy] = None,
         # Early stopping parameter
         stop_on_first_pathway: bool = False,
+        # Frontier fallback for deep exploration
+        enable_frontier_fallback: bool = True,
     ) -> None:
         """
         Args:
@@ -785,6 +788,11 @@ class DORAnetMCTS:
                 A complete pathway is one where the terminal node and all byproducts at
                 every step are covered (sink compounds, PKS-verified, or excluded fragments).
                 Default False runs all iterations and extracts pathways at end.
+            enable_frontier_fallback: If True, maintain a frontier of unexpanded non-terminal
+                nodes and fall back to selecting from this frontier when standard tree traversal
+                returns None (i.e., when all children at some level are terminal). This enables
+                deeper exploration by ensuring iterations are not wasted on dead-end branches.
+                Default True for better deep exploration.
         """
         # Preprocess target molecule: remove stereochemistry, sanitize, canonicalize
         original_smiles = Chem.MolToSmiles(target_molecule) if target_molecule else "None"
@@ -898,6 +906,14 @@ class DORAnetMCTS:
         self.first_pathway_time: Optional[float] = None
         self.first_pathway_node: Optional[Node] = None
         self._run_start_time: Optional[float] = None
+
+        # Frontier fallback for deep exploration
+        # Heap of (-depth, node_id, node) tuples for unexpanded non-terminal nodes
+        # Negative depth gives max-heap behavior (deepest nodes first)
+        self.enable_frontier_fallback = enable_frontier_fallback
+        self._unexpanded_frontier: List[Tuple[int, int, Node]] = []
+        self._frontier_node_counter = 0  # Tiebreaker for deterministic ordering
+        self._frontier_selections = 0  # Track how many times frontier fallback was used
 
         # Build excluded fragments set from default small molecules
         excluded_iterable = (
@@ -1237,6 +1253,7 @@ class DORAnetMCTS:
             return []
 
         # Build a map from product SMILES to reaction info
+
         mol_to_reaction: Dict[str, Dict] = {}
 
         # Convert network mols and ops to lists for indexing
@@ -1595,15 +1612,84 @@ class DORAnetMCTS:
                     best_node = child
 
             if best_node is None:
+                # All children at this level are terminal - try frontier fallback
+                if self.enable_frontier_fallback:
+                    return self._select_from_frontier()
                 return None
 
             node = best_node
 
         # Don't return terminal nodes as they can't be expanded
         if node.is_sink_compound or node.is_pks_terminal:
+            if self.enable_frontier_fallback:
+                return self._select_from_frontier()
             return None
 
         return node
+
+    def _select_from_frontier(self) -> Optional[Node]:
+        """
+        Select the deepest unexpanded non-terminal node from the frontier.
+
+        The frontier is a max-heap (using negative depth) of nodes that have been
+        created but not yet expanded. This method is called as a fallback when
+        standard tree traversal reaches an all-terminal branch.
+
+        Returns:
+            The deepest valid unexpanded node, or None if frontier is empty.
+        """
+        while self._unexpanded_frontier:
+            neg_depth, _, node = heapq.heappop(self._unexpanded_frontier)
+
+            # Skip nodes that have been expanded since being added to frontier
+            if node.expanded:
+                continue
+
+            # Skip terminal nodes (may have been marked terminal after being added)
+            if node.is_sink_compound or node.is_pks_terminal:
+                continue
+
+            # Skip nodes at or beyond max depth
+            if node.depth >= self.max_depth:
+                continue
+
+            # Valid frontier selection - increment counter
+            self._frontier_selections += 1
+            return node
+
+        return None
+
+    def _add_to_frontier(self, node: Node) -> None:
+        """
+        Add a node to the unexpanded frontier heap.
+
+        Only adds non-terminal, unexpanded nodes below max_depth.
+
+        Args:
+            node: The node to potentially add to the frontier.
+        """
+        if not self.enable_frontier_fallback:
+            return
+
+        # Don't add terminal nodes
+        if node.is_sink_compound or node.is_pks_terminal:
+            return
+
+        # Don't add nodes at or beyond max depth
+        if node.depth >= self.max_depth:
+            return
+
+        # Don't add already expanded nodes
+        if node.expanded:
+            return
+
+        # Use negative depth for max-heap behavior (deepest first)
+        # Include counter as tiebreaker for deterministic ordering
+        heapq.heappush(
+            self._unexpanded_frontier,
+            (-node.depth, self._frontier_node_counter, node)
+        )
+        self._frontier_node_counter += 1
 
     def _is_in_pks_library(self, smiles: str) -> bool:
         """Check if a SMILES string is in the PKS library."""
@@ -1772,6 +1858,9 @@ class DORAnetMCTS:
                 type_label = "BIOLOGICAL" if sink_type == "biological" else "CHEMICAL"
                 print(f"[DORAnet] Fragment {frag_info.smiles} is a {type_label} BUILDING BLOCK")
                 # Note: Rollout and reward are handled in run() for consistency
+            else:
+                # Non-terminal child: add to frontier for potential future selection
+                self._add_to_frontier(child)
 
         node.expanded = True
         return new_children
@@ -2034,6 +2123,11 @@ class DORAnetMCTS:
             print(f"[DORAnet] Early stopping: First pathway found at iteration {self.first_pathway_iteration}")
             if self.first_pathway_time is not None:
                 print(f"[DORAnet] Time to first pathway: {self.first_pathway_time:.2f}s")
+
+        # Print frontier fallback statistics
+        if self.enable_frontier_fallback and self._frontier_selections > 0:
+            print(f"[DORAnet] Frontier fallback: {self._frontier_selections} selections, "
+                  f"{len(self._unexpanded_frontier)} nodes remaining in frontier")
 
         # Log SMILES canonicalization cache statistics
         cache_info = _canonicalize_smiles.cache_info()

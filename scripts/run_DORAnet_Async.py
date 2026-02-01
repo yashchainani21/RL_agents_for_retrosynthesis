@@ -162,7 +162,10 @@ def main(target_smiles: str,
          use_chem_building_blocksDB: bool = True,
          use_bio_building_blocksDB: bool = True,
          use_PKS_building_blocksDB: bool = True,
-         stop_on_first_pathway: bool = False) -> None:
+         stop_on_first_pathway: bool = False,
+         selection_policy: str = "depth_biased",
+         depth_bonus_coefficient: float = 4.0,
+         enable_frontier_fallback: bool = True) -> None:
     """
     Run the async DORAnet MCTS agent with multiprocessing expansion.
 
@@ -211,6 +214,16 @@ def main(target_smiles: str,
             Default True. Set False for ablation studies.
         stop_on_first_pathway: If True, stop MCTS as soon as a complete pathway is found.
             Useful for benchmarking time-to-first-solution. Default False.
+        selection_policy: Selection policy for MCTS. Options:
+            - "UCB1": Standard UCB1 (breadth-first tendency, explores all nodes at each level)
+            - "depth_biased": Depth-biased UCB1 (depth-first tendency, reaches max_depth faster)
+            Default is "depth_biased".
+        depth_bonus_coefficient: Coefficient for depth bonus in depth_biased selection.
+            Higher values encourage deeper exploration. Default 4.0. Ignored if selection_policy="UCB1".
+        enable_frontier_fallback: If True, maintain a frontier of unexpanded non-terminal
+            nodes and fall back to selecting from this frontier when standard tree traversal
+            returns None (hits an all-terminal branch). This enables deeper exploration by
+            ensuring iterations are not wasted. Default True.
     """
     # ---- Runner configuration ----
     create_interactive_visualization = False
@@ -301,8 +314,8 @@ def main(target_smiles: str,
         
         # ---- Selection & Reward Configuration ----
         sink_terminal_reward=1.0,
-        selection_policy="depth_biased",
-        depth_bonus_coefficient=4.0,
+        selection_policy=selection_policy,
+        depth_bonus_coefficient=depth_bonus_coefficient,
         
         # ---- Visualization Configuration ----
         enable_visualization=False,
@@ -318,6 +331,9 @@ def main(target_smiles: str,
 
         # ---- Early Stopping Configuration ----
         stop_on_first_pathway=stop_on_first_pathway,
+
+        # ---- Frontier Fallback Configuration ----
+        enable_frontier_fallback=enable_frontier_fallback,
     )
 
     start_time = time.time()
@@ -434,11 +450,11 @@ if __name__ == "__main__":
     # )
 
     main(
-        target_smiles="CCCCC(O)=O",
-        molecule_name="pentanoic_acid",
-        total_iterations=10,
-        max_depth=4,
-        max_children_per_expand=30,
+        target_smiles="COC1=CC(OC(C=CC2=CC=C(OC)C=C2)C1)=O",
+        molecule_name="5_6_dihydroyangonin_UCB1",
+        total_iterations=1000,
+        max_depth=6,
+        max_children_per_expand=5,
         rollout_policy=selected_rollout_policy,
         reward_policy=selected_reward_policy,
         results_subfolder=None,
@@ -446,8 +462,10 @@ if __name__ == "__main__":
         child_downselection_strategy="most_thermo_feasible",
         use_enzymatic=True,
         use_synthetic=True,
-        use_chem_building_blocksDB=False,
+        use_chem_building_blocksDB=True,
         use_bio_building_blocksDB=True,
         use_PKS_building_blocksDB=True,
-        stop_on_first_pathway=False,  # Set to True to enable early stopping
+        stop_on_first_pathway=False,
+        selection_policy="UCB1",  # Using standard UCB1 instead of depth_biased
+        enable_frontier_fallback=True,  # Enable frontier fallback for deep exploration
     )

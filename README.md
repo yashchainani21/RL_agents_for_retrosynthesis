@@ -644,6 +644,7 @@ Error:                     None
 | `MW_multiple_to_exclude` | float | 1.5 | Filter fragments > target_MW × this |
 | `num_workers` | int | None | Worker processes (None = auto) |
 | `stop_on_first_pathway` | bool | False | Stop MCTS when first complete pathway is found |
+| `enable_frontier_fallback` | bool | True | Enable frontier-based fallback selection for deep exploration |
 
 ### Selection Policies
 
@@ -712,6 +713,47 @@ python scripts/run_DORAnet_Async_batch.py \
     --smiles "COC1=CC(OC(C=CC2=CC=CC=C2)C1)=O" \
     --stop-on-first-pathway
 ```
+
+### Frontier Fallback Selection
+
+The `enable_frontier_fallback` parameter enables a fallback selection mechanism that prevents wasted iterations when the standard tree traversal reaches dead-end branches (where all children are terminal nodes).
+
+**The Problem:**
+
+Standard MCTS tree traversal can get stuck when it reaches a branch where all children are terminal (sink compounds or PKS-verified). In this case, `select()` returns `None` and the iteration is wasted—no expansion, no backpropagation. This commonly happens with high terminal node density from the 278K+ commercial building blocks.
+
+**The Solution:**
+
+Frontier fallback maintains a max-heap of unexpanded non-terminal nodes, prioritized by depth (deepest first). When standard traversal returns `None`, MCTS falls back to selecting the deepest unexpanded node from this frontier.
+
+```python
+agent = AsyncExpansionDORAnetMCTS(
+    root=root,
+    target_molecule=target_mol,
+    enable_frontier_fallback=True,  # Default: enabled
+    max_depth=6,  # Can now reach deeper levels
+    # ... other parameters
+)
+```
+
+**Benefits:**
+- **More productive iterations**: Iterations that would have been wasted now expand new nodes
+- **Deeper exploration**: MCTS can reach `max_depth` even when early branches become terminal
+- **Better coverage**: Explores alternative branches when primary path hits dead ends
+
+**Statistics:**
+
+After a run, the agent prints frontier usage statistics:
+```
+[DORAnet] Frontier fallback: 523 selections, 147 nodes remaining in frontier
+```
+
+**When to Disable:**
+
+Set `enable_frontier_fallback=False` to preserve the original behavior where MCTS stops when all reachable nodes are terminal. This may be useful for:
+- Benchmarking the original algorithm
+- Comparative studies
+- When you want early termination on exhaustive search
 
 ## Building Block Libraries
 

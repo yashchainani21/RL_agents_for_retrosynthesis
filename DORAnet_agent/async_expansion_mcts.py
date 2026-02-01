@@ -8,6 +8,7 @@ keeping selection, reward, and tree mutation on the main process.
 from __future__ import annotations
 
 import hashlib
+import heapq
 import math
 import os
 import pickle
@@ -491,14 +492,53 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
                     best_node = child
 
             if best_node is None:
+                # All children at this level are terminal or pending - try frontier fallback
+                if self.enable_frontier_fallback:
+                    return self._select_from_frontier()
                 return None
 
             node = best_node
 
         if node.is_sink_compound or node.is_pks_terminal or node.is_expansion_pending:
+            if self.enable_frontier_fallback:
+                return self._select_from_frontier()
             return None
 
         return node
+
+    def _select_from_frontier(self) -> Optional[Node]:
+        """
+        Select the deepest unexpanded non-terminal node from the frontier.
+
+        Override parent method to also skip nodes with pending expansions.
+
+        Returns:
+            The deepest valid unexpanded node, or None if frontier is empty.
+        """
+        while self._unexpanded_frontier:
+            neg_depth, _, node = heapq.heappop(self._unexpanded_frontier)
+
+            # Skip nodes that have been expanded since being added to frontier
+            if node.expanded:
+                continue
+
+            # Skip terminal nodes (may have been marked terminal after being added)
+            if node.is_sink_compound or node.is_pks_terminal:
+                continue
+
+            # Skip nodes with pending expansion (async-specific)
+            if node.is_expansion_pending:
+                continue
+
+            # Skip nodes at or beyond max depth
+            if node.depth >= self.max_depth:
+                continue
+
+            # Valid frontier selection - increment counter
+            self._frontier_selections += 1
+            return node
+
+        return None
 
     def _build_expansion_payload(self, leaf: Node) -> Dict[str, Any]:
         modes: List[str] = []
@@ -616,6 +656,9 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
                 type_label = "BIOLOGICAL" if sink_type == "biological" else "CHEMICAL"
                 print(f"[DORAnet] Fragment {smiles} is a {type_label} BUILDING BLOCK")
                 # Note: reward calculated below via policy
+            else:
+                # Non-terminal child: add to frontier for potential future selection
+                self._add_to_frontier(child)
 
         leaf.expanded = True
         leaf.expanded_at_iteration = iteration
@@ -778,3 +821,8 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
             print(f"[AsyncExpansion] Early stopping: First pathway found at iteration {self.first_pathway_iteration}")
             if self.first_pathway_time is not None:
                 print(f"[AsyncExpansion] Time to first pathway: {self.first_pathway_time:.2f}s")
+
+        # Print frontier fallback statistics
+        if self.enable_frontier_fallback and self._frontier_selections > 0:
+            print(f"[AsyncExpansion] Frontier fallback: {self._frontier_selections} selections, "
+                  f"{len(self._unexpanded_frontier)} nodes remaining in frontier")
