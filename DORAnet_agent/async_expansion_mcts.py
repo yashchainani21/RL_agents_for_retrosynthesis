@@ -384,7 +384,11 @@ def _expand_worker(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
                 if max_children_per_expand is not None and len(fragments) >= max_children_per_expand:
                     break
 
+        original_count = len(fragments)
         fragments = _downselect_fragments(fragments)
+        if len(fragments) < original_count:
+            print(f"[DORAnet] Downselected fragments: {original_count} → {len(fragments)} "
+                  f"(strategy: {child_downselection_strategy})")
         for frag in fragments:
             frag.pop("mw", None)
 

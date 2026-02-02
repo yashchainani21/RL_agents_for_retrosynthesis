@@ -1372,7 +1372,10 @@ class DORAnetMCTS:
             self.child_downselection_strategy == "strict_thermo_filtering"
         )
         if needs_downselection:
+            original_count = len(fragments)
             fragments = self._downselect_fragments(fragments)
+            print(f"[DORAnet] Downselected fragments: {original_count} → {len(fragments)} "
+                  f"(strategy: {self.child_downselection_strategy})")
 
         # Cache filtered fragments for future reuse.
         try:
@@ -2616,7 +2619,8 @@ class DORAnetMCTS:
             f.write(f"Max children per expand: {self.max_children_per_expand}\n")
             f.write(f"Child downselection strategy: {self.child_downselection_strategy}\n")
             f.write(f"Spawn RetroTide: {self.spawn_retrotide}\n")
-            f.write(f"Sink compounds library size: {len(self.sink_compounds)}\n\n")
+            f.write(f"Sink compounds library size: {len(self.sink_compounds)}\n")
+            f.write(f"Enable frontier fallback: {self.enable_frontier_fallback}\n\n")
 
             # DORAnet tree with iteration diagnostics
             f.write("DORANET SEARCH TREE (with iteration diagnostics)\n")
@@ -3051,6 +3055,7 @@ class DORAnetMCTS:
             if self.selection_policy == "depth_biased":
                 f.write(f"Depth bonus coefficient:   {self.depth_bonus_coefficient}\n")
             f.write(f"Child downselection:       {self.child_downselection_strategy}\n")
+            f.write(f"Frontier fallback:         {self.enable_frontier_fallback}\n")
             f.write("\n")
 
             f.write(f"Total pathways: {len(terminal_nodes)}\n\n")
@@ -3310,6 +3315,7 @@ class DORAnetMCTS:
             if self.selection_policy == "depth_biased":
                 f.write(f"Depth bonus coefficient:   {self.depth_bonus_coefficient}\n")
             f.write(f"Child downselection:       {self.child_downselection_strategy}\n")
+            f.write(f"Frontier fallback:         {self.enable_frontier_fallback}\n")
             f.write(f"MW multiple to exclude:    {self.MW_multiple_to_exclude}\n")
             f.write(f"Rollout policy:            {self.rollout_policy.name if self.rollout_policy else 'None'}\n")
             f.write(f"Reward policy:             {self.reward_policy.name if self.reward_policy else 'None'}\n")
