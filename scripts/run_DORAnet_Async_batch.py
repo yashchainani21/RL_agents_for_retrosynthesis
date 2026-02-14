@@ -127,6 +127,7 @@ def main(
     use_bio_building_blocksDB: bool = True,
     use_PKS_building_blocksDB: bool = True,
     stop_on_first_pathway: bool = False,
+    enable_frontier_fallback: bool = True,
 ) -> None:
     """
     Run the async DORAnet MCTS agent for batch processing.
@@ -173,6 +174,10 @@ def main(
             Default True. Set False for ablation studies.
         stop_on_first_pathway: If True, stop MCTS as soon as a complete pathway is found.
             Useful for benchmarking time-to-first-solution. Default False.
+        enable_frontier_fallback: If True, maintain a frontier of unexpanded non-terminal
+            nodes and fall back to selecting from this frontier when standard tree traversal
+            returns None (hits an all-terminal branch). This enables deeper exploration by
+            ensuring iterations are not wasted. Default True.
     """
     # ---- Runner configuration ----
     create_interactive_visualization = False
@@ -232,8 +237,8 @@ def main(
     agent = AsyncExpansionDORAnetMCTS(
         root=root,
         target_molecule=target_molecule,
-        total_iterations=200,
-        max_depth=4,
+        total_iterations=3000,
+        max_depth=6,
         use_enzymatic=use_enzymatic,
         use_synthetic=use_synthetic,
         generations_per_expand=1,
@@ -281,6 +286,9 @@ def main(
 
         # ---- Early Stopping Configuration ----
         stop_on_first_pathway=stop_on_first_pathway,
+
+        # ---- Frontier Fallback Configuration ----
+        enable_frontier_fallback=enable_frontier_fallback,
     )
 
     start_time = time.time()
@@ -363,6 +371,14 @@ def _parse_args() -> argparse.Namespace:
         default=False,
         help="Stop MCTS as soon as a complete pathway is found. Useful for benchmarking time-to-first-solution."
     )
+    parser.add_argument(
+        "--no-frontier-fallback",
+        action="store_true",
+        default=False,
+        help="Disable frontier fallback. By default, frontier fallback is enabled to maintain "
+             "a frontier of unexpanded non-terminal nodes and fall back to selecting from it "
+             "when standard tree traversal hits an all-terminal branch."
+    )
     return parser.parse_args()
 
 
@@ -377,10 +393,10 @@ if __name__ == "__main__":
         failure_reward=0.0,
     )
     # Reward handles terminal rewards + SA score for non-terminals
-    selected_reward_policy = SAScore_and_TerminalRewardPolicy(
-        sink_terminal_reward=1.0,
-        pks_terminal_reward=1.0,
-    )
+    # selected_reward_policy = SAScore_and_TerminalRewardPolicy(
+    #    sink_terminal_reward=1.0,
+    #    pks_terminal_reward=1.0,
+    # )
 
     # Alternative: PKS similarity + RetroTide (uses Tanimoto fingerprint similarity)
     # selected_rollout_policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck()
@@ -430,4 +446,5 @@ if __name__ == "__main__":
         use_bio_building_blocksDB=True,
         use_PKS_building_blocksDB=True,
         stop_on_first_pathway=args.stop_on_first_pathway,
+        enable_frontier_fallback=not args.no_frontier_fallback,
     )
