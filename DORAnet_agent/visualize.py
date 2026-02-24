@@ -38,7 +38,7 @@ def create_tree_graph(agent: "DORAnetMCTS") -> nx.DiGraph:
 
     # Add nodes with attributes
     for node in agent.nodes:
-        is_pks_match = agent.calculate_reward(node) > 0
+        is_pks_match = agent._is_in_pks_library(node.smiles or "")
         avg_value = node.value / node.visits if node.visits > 0 else 0
 
         # Truncate SMILES for display
@@ -343,7 +343,7 @@ def visualize_pks_pathways(
     # Add nodes
     for node in agent.nodes:
         if node.node_id in nodes_in_paths:
-            is_pks_match = agent.calculate_reward(node) > 0
+            is_pks_match = agent._is_in_pks_library(node.smiles or "")
             G.add_node(
                 node.node_id,
                 smiles=node.smiles,
@@ -638,24 +638,29 @@ def create_enhanced_interactive_html(
         smiles = data.get('smiles', '')
         smiles_short = data.get('smiles_short', str(n))
 
-        # Color based on provenance (same for sink and non-sink)
-        # Shape indicates sink compound status
-        if is_pks and not is_sink:
-            color = '#2ecc71'  # Green for PKS match (non-sink)
-        elif prov == 'enzymatic':
-            color = '#3498db'  # Blue for enzymatic
-        elif prov == 'synthetic':
-            color = '#9b59b6'  # Purple for synthetic
+        # Color and shape based on node type (matches manuscript legend)
+        depth = data.get('depth', 0)
+        sink_type = data.get('sink_compound_type', None)
+        is_root = (depth == 0 and prov == 'target')
+        if is_root:
+            color = '#FFD700'  # Gold star for root/target molecule
+            marker = 'star'
+        elif is_sink and sink_type == 'chemical':
+            color = '#4472C4'  # Blue square for chemical building blocks
+            marker = 'square'
+        elif is_sink and sink_type == 'biological':
+            color = '#548235'  # Green square for biological building blocks
+            marker = 'square'
+        elif is_pks:
+            color = '#C55A11'  # Orange square for polyketides (PKS database match)
+            marker = 'square'
         else:
-            color = '#f39c12'  # Orange for target
-
-        # Sink compounds are squares, others are circles
-        marker = 'square' if is_sink else 'circle'
+            color = '#D9D9D9'  # Grey circle for general intermediate compounds
+            marker = 'circle'
 
         visits = data.get('visits', 0)
         value = data.get('value', 0.0)
         avg_value = data.get('avg_value', 0.0)
-        depth = data.get('depth', 0)
 
         # Generate molecule image
         mol_img = _generate_molecule_image_base64(smiles, size=molecule_img_size)
@@ -708,6 +713,9 @@ def create_enhanced_interactive_html(
     edge_reactions = []
     edge_reaction_equations = []
     edge_colors = []
+    edge_dora_xgb = []
+    edge_delta_h = []
+    edge_thermo_scaled = []
 
     for parent_id, child_id in agent.edges:
         if parent_id in pos and child_id in pos:
@@ -731,17 +739,40 @@ def create_enhanced_interactive_html(
                 reaction_info = rxn_label_short
                 reaction_equation_info = rxn_equation_short
 
-                # Edge color based on provenance
+                # Edge color based on reaction type (matches manuscript legend)
                 if child_node.provenance == 'enzymatic':
-                    edge_color = '#3498db'
+                    edge_color = '#548235'  # Green for enzymatic reactions
                 elif child_node.provenance == 'synthetic':
-                    edge_color = '#9b59b6'
+                    edge_color = '#4472C4'  # Blue for chemical/synthetic reactions
                 else:
-                    edge_color = '#95a5a6'
+                    edge_color = '#95a5a6'  # Grey for unknown
+
+                # Thermodynamic/feasibility scores for edge hover tooltip
+                if child_node.provenance == 'enzymatic':
+                    dora_xgb_val = f"{child_node.feasibility_score:.3f}" if child_node.feasibility_score is not None else "N/A"
+                    delta_h_val = "N/A"
+                    thermo_scaled_val = "N/A"
+                elif child_node.provenance == 'synthetic':
+                    dora_xgb_val = "N/A"
+                    if child_node.enthalpy_of_reaction is not None:
+                        dh = child_node.enthalpy_of_reaction
+                        scaled = 1.0 / (1.0 + math.exp(0.2 * (dh - 15.0)))
+                        delta_h_val = f"{dh:.2f} kcal/mol"
+                        thermo_scaled_val = f"{scaled:.3f}"
+                    else:
+                        delta_h_val = "N/A"
+                        thermo_scaled_val = "N/A"
+                else:
+                    dora_xgb_val = "N/A"
+                    delta_h_val = "N/A"
+                    thermo_scaled_val = "N/A"
             else:
                 reaction_info = "No reaction information"
                 reaction_equation_info = "N/A"
                 edge_color = '#95a5a6'
+                dora_xgb_val = "N/A"
+                delta_h_val = "N/A"
+                thermo_scaled_val = "N/A"
 
             edge_x0.append(pos[parent_id][0])
             edge_y0.append(pos[parent_id][1])
@@ -750,6 +781,9 @@ def create_enhanced_interactive_html(
             edge_reactions.append(reaction_info)
             edge_reaction_equations.append(reaction_equation_info)
             edge_colors.append(edge_color)
+            edge_dora_xgb.append(dora_xgb_val)
+            edge_delta_h.append(delta_h_val)
+            edge_thermo_scaled.append(thermo_scaled_val)
 
     # Create edge data source
     edge_source = ColumnDataSource(data=dict(
@@ -760,6 +794,9 @@ def create_enhanced_interactive_html(
         reaction=edge_reactions,
         reaction_equation=edge_reaction_equations,
         color=edge_colors,
+        dora_xgb=edge_dora_xgb,
+        delta_h=edge_delta_h,
+        thermo_scaled=edge_thermo_scaled,
     ))
 
     # Create Bokeh figure
@@ -800,23 +837,39 @@ def create_enhanced_interactive_html(
         renderers=[edge_lines],
         tooltips=[
             ("Reaction", "@reaction"),
-            ("Reaction", "@reaction_equation"),
+            ("Equation", "@reaction_equation"),
+            ("DORA-XGB score", "@dora_xgb"),
+            ("ΔH (PAthermo)", "@delta_h"),
+            ("PAthermo scaled", "@thermo_scaled"),
         ],
         point_policy="follow_mouse"
     )
     p.add_tools(edge_hover)
 
-    # Draw nodes
-    node_circles = p.scatter(
-        'x', 'y',
-        source=node_source,
-        size='size',
-        color='color',
-        line_color='#2c3e50',
-        line_width=2.5,
-        alpha=0.9,
-        marker='circle'
-    )
+    # Draw nodes split by marker type
+    circle_indices = [i for i, m in enumerate(markers) if m == 'circle']
+    square_indices = [i for i, m in enumerate(markers) if m == 'square']
+    star_indices   = [i for i, m in enumerate(markers) if m == 'star']
+
+    renderers_to_hover = []
+
+    if circle_indices:
+        circle_source = ColumnDataSource(data={k: [v[i] for i in circle_indices] for k, v in node_source.data.items()})
+        node_circles = p.scatter('x', 'y', source=circle_source, size='size', fill_color='color',
+                                 line_color='#2c3e50', line_width=2.5, alpha=0.9, marker='circle')
+        renderers_to_hover.append(node_circles)
+
+    if square_indices:
+        square_source = ColumnDataSource(data={k: [v[i] for i in square_indices] for k, v in node_source.data.items()})
+        node_squares = p.scatter('x', 'y', source=square_source, size='size', fill_color='color',
+                                 line_color='#2c3e50', line_width=2.5, alpha=0.9, marker='square')
+        renderers_to_hover.append(node_squares)
+
+    if star_indices:
+        star_source = ColumnDataSource(data={k: [v[i] for i in star_indices] for k, v in node_source.data.items()})
+        node_stars = p.scatter('x', 'y', source=star_source, size='size', fill_color='color',
+                               line_color='#2c3e50', line_width=2.5, alpha=0.9, marker='star')
+        renderers_to_hover.append(node_stars)
 
     # Node hover tool with custom HTML template for molecule images
     node_hover_html = """
@@ -839,12 +892,9 @@ def create_enhanced_interactive_html(
     </div>
     """
 
-    node_hover = HoverTool(
-        renderers=[node_circles],
-        tooltips=node_hover_html,
-        point_policy="follow_mouse"
-    )
-    p.add_tools(node_hover)
+    if renderers_to_hover:
+        node_hover = HoverTool(renderers=renderers_to_hover, tooltips=node_hover_html, point_policy="follow_mouse")
+        p.add_tools(node_hover)
 
     # Add node ID labels
     labels = LabelSet(
@@ -990,23 +1040,29 @@ def create_pathways_interactive_html(
         smiles = data.get('smiles', '')
         smiles_short = data.get('smiles_short', str(n))
 
-        # Color based on provenance
-        if is_pks and not is_sink:
-            color = '#2ecc71'  # Green for PKS match (non-sink)
-        elif prov == 'enzymatic':
-            color = '#3498db'  # Blue for enzymatic
-        elif prov == 'synthetic':
-            color = '#9b59b6'  # Purple for synthetic
+        # Color and shape based on node type (matches manuscript legend)
+        depth = data.get('depth', 0)
+        sink_type = data.get('sink_compound_type', None)
+        is_root = (depth == 0 and prov == 'target')
+        if is_root:
+            color = '#FFD700'  # Gold star for root/target molecule
+            marker = 'star'
+        elif is_sink and sink_type == 'chemical':
+            color = '#4472C4'  # Blue square for chemical building blocks
+            marker = 'square'
+        elif is_sink and sink_type == 'biological':
+            color = '#548235'  # Green square for biological building blocks
+            marker = 'square'
+        elif is_pks:
+            color = '#C55A11'  # Orange square for polyketides (PKS database match)
+            marker = 'square'
         else:
-            color = '#f39c12'  # Orange for target
-
-        # Sink compounds are squares, others are circles
-        marker = 'square' if is_sink else 'circle'
+            color = '#D9D9D9'  # Grey circle for general intermediate compounds
+            marker = 'circle'
 
         visits = data.get('visits', 0)
         value = data.get('value', 0.0)
         avg_value = data.get('avg_value', 0.0)
-        depth = data.get('depth', 0)
 
         # Generate molecule image
         mol_img = _generate_molecule_image_base64(smiles, size=molecule_img_size)
@@ -1058,6 +1114,9 @@ def create_pathways_interactive_html(
     edge_reactions = []
     edge_reaction_equations = []
     edge_colors = []
+    edge_dora_xgb = []
+    edge_delta_h = []
+    edge_thermo_scaled = []
 
     for parent_id, child_id in agent.edges:
         # Only include edges where both nodes are in the filtered set
@@ -1078,16 +1137,40 @@ def create_pathways_interactive_html(
                     reaction_info = rxn_label_short
                     reaction_equation_info = rxn_equation_short
 
+                    # Edge color based on reaction type (matches manuscript legend)
                     if child_node.provenance == 'enzymatic':
-                        edge_color = '#3498db'
+                        edge_color = '#548235'  # Green for enzymatic reactions
                     elif child_node.provenance == 'synthetic':
-                        edge_color = '#9b59b6'
+                        edge_color = '#4472C4'  # Blue for chemical/synthetic reactions
                     else:
-                        edge_color = '#95a5a6'
+                        edge_color = '#95a5a6'  # Grey for unknown
+
+                    # Thermodynamic/feasibility scores for edge hover tooltip
+                    if child_node.provenance == 'enzymatic':
+                        dora_xgb_val = f"{child_node.feasibility_score:.3f}" if child_node.feasibility_score is not None else "N/A"
+                        delta_h_val = "N/A"
+                        thermo_scaled_val = "N/A"
+                    elif child_node.provenance == 'synthetic':
+                        dora_xgb_val = "N/A"
+                        if child_node.enthalpy_of_reaction is not None:
+                            dh = child_node.enthalpy_of_reaction
+                            scaled = 1.0 / (1.0 + math.exp(0.2 * (dh - 15.0)))
+                            delta_h_val = f"{dh:.2f} kcal/mol"
+                            thermo_scaled_val = f"{scaled:.3f}"
+                        else:
+                            delta_h_val = "N/A"
+                            thermo_scaled_val = "N/A"
+                    else:
+                        dora_xgb_val = "N/A"
+                        delta_h_val = "N/A"
+                        thermo_scaled_val = "N/A"
                 else:
                     reaction_info = "No reaction information"
                     reaction_equation_info = "N/A"
                     edge_color = '#95a5a6'
+                    dora_xgb_val = "N/A"
+                    delta_h_val = "N/A"
+                    thermo_scaled_val = "N/A"
 
                 edge_x0.append(pos[parent_id][0])
                 edge_y0.append(pos[parent_id][1])
@@ -1096,6 +1179,9 @@ def create_pathways_interactive_html(
                 edge_reactions.append(reaction_info)
                 edge_reaction_equations.append(reaction_equation_info)
                 edge_colors.append(edge_color)
+                edge_dora_xgb.append(dora_xgb_val)
+                edge_delta_h.append(delta_h_val)
+                edge_thermo_scaled.append(thermo_scaled_val)
 
     edge_source = ColumnDataSource(data=dict(
         x0=edge_x0,
@@ -1105,6 +1191,9 @@ def create_pathways_interactive_html(
         reaction=edge_reactions,
         reaction_equation=edge_reaction_equations,
         color=edge_colors,
+        dora_xgb=edge_dora_xgb,
+        delta_h=edge_delta_h,
+        thermo_scaled=edge_thermo_scaled,
     ))
 
     # Create Bokeh figure
@@ -1142,7 +1231,10 @@ def create_pathways_interactive_html(
         renderers=[edge_lines],
         tooltips=[
             ("Reaction", "@reaction"),
-            ("Reaction", "@reaction_equation"),
+            ("Equation", "@reaction_equation"),
+            ("DORA-XGB score", "@dora_xgb"),
+            ("ΔH (PAthermo)", "@delta_h"),
+            ("PAthermo scaled", "@thermo_scaled"),
         ],
         line_policy="interp"
     )
@@ -1151,8 +1243,9 @@ def create_pathways_interactive_html(
     # Separate nodes by marker type for drawing
     circle_indices = [i for i, m in enumerate(markers) if m == 'circle']
     square_indices = [i for i, m in enumerate(markers) if m == 'square']
+    star_indices   = [i for i, m in enumerate(markers) if m == 'star']
 
-    # Create separate data sources for circles and squares
+    # Create separate data sources for circles, squares, and stars
     if circle_indices:
         circle_source = ColumnDataSource(data={
             key: [values[i] for i in circle_indices]
@@ -1185,6 +1278,22 @@ def create_pathways_interactive_html(
             marker='square'
         )
 
+    if star_indices:
+        star_source = ColumnDataSource(data={
+            key: [values[i] for i in star_indices]
+            for key, values in node_source.data.items()
+        })
+        node_stars = p.scatter(
+            'x', 'y',
+            source=star_source,
+            size='size',
+            fill_color='color',
+            line_color='#2c3e50',
+            line_width=2,
+            alpha=0.9,
+            marker='star'
+        )
+
     # Node hover tool
     node_hover_html = """
     <div style="width: 320px; background-color: white; border: 2px solid #2c3e50; border-radius: 8px; padding: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
@@ -1211,6 +1320,8 @@ def create_pathways_interactive_html(
         renderers_to_hover.append(node_circles)
     if square_indices:
         renderers_to_hover.append(node_squares)
+    if star_indices:
+        renderers_to_hover.append(node_stars)
 
     if renderers_to_hover:
         node_hover = HoverTool(
