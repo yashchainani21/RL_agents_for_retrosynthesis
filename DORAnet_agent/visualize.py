@@ -430,6 +430,85 @@ def _generate_molecule_image_base64(smiles: str, size: Tuple[int, int] = (200, 2
         return None
 
 
+def _generate_reaction_image_base64(
+    reactants_smiles: List[str],
+    products_smiles: List[str],
+    size: Tuple[int, int] = (600, 200),
+) -> Optional[str]:
+    """
+    Generate a base64-encoded PNG image of a chemical reaction.
+
+    Args:
+        reactants_smiles: List of reactant SMILES strings.
+        products_smiles: List of product SMILES strings.
+        size: Sub-image size per molecule (width, height).
+
+    Returns:
+        Base64-encoded PNG data URI, or None on failure.
+    """
+    try:
+        from rdkit.Chem import AllChem, Draw
+        import base64
+        from io import BytesIO
+
+        if not reactants_smiles and not products_smiles:
+            return None
+
+        rxn_smiles = f"{'.'.join(reactants_smiles)}>>{'.'.join(products_smiles)}"
+        rxn = AllChem.ReactionFromSmarts(rxn_smiles, useSmiles=True)
+        if rxn is None:
+            return None
+
+        img = Draw.ReactionToImage(rxn, subImgSize=size)
+
+        buffered = BytesIO()
+        img.save(buffered, format="PNG")
+        img_str = base64.b64encode(buffered.getvalue()).decode()
+        return f"data:image/png;base64,{img_str}"
+
+    except Exception as e:
+        print(f"[Visualization] Error generating reaction image: {e}")
+        return None
+
+
+def _compute_ucb1_scores(agent: "DORAnetMCTS") -> Dict[int, str]:
+    """
+    Compute the current UCB1 selection score for every node in the tree.
+
+    Replicates the formula used in DORAnetMCTS.select() so the hover tooltip
+    shows the score that will drive selection in the next iteration.
+
+    Returns:
+        Mapping from node_id -> formatted UCB1 string (or "N/A" for root).
+    """
+    scores: Dict[int, str] = {}
+    policy = getattr(agent, "selection_policy", "depth_biased")
+    depth_coeff = getattr(agent, "depth_bonus_coefficient", 0.0)
+
+    for node in agent.nodes:
+        if node.parent is None:
+            scores[node.node_id] = "N/A"
+            continue
+
+        parent_visits = max(node.parent.visits, 1)
+
+        if node.visits == 0:
+            if policy == "depth_biased":
+                raw = 1000.0 + depth_coeff * node.depth
+            else:
+                raw = float("inf")
+        else:
+            exploit = node.value / node.visits
+            explore = math.sqrt(2 * math.log(parent_visits) / node.visits)
+            raw = exploit + explore
+            if policy == "depth_biased":
+                raw += depth_coeff * node.depth
+
+        scores[node.node_id] = f"{raw:.3f}" if math.isfinite(raw) else "∞"
+
+    return scores
+
+
 def create_interactive_html(
     agent: "DORAnetMCTS",
     output_path: str,
@@ -611,6 +690,9 @@ def create_enhanced_interactive_html(
 
     pos = get_hierarchical_pos(G, root=0)
 
+    # Compute UCB1 scores for all nodes
+    ucb1_scores = _compute_ucb1_scores(agent)
+
     # Prepare node data with molecule images
     node_ids = []
     x_coords = []
@@ -629,6 +711,7 @@ def create_enhanced_interactive_html(
     sink_type_list = []
     depth_list = []
     mol_images = []
+    ucb1_list = []
 
     for n in G.nodes:
         data = G.nodes[n]
@@ -682,6 +765,7 @@ def create_enhanced_interactive_html(
         sink_type_list.append(data.get('sink_compound_type', None) or 'N/A')
         depth_list.append(depth)
         mol_images.append(mol_img if mol_img else "")
+        ucb1_list.append(ucb1_scores.get(n, "N/A"))
 
     # Create node data source
     node_source = ColumnDataSource(data=dict(
@@ -702,6 +786,7 @@ def create_enhanced_interactive_html(
         sink_compound_type=sink_type_list,
         depth=depth_list,
         mol_img=mol_images,
+        ucb1=ucb1_list,
     ))
 
     # Prepare edge data with reaction information
@@ -716,6 +801,7 @@ def create_enhanced_interactive_html(
     edge_dora_xgb = []
     edge_delta_h = []
     edge_thermo_scaled = []
+    edge_rxn_imgs = []
 
     for parent_id, child_id in agent.edges:
         if parent_id in pos and child_id in pos:
@@ -766,6 +852,12 @@ def create_enhanced_interactive_html(
                     dora_xgb_val = "N/A"
                     delta_h_val = "N/A"
                     thermo_scaled_val = "N/A"
+
+                rxn_img = _generate_reaction_image_base64(
+                    child_node.reactants_smiles or [],
+                    child_node.products_smiles or [],
+                )
+                rxn_img_val = rxn_img if rxn_img else ""
             else:
                 reaction_info = "No reaction information"
                 reaction_equation_info = "N/A"
@@ -773,6 +865,7 @@ def create_enhanced_interactive_html(
                 dora_xgb_val = "N/A"
                 delta_h_val = "N/A"
                 thermo_scaled_val = "N/A"
+                rxn_img_val = ""
 
             edge_x0.append(pos[parent_id][0])
             edge_y0.append(pos[parent_id][1])
@@ -784,6 +877,7 @@ def create_enhanced_interactive_html(
             edge_dora_xgb.append(dora_xgb_val)
             edge_delta_h.append(delta_h_val)
             edge_thermo_scaled.append(thermo_scaled_val)
+            edge_rxn_imgs.append(rxn_img_val)
 
     # Create edge data source
     edge_source = ColumnDataSource(data=dict(
@@ -797,6 +891,7 @@ def create_enhanced_interactive_html(
         dora_xgb=edge_dora_xgb,
         delta_h=edge_delta_h,
         thermo_scaled=edge_thermo_scaled,
+        rxn_img=edge_rxn_imgs,
     ))
 
     # Create Bokeh figure
@@ -832,16 +927,24 @@ def create_enhanced_interactive_html(
         line_cap='round'
     )
 
-    # Edge hover tool
+    # Edge hover tool with HTML template for reaction images
+    edge_hover_html = """
+<div style="width: 360px; background-color: white; border: 2px solid #555; border-radius: 8px; padding: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+    <div style="text-align: center; margin-bottom: 8px;">
+        <img src="@rxn_img" style="max-width: 340px; max-height: 160px; border: 1px solid #ddd; border-radius: 4px;">
+    </div>
+    <div style="font-family: monospace; font-size: 12px;">
+        <b style="color: #2c3e50;">Reaction:</b> @reaction<br>
+        <b style="color: #2c3e50;">Equation:</b> <span style="font-size: 10px; word-break: break-all;">@reaction_equation</span><br>
+        <b style="color: #2c3e50;">DORA-XGB score:</b> @dora_xgb<br>
+        <b style="color: #2c3e50;">ΔH (PAthermo):</b> @delta_h<br>
+        <b style="color: #2c3e50;">PAthermo scaled:</b> @thermo_scaled<br>
+    </div>
+</div>
+"""
     edge_hover = HoverTool(
         renderers=[edge_lines],
-        tooltips=[
-            ("Reaction", "@reaction"),
-            ("Equation", "@reaction_equation"),
-            ("DORA-XGB score", "@dora_xgb"),
-            ("ΔH (PAthermo)", "@delta_h"),
-            ("PAthermo scaled", "@thermo_scaled"),
-        ],
+        tooltips=edge_hover_html,
         point_policy="follow_mouse"
     )
     p.add_tools(edge_hover)
@@ -886,6 +989,7 @@ def create_enhanced_interactive_html(
             <b style="color: #00bcd4;">Sink Type:</b> @sink_compound_type<br>
             <b style="color: #2c3e50;">Visits:</b> @visits<br>
             <b style="color: #2c3e50;">Avg Value:</b> @avg_value<br>
+            <b style="color: #2c3e50;">UCB1 score:</b> @ucb1<br>
             <b style="color: #2c3e50;">SMILES:</b><br>
             <span style="font-size: 10px; word-break: break-all;">@smiles</span>
         </div>
@@ -1012,6 +1116,9 @@ def create_pathways_interactive_html(
 
     pos = get_hierarchical_pos(G_filtered, root=0)
 
+    # Compute UCB1 scores for all nodes
+    ucb1_scores = _compute_ucb1_scores(agent)
+
     # Prepare node data with molecule images
     print("[Visualization] Creating molecule structure images for pathways...")
     node_ids = []
@@ -1031,6 +1138,7 @@ def create_pathways_interactive_html(
     sink_type_list = []
     depth_list = []
     mol_images = []
+    ucb1_list = []
 
     for n in G_filtered.nodes:
         data = G_filtered.nodes[n]
@@ -1084,6 +1192,7 @@ def create_pathways_interactive_html(
         sink_type_list.append(data.get('sink_compound_type', None) or 'N/A')
         depth_list.append(depth)
         mol_images.append(mol_img if mol_img else "")
+        ucb1_list.append(ucb1_scores.get(n, "N/A"))
 
     # Create node data source
     node_source = ColumnDataSource(data=dict(
@@ -1104,6 +1213,7 @@ def create_pathways_interactive_html(
         sink_compound_type=sink_type_list,
         depth=depth_list,
         mol_img=mol_images,
+        ucb1=ucb1_list,
     ))
 
     # Prepare edge data
@@ -1117,6 +1227,7 @@ def create_pathways_interactive_html(
     edge_dora_xgb = []
     edge_delta_h = []
     edge_thermo_scaled = []
+    edge_rxn_imgs = []
 
     for parent_id, child_id in agent.edges:
         # Only include edges where both nodes are in the filtered set
@@ -1164,6 +1275,12 @@ def create_pathways_interactive_html(
                         dora_xgb_val = "N/A"
                         delta_h_val = "N/A"
                         thermo_scaled_val = "N/A"
+
+                    rxn_img = _generate_reaction_image_base64(
+                        child_node.reactants_smiles or [],
+                        child_node.products_smiles or [],
+                    )
+                    rxn_img_val = rxn_img if rxn_img else ""
                 else:
                     reaction_info = "No reaction information"
                     reaction_equation_info = "N/A"
@@ -1171,6 +1288,7 @@ def create_pathways_interactive_html(
                     dora_xgb_val = "N/A"
                     delta_h_val = "N/A"
                     thermo_scaled_val = "N/A"
+                    rxn_img_val = ""
 
                 edge_x0.append(pos[parent_id][0])
                 edge_y0.append(pos[parent_id][1])
@@ -1182,6 +1300,7 @@ def create_pathways_interactive_html(
                 edge_dora_xgb.append(dora_xgb_val)
                 edge_delta_h.append(delta_h_val)
                 edge_thermo_scaled.append(thermo_scaled_val)
+                edge_rxn_imgs.append(rxn_img_val)
 
     edge_source = ColumnDataSource(data=dict(
         x0=edge_x0,
@@ -1194,6 +1313,7 @@ def create_pathways_interactive_html(
         dora_xgb=edge_dora_xgb,
         delta_h=edge_delta_h,
         thermo_scaled=edge_thermo_scaled,
+        rxn_img=edge_rxn_imgs,
     ))
 
     # Create Bokeh figure
@@ -1227,15 +1347,23 @@ def create_pathways_interactive_html(
         alpha=0.7,
     )
 
+    edge_hover_html = """
+<div style="width: 360px; background-color: white; border: 2px solid #555; border-radius: 8px; padding: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+    <div style="text-align: center; margin-bottom: 8px;">
+        <img src="@rxn_img" style="max-width: 340px; max-height: 160px; border: 1px solid #ddd; border-radius: 4px;">
+    </div>
+    <div style="font-family: monospace; font-size: 12px;">
+        <b style="color: #2c3e50;">Reaction:</b> @reaction<br>
+        <b style="color: #2c3e50;">Equation:</b> <span style="font-size: 10px; word-break: break-all;">@reaction_equation</span><br>
+        <b style="color: #2c3e50;">DORA-XGB score:</b> @dora_xgb<br>
+        <b style="color: #2c3e50;">ΔH (PAthermo):</b> @delta_h<br>
+        <b style="color: #2c3e50;">PAthermo scaled:</b> @thermo_scaled<br>
+    </div>
+</div>
+"""
     edge_hover = HoverTool(
         renderers=[edge_lines],
-        tooltips=[
-            ("Reaction", "@reaction"),
-            ("Equation", "@reaction_equation"),
-            ("DORA-XGB score", "@dora_xgb"),
-            ("ΔH (PAthermo)", "@delta_h"),
-            ("PAthermo scaled", "@thermo_scaled"),
-        ],
+        tooltips=edge_hover_html,
         line_policy="interp"
     )
     p.add_tools(edge_hover)
@@ -1309,6 +1437,7 @@ def create_pathways_interactive_html(
             <b style="color: #2c3e50;">Sink Type:</b> @sink_compound_type<br>
             <b style="color: #2c3e50;">Visits:</b> @visits<br>
             <b style="color: #2c3e50;">Avg Value:</b> @avg_value<br>
+            <b style="color: #2c3e50;">UCB1 score:</b> @ucb1<br>
             <b style="color: #2c3e50;">SMILES:</b><br>
             <span style="font-size: 10px; word-break: break-all;">@smiles</span>
         </div>
