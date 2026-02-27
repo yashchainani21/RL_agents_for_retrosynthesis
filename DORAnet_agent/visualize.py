@@ -670,7 +670,7 @@ def create_enhanced_interactive_html(
     """
     try:
         from bokeh.plotting import figure, save, output_file
-        from bokeh.models import HoverTool, ColumnDataSource, LabelSet
+        from bokeh.models import HoverTool, ColumnDataSource, LabelSet, Legend, LegendItem
         from bokeh.layouts import column
         from bokeh.models.annotations import Title
     except ImportError:
@@ -678,6 +678,9 @@ def create_enhanced_interactive_html(
         return
 
     from rdkit import Chem
+
+    # Fixed node size for all nodes (no longer varies by visits)
+    FIXED_NODE_SIZE = 20
 
     print("[Visualization] Generating enhanced interactive visualization...")
     print("[Visualization] Creating molecule structure images...")
@@ -752,7 +755,7 @@ def create_enhanced_interactive_html(
         x_coords.append(pos[n][0])
         y_coords.append(pos[n][1])
         colors.append(color)
-        sizes.append(min(15 + visits * 3, 50))
+        sizes.append(FIXED_NODE_SIZE)  # Fixed size for all nodes
         markers.append(marker)
         smiles_list.append(smiles if smiles else 'N/A')
         smiles_short_list.append(smiles_short)
@@ -1013,6 +1016,48 @@ def create_enhanced_interactive_html(
     )
     p.add_layout(labels)
 
+    # Create legend with dummy glyphs for node types and edge types
+    # Node type legend items
+    legend_items = []
+
+    # Target molecule (gold star)
+    target_glyph = p.scatter([], [], marker='star', size=15, fill_color='#FFD700',
+                             line_color='#2c3e50', line_width=2)
+    legend_items.append(LegendItem(label="Target Molecule", renderers=[target_glyph]))
+
+    # Chemical building block (blue square)
+    chem_glyph = p.scatter([], [], marker='square', size=15, fill_color='#4472C4',
+                           line_color='#2c3e50', line_width=2)
+    legend_items.append(LegendItem(label="Chemical Building Block", renderers=[chem_glyph]))
+
+    # Biological building block (green square)
+    bio_glyph = p.scatter([], [], marker='square', size=15, fill_color='#548235',
+                          line_color='#2c3e50', line_width=2)
+    legend_items.append(LegendItem(label="Biological Building Block", renderers=[bio_glyph]))
+
+    # PKS database match (orange square)
+    pks_glyph = p.scatter([], [], marker='square', size=15, fill_color='#C55A11',
+                          line_color='#2c3e50', line_width=2)
+    legend_items.append(LegendItem(label="PKS Database Match", renderers=[pks_glyph]))
+
+    # Intermediate compound (grey circle)
+    int_glyph = p.scatter([], [], marker='circle', size=15, fill_color='#D9D9D9',
+                          line_color='#2c3e50', line_width=2)
+    legend_items.append(LegendItem(label="Intermediate Compound", renderers=[int_glyph]))
+
+    # Edge type legend items (enzymatic = green, synthetic = blue)
+    enz_edge = p.line([], [], line_color='#548235', line_width=3)
+    legend_items.append(LegendItem(label="Enzymatic Reaction", renderers=[enz_edge]))
+
+    syn_edge = p.line([], [], line_color='#4472C4', line_width=3)
+    legend_items.append(LegendItem(label="Synthetic Reaction", renderers=[syn_edge]))
+
+    # Add legend to plot
+    legend = Legend(items=legend_items, location="top_left", title="Legend",
+                    title_text_font_style="bold", label_text_font_size="10pt",
+                    background_fill_alpha=0.8, border_line_color="#2c3e50")
+    p.add_layout(legend, 'right')
+
     # Style the plot
     p.axis.visible = False
     p.grid.visible = False
@@ -1067,7 +1112,7 @@ def create_pathways_interactive_html(
     """
     try:
         from bokeh.plotting import figure, save, output_file
-        from bokeh.models import HoverTool, ColumnDataSource, LabelSet
+        from bokeh.models import HoverTool, ColumnDataSource, LabelSet, Legend, LegendItem
         from bokeh.layouts import column
         from bokeh.models.annotations import Title
     except ImportError:
@@ -1075,6 +1120,9 @@ def create_pathways_interactive_html(
         return
 
     from rdkit import Chem
+
+    # Fixed node size for all nodes (no longer varies by visits)
+    FIXED_NODE_SIZE = 20
 
     print("[Visualization] Generating pathways-only interactive visualization...")
 
@@ -1179,7 +1227,7 @@ def create_pathways_interactive_html(
         x_coords.append(pos[n][0])
         y_coords.append(pos[n][1])
         colors.append(color)
-        sizes.append(min(15 + visits * 3, 50))
+        sizes.append(FIXED_NODE_SIZE)  # Fixed size for all nodes
         markers.append(marker)
         smiles_list.append(smiles if smiles else 'N/A')
         smiles_short_list.append(smiles_short)
@@ -1471,6 +1519,48 @@ def create_pathways_interactive_html(
         text_color='black'
     )
     p.add_layout(labels)
+
+    # Create legend with dummy glyphs for node types and edge types
+    # Node type legend items
+    legend_items = []
+
+    # Target molecule (gold star)
+    target_glyph = p.scatter([], [], marker='star', size=15, fill_color='#FFD700',
+                             line_color='#2c3e50', line_width=2)
+    legend_items.append(LegendItem(label="Target Molecule", renderers=[target_glyph]))
+
+    # Chemical building block (blue square)
+    chem_glyph = p.scatter([], [], marker='square', size=15, fill_color='#4472C4',
+                           line_color='#2c3e50', line_width=2)
+    legend_items.append(LegendItem(label="Chemical Building Block", renderers=[chem_glyph]))
+
+    # Biological building block (green square)
+    bio_glyph = p.scatter([], [], marker='square', size=15, fill_color='#548235',
+                          line_color='#2c3e50', line_width=2)
+    legend_items.append(LegendItem(label="Biological Building Block", renderers=[bio_glyph]))
+
+    # PKS database match (orange square)
+    pks_glyph = p.scatter([], [], marker='square', size=15, fill_color='#C55A11',
+                          line_color='#2c3e50', line_width=2)
+    legend_items.append(LegendItem(label="PKS Database Match", renderers=[pks_glyph]))
+
+    # Intermediate compound (grey circle)
+    int_glyph = p.scatter([], [], marker='circle', size=15, fill_color='#D9D9D9',
+                          line_color='#2c3e50', line_width=2)
+    legend_items.append(LegendItem(label="Intermediate Compound", renderers=[int_glyph]))
+
+    # Edge type legend items (enzymatic = green, synthetic = blue)
+    enz_edge = p.line([], [], line_color='#548235', line_width=3)
+    legend_items.append(LegendItem(label="Enzymatic Reaction", renderers=[enz_edge]))
+
+    syn_edge = p.line([], [], line_color='#4472C4', line_width=3)
+    legend_items.append(LegendItem(label="Synthetic Reaction", renderers=[syn_edge]))
+
+    # Add legend to plot
+    legend = Legend(items=legend_items, location="top_left", title="Legend",
+                    title_text_font_style="bold", label_text_font_size="10pt",
+                    background_fill_alpha=0.8, border_line_color="#2c3e50")
+    p.add_layout(legend, 'right')
 
     # Style the plot
     p.axis.visible = False
