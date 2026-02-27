@@ -905,12 +905,24 @@ def create_enhanced_interactive_html(
     # Use custom title if provided, otherwise use default
     plot_title = title if title else "DORAnet MCTS Interactive Search Tree"
 
+    # Compute explicit data ranges to prevent off-screen legend glyphs from affecting view
+    x_min = min(x_coords) if x_coords else -1
+    x_max = max(x_coords) if x_coords else 1
+    y_min = min(y_coords) if y_coords else -1
+    y_max = max(y_coords) if y_coords else 1
+    # Add padding (10% on each side)
+    x_padding = (x_max - x_min) * 0.1 if x_max != x_min else 1
+    y_padding = (y_max - y_min) * 0.1 if y_max != y_min else 1
+
+    from bokeh.models import Range1d
     p = figure(
         title=plot_title,
         width=1400,
         height=900,
         tools="pan,wheel_zoom,box_zoom,reset,save",
         active_scroll="wheel_zoom",
+        x_range=Range1d(x_min - x_padding, x_max + x_padding),
+        y_range=Range1d(y_min - y_padding, y_max + y_padding),
     )
 
     # Add subtitle with target info
@@ -1017,39 +1029,42 @@ def create_enhanced_interactive_html(
     p.add_layout(labels)
 
     # Create legend with dummy glyphs for node types and edge types
-    # Node type legend items
+    # Use off-screen coordinates so the glyphs don't appear in the plot but show in legend
+    # We place them far outside the visible plot range
+    OFF_SCREEN = -99999
+
     legend_items = []
 
     # Target molecule (gold star)
-    target_glyph = p.scatter([], [], marker='star', size=15, fill_color='#FFD700',
+    target_glyph = p.scatter([OFF_SCREEN], [OFF_SCREEN], marker='star', size=15, fill_color='#FFD700',
                              line_color='#2c3e50', line_width=2)
     legend_items.append(LegendItem(label="Target Molecule", renderers=[target_glyph]))
 
     # Chemical building block (blue square)
-    chem_glyph = p.scatter([], [], marker='square', size=15, fill_color='#4472C4',
+    chem_glyph = p.scatter([OFF_SCREEN], [OFF_SCREEN], marker='square', size=15, fill_color='#4472C4',
                            line_color='#2c3e50', line_width=2)
     legend_items.append(LegendItem(label="Chemical Building Block", renderers=[chem_glyph]))
 
     # Biological building block (green square)
-    bio_glyph = p.scatter([], [], marker='square', size=15, fill_color='#548235',
+    bio_glyph = p.scatter([OFF_SCREEN], [OFF_SCREEN], marker='square', size=15, fill_color='#548235',
                           line_color='#2c3e50', line_width=2)
     legend_items.append(LegendItem(label="Biological Building Block", renderers=[bio_glyph]))
 
     # PKS database match (orange square)
-    pks_glyph = p.scatter([], [], marker='square', size=15, fill_color='#C55A11',
+    pks_glyph = p.scatter([OFF_SCREEN], [OFF_SCREEN], marker='square', size=15, fill_color='#C55A11',
                           line_color='#2c3e50', line_width=2)
     legend_items.append(LegendItem(label="PKS Database Match", renderers=[pks_glyph]))
 
     # Intermediate compound (grey circle)
-    int_glyph = p.scatter([], [], marker='circle', size=15, fill_color='#D9D9D9',
+    int_glyph = p.scatter([OFF_SCREEN], [OFF_SCREEN], marker='circle', size=15, fill_color='#D9D9D9',
                           line_color='#2c3e50', line_width=2)
     legend_items.append(LegendItem(label="Intermediate Compound", renderers=[int_glyph]))
 
     # Edge type legend items (enzymatic = green, synthetic = blue)
-    enz_edge = p.line([], [], line_color='#548235', line_width=3)
+    enz_edge = p.line([OFF_SCREEN, OFF_SCREEN], [OFF_SCREEN, OFF_SCREEN], line_color='#548235', line_width=3)
     legend_items.append(LegendItem(label="Enzymatic Reaction", renderers=[enz_edge]))
 
-    syn_edge = p.line([], [], line_color='#4472C4', line_width=3)
+    syn_edge = p.line([OFF_SCREEN, OFF_SCREEN], [OFF_SCREEN, OFF_SCREEN], line_color='#4472C4', line_width=3)
     legend_items.append(LegendItem(label="Synthetic Reaction", renderers=[syn_edge]))
 
     # Add legend to plot
@@ -1371,12 +1386,24 @@ def create_pathways_interactive_html(
 
     plot_title = title if title else "DORAnet MCTS - Pathways to PKS Matches & Building Blocks"
 
+    # Compute explicit data ranges to prevent off-screen legend glyphs from affecting view
+    x_min = min(x_coords) if x_coords else -1
+    x_max = max(x_coords) if x_coords else 1
+    y_min = min(y_coords) if y_coords else -1
+    y_max = max(y_coords) if y_coords else 1
+    # Add padding (10% on each side)
+    x_padding = (x_max - x_min) * 0.1 if x_max != x_min else 1
+    y_padding = (y_max - y_min) * 0.1 if y_max != y_min else 1
+
+    from bokeh.models import Range1d
     p = figure(
         title=plot_title,
         width=1400,
         height=900,
         tools="pan,wheel_zoom,box_zoom,reset,save",
         active_scroll="wheel_zoom",
+        x_range=Range1d(x_min - x_padding, x_max + x_padding),
+        y_range=Range1d(y_min - y_padding, y_max + y_padding),
     )
 
     # Add subtitle
@@ -1521,39 +1548,41 @@ def create_pathways_interactive_html(
     p.add_layout(labels)
 
     # Create legend with dummy glyphs for node types and edge types
-    # Node type legend items
+    # Use off-screen coordinates so the glyphs don't appear in the plot but show in legend
+    OFF_SCREEN = -99999
+
     legend_items = []
 
     # Target molecule (gold star)
-    target_glyph = p.scatter([], [], marker='star', size=15, fill_color='#FFD700',
+    target_glyph = p.scatter([OFF_SCREEN], [OFF_SCREEN], marker='star', size=15, fill_color='#FFD700',
                              line_color='#2c3e50', line_width=2)
     legend_items.append(LegendItem(label="Target Molecule", renderers=[target_glyph]))
 
     # Chemical building block (blue square)
-    chem_glyph = p.scatter([], [], marker='square', size=15, fill_color='#4472C4',
+    chem_glyph = p.scatter([OFF_SCREEN], [OFF_SCREEN], marker='square', size=15, fill_color='#4472C4',
                            line_color='#2c3e50', line_width=2)
     legend_items.append(LegendItem(label="Chemical Building Block", renderers=[chem_glyph]))
 
     # Biological building block (green square)
-    bio_glyph = p.scatter([], [], marker='square', size=15, fill_color='#548235',
+    bio_glyph = p.scatter([OFF_SCREEN], [OFF_SCREEN], marker='square', size=15, fill_color='#548235',
                           line_color='#2c3e50', line_width=2)
     legend_items.append(LegendItem(label="Biological Building Block", renderers=[bio_glyph]))
 
     # PKS database match (orange square)
-    pks_glyph = p.scatter([], [], marker='square', size=15, fill_color='#C55A11',
+    pks_glyph = p.scatter([OFF_SCREEN], [OFF_SCREEN], marker='square', size=15, fill_color='#C55A11',
                           line_color='#2c3e50', line_width=2)
     legend_items.append(LegendItem(label="PKS Database Match", renderers=[pks_glyph]))
 
     # Intermediate compound (grey circle)
-    int_glyph = p.scatter([], [], marker='circle', size=15, fill_color='#D9D9D9',
+    int_glyph = p.scatter([OFF_SCREEN], [OFF_SCREEN], marker='circle', size=15, fill_color='#D9D9D9',
                           line_color='#2c3e50', line_width=2)
     legend_items.append(LegendItem(label="Intermediate Compound", renderers=[int_glyph]))
 
     # Edge type legend items (enzymatic = green, synthetic = blue)
-    enz_edge = p.line([], [], line_color='#548235', line_width=3)
+    enz_edge = p.line([OFF_SCREEN, OFF_SCREEN], [OFF_SCREEN, OFF_SCREEN], line_color='#548235', line_width=3)
     legend_items.append(LegendItem(label="Enzymatic Reaction", renderers=[enz_edge]))
 
-    syn_edge = p.line([], [], line_color='#4472C4', line_width=3)
+    syn_edge = p.line([OFF_SCREEN, OFF_SCREEN], [OFF_SCREEN, OFF_SCREEN], line_color='#4472C4', line_width=3)
     legend_items.append(LegendItem(label="Synthetic Reaction", renderers=[syn_edge]))
 
     # Add legend to plot
