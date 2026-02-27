@@ -504,7 +504,7 @@ def _compute_ucb1_scores(agent: "DORAnetMCTS") -> Dict[int, str]:
             if policy == "depth_biased":
                 raw += depth_coeff * node.depth
 
-        scores[node.node_id] = f"{raw:.3f}" if math.isfinite(raw) else "∞"
+        scores[node.node_id] = f"{raw:.2f}" if math.isfinite(raw) else "inf"
 
     return scores
 
@@ -679,8 +679,8 @@ def create_enhanced_interactive_html(
 
     from rdkit import Chem
 
-    # Fixed node size for all nodes (no longer varies by visits)
-    FIXED_NODE_SIZE = 20
+    # Fixed node size for all nodes (increased to fit UCB1 labels)
+    FIXED_NODE_SIZE = 35
 
     print("[Visualization] Generating enhanced interactive visualization...")
     print("[Visualization] Creating molecule structure images...")
@@ -1015,12 +1015,12 @@ def create_enhanced_interactive_html(
         node_hover = HoverTool(renderers=renderers_to_hover, tooltips=node_hover_html, point_policy="follow_mouse")
         p.add_tools(node_hover)
 
-    # Add node ID labels
+    # Add UCB1 score labels on nodes (instead of node IDs)
     labels = LabelSet(
         x='x', y='y',
-        text='node_id',
+        text='ucb1',
         source=node_source,
-        text_font_size='9pt',
+        text_font_size='8pt',
         text_align='center',
         text_baseline='middle',
         text_color='black'
@@ -1136,8 +1136,8 @@ def create_pathways_interactive_html(
 
     from rdkit import Chem
 
-    # Fixed node size for all nodes (no longer varies by visits)
-    FIXED_NODE_SIZE = 20
+    # Fixed node size for all nodes (increased to fit UCB1 labels)
+    FIXED_NODE_SIZE = 35
 
     print("[Visualization] Generating pathways-only interactive visualization...")
 
@@ -1535,12 +1535,12 @@ def create_pathways_interactive_html(
         )
         p.add_tools(node_hover)
 
-    # Add node ID labels
+    # Add UCB1 score labels on nodes (instead of node IDs)
     labels = LabelSet(
         x='x', y='y',
-        text='node_id',
+        text='ucb1',
         source=node_source,
-        text_font_size='9pt',
+        text_font_size='8pt',
         text_align='center',
         text_baseline='middle',
         text_color='black'
