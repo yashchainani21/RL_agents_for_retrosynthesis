@@ -4,24 +4,29 @@ Runner for AsyncExpansionDORAnetMCTS (multiprocessing expansion).
 This script runs DORAnet MCTS with parallel expansion using multiprocessing,
 significantly speeding up search on multi-core systems.
 
-Policy System:
-- rollout_policy: Controls what happens after expansion (default: NoOpRolloutPolicy)
-  - NoOpRolloutPolicy: No additional work after expansion (just returns 0 reward)
-  - SpawnRetroTideOnDatabaseCheck: Spawns RetroTide for PKS library matches (sparse rewards)
-  - SAScore_and_SpawnRetroTideOnDatabaseCheck: SA Score rewards + RetroTide spawning (dense rewards)
-  - PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck: PKS similarity + RetroTide (dense, PKS-focused)
-- reward_policy: Controls how terminal rewards are calculated (default: SparseTerminalRewardPolicy)
-  - SparseTerminalRewardPolicy: 1.0 for sink compounds, 1.0 for PKS matches, 0.0 otherwise
-  - SinkCompoundRewardPolicy: Only rewards sink compounds
-  - ComposedRewardPolicy: Combine multiple reward policies with weights
-  - PKSSimilarityRewardPolicy: PKS Tanimoto similarity as sole reward signal
-    - Uses similarity^exponent as reward for ALL nodes (including sink compounds)
-    - Guides MCTS toward PKS-compatible chemical space
-    - Example: similarity=0.8 with exponent=2.0 → reward=0.64
-  - SAScore_and_TerminalRewardPolicy: Terminal rewards + SA score for non-terminals (RECOMMENDED)
-    - Provides dense signals via SA score for synthetic accessibility
+Policy System (Clean Architecture):
+The MCTS loop uses two separate policies with distinct responsibilities:
+
+- rollout_policy: Determines TERMINAL STATUS (RetroTide spawning for PKS verification)
+  - SpawnRetroTideOnDatabaseCheck: Spawns RetroTide for PKS library matches (RECOMMENDED)
+  - NoOpRolloutPolicy: No rollout - just expand (fastest, no RetroTide)
+  - SAScore_and_SpawnRetroTideOnDatabaseCheck: SA Score in rollout (legacy, use reward_policy instead)
+  - PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck: PKS similarity + RetroTide
+
+- reward_policy: Computes REWARD for ALL nodes (dense or sparse)
+  - SAScore_and_TerminalRewardPolicy: SA score for non-terminals + terminal rewards (RECOMMENDED)
+    - Provides dense signals via SA score for ALL nodes
     - Full terminal reward for sink compounds and PKS terminals
-    - Cleanly separates reward from rollout concerns
+  - SparseTerminalRewardPolicy: 1.0 for terminals, 0.0 otherwise (sparse)
+  - PKSSimilarityRewardPolicy: PKS Tanimoto similarity as sole reward signal
+  - ComposedRewardPolicy: Combine multiple reward policies with weights
+  - ThermodynamicScaledRewardPolicy: Wrapper that scales any base policy by thermodynamic feasibility
+
+KEY ARCHITECTURE POINT:
+  The reward_policy.calculate_reward() is ALWAYS called for every node to compute
+  the backpropagation reward. This ensures dense rewards (like SA scores) are applied
+  to ALL nodes, not just terminals. The rollout_policy only determines whether a
+  node becomes terminal (via RetroTide verification).
 
 Example: Recommended clean setup (rollout + reward separation)
     from DORAnet_agent.policies import (
@@ -164,7 +169,7 @@ def main(target_smiles: str,
          use_PKS_building_blocksDB: bool = True,
          stop_on_first_pathway: bool = False,
          selection_policy: str = "depth_biased",
-         depth_bonus_coefficient: float = 4.0,
+         depth_bonus_coefficient: float = 10.0,
          enable_frontier_fallback: bool = True) -> None:
     """
     Run the async DORAnet MCTS agent with multiprocessing expansion.
@@ -226,10 +231,10 @@ def main(target_smiles: str,
             ensuring iterations are not wasted. Default True.
     """
     # ---- Runner configuration ----
-    create_interactive_visualization = False
-    enable_iteration_viz = False
+    create_interactive_visualization = True
+    enable_iteration_viz = True
     iteration_interval = 1
-    auto_open_iteration_viz = False
+    auto_open_iteration_viz = True
     auto_cleanup_pgnet_files = True
     num_workers = None  # None means "max available"
     max_inflight_expansions = None  # None means "same as num_workers"
@@ -450,16 +455,16 @@ if __name__ == "__main__":
     # )
 
     main(
-        target_smiles="COC1=CC(OC(C=CC2=CC=C(OC)C=C2)C1)=O",
-        molecule_name="5_6_dihydroyangonin_UCB1",
-        total_iterations=1000,
-        max_depth=6,
-        max_children_per_expand=5,
+        target_smiles="COC1=CC=C(C=CC2=CC(OC)=CC(O2)=O)C=C1",
+        molecule_name="yangonin",
+        total_iterations=5,
+        max_depth=12,
+        max_children_per_expand=1,
         rollout_policy=selected_rollout_policy,
         reward_policy=selected_reward_policy,
         results_subfolder=None,
         MW_multiple_to_exclude=1.5,
-        child_downselection_strategy="most_thermo_feasible",
+        child_downselection_strategy=None,
         use_enzymatic=True,
         use_synthetic=True,
         use_chem_building_blocksDB=True,
@@ -467,5 +472,5 @@ if __name__ == "__main__":
         use_PKS_building_blocksDB=True,
         stop_on_first_pathway=False,
         selection_policy="UCB1",  # Using standard UCB1 instead of depth_biased
-        enable_frontier_fallback=True,  # Enable frontier fallback for deep exploration
+        enable_frontier_fallback=False,  # Enable frontier fallback for deep exploration
     )

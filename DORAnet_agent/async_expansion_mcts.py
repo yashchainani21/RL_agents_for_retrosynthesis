@@ -669,12 +669,14 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
         leaf.is_expansion_pending = False
 
         # Apply rollout and reward policies to each child (on main process)
+        # Rollout policy: determines terminal status (RetroTide spawning)
+        # Reward policy: ALWAYS computes the reward (dense SA scores for all nodes)
         for child in new_children:
             # Check if this node matches PKS library (potential for RetroTide verification)
             is_pks_library_match = self._is_in_pks_library(child.smiles or "")
 
             if is_pks_library_match:
-                # PKS library matches: always run rollout (even if sink compound)
+                # PKS library matches: run rollout for RetroTide verification
                 print(f"[DORAnet] Fragment {child.smiles} is PKS library match - "
                       f"attempting RetroTide (sink={child.is_sink_compound})")
 
@@ -687,19 +689,12 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
                     if "retrotide_agent" in result.metadata:
                         self._store_retrotide_result_from_rollout(child, result)
 
-                    reward = result.reward
-                else:
-                    # RetroTide failed - fall back to sink compound reward if applicable
-                    if child.is_sink_compound:
-                        reward = self.reward_policy.calculate_reward(child, context)
-                    else:
-                        reward = result.reward
-
             elif child.is_sink_compound:
-                # Pure sink compound (not in PKS library) - use reward policy directly
-                reward = self.reward_policy.calculate_reward(child, context)
+                # Pure sink compound (not in PKS library) - already marked as terminal
+                pass
+
             else:
-                # Non-sink, non-PKS: standard rollout
+                # Non-sink, non-PKS: run rollout for potential terminal detection
                 result = self.rollout_policy.rollout(child, context)
 
                 if result.terminal:
@@ -709,7 +704,9 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
                     if "retrotide_agent" in result.metadata:
                         self._store_retrotide_result_from_rollout(child, result)
 
-                reward = result.reward
+            # ALWAYS use reward_policy for reward calculation (dense rewards)
+            # This ensures SA scores are computed for ALL nodes, not just terminals
+            reward = self.reward_policy.calculate_reward(child, context)
 
             self.backpropagate(child, reward)
 

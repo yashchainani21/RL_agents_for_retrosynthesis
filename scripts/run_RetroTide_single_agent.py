@@ -8,7 +8,7 @@ root = Node(PKS_product = None,
             depth = 0)
 
 mcts = MCTS(root = root,
-            target_molecule = Chem.MolFromSmiles("CCCCC=CCCC(=O)O"), # OC(CC(O)CC(O)=O)/C=C/C1=CC=CC=C1 # CCCCCC(=O)O # O=C1C=CCC(CO)O1 # OC(CC(O)CC(O)=O)C=CC1=CC=CC=C1
+            target_molecule = Chem.MolFromSmiles("O=C1C=CCC(C=Cc2ccccc2)O1"), # OC(CC(O)CC(O)=O)/C=C/C1=CC=CC=C1 # CCCCCC(=O)O # O=C1C=CCC(CO)O1 # OC(CC(O)CC(O)=O)C=CC1=CC=CC=C1
             max_depth = 15,
             total_iterations = 150,
             maxPKSDesignsRetroTide = 1000,

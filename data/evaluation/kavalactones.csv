@@ -1,0 +1,15 @@
+Name,SMILES
+Kavain,COC1=CC(OC(C=CC2=CC=CC=C2)C1)=O
+Yangonin,COC1=CC=C(C=CC2=CC(OC)=CC(O2)=O)C=C1
+10-methoxyyangonin,COC1=CC(OC)=C(C=CC2=CC(OC)=CC(O2)=O)C=C1
+11-methoxyyangonin,COC1=C(OC)C=C(C=CC2=CC(OC)=CC(O2)=O)C=C1
+"5,6-dihydroyangonin",COC1=CC(OC(C=CC2=CC=C(OC)C=C2)C1)=O
+"5,6,7,8-tetrahydroyangonin",COC1=CC(OC(CCC2=CC=C(OC)C=C2)C1)=O
+Desmethoxyyangonin,COC1=CC(OC(C=CC2=CC=CC=C2)=C1)=O
+11-methoxy-12-hydroxydehydrokavain,COC1=CC=C(C=CC2=CC(OC)=CC(O2)=O)C=C1O
+"7,8-dihydroyangonin",COC1=CC=C(CCC2=CC(OC)=CC(O2)=O)C=C1
+5-hydroxykavain,COC1=CC(OC(C=CC2=CC=CC=C2)C1O)=O
+"7,8-dihydrokavain",COC1=CC(OC(CCC2=CC=CC=C2)C1)=O
+"5,6-dehydromethysticin",COC1=CC(OC(C=CC2=CC3=C(OCO3)C=C2)=C1)=O
+Methysticin,COC1=CC(OC(C=CC2=CC3=C(OCO3)C=C2)C1)=O
+"7,8-dihydromethysticin",COC1=CC(OC(CCC2=CC3=C(OCO3)C=C2)C1)=O

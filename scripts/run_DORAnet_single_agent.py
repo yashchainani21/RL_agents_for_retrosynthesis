@@ -189,7 +189,7 @@ def main(target_smiles: str,
         stop_on_first_pathway: If True, stop MCTS as soon as a complete pathway is found.
             Useful for benchmarking time-to-first-solution. Default False.
     """
-    create_interactive_visualization = False
+    create_interactive_visualization = True
     enable_iteration_viz = False
     iteration_interval = 1
     auto_open_iteration_viz = False

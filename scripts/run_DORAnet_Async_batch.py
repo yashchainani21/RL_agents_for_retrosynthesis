@@ -180,7 +180,7 @@ def main(
             ensuring iterations are not wasted. Default True.
     """
     # ---- Runner configuration ----
-    create_interactive_visualization = False
+    create_interactive_visualization = True
     enable_iteration_viz = False
     iteration_interval = 1
     auto_open_iteration_viz = False
@@ -327,14 +327,14 @@ def main(
             agent=agent,
             output_path=str(interactive_path),
             molecule_img_size=(250, 250),
-            auto_open=True,
+            auto_open=False,
         )
 
         create_pathways_interactive_html(
             agent=agent,
             output_path=str(pathways_path),
             molecule_img_size=(250, 250),
-            auto_open=True,
+            auto_open=False,
         )
 
         print("\n" + "=" * 70)

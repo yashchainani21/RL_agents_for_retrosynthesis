@@ -2021,7 +2021,9 @@ class DORAnetMCTS:
                 terminals_found = 0
                 rollouts_performed = 0
 
-                # Process each child: PKS matches get rollout, pure sinks get reward
+                # Process each child:
+                # - Rollout policy: determines terminal status (RetroTide spawning)
+                # - Reward policy: ALWAYS computes the reward (dense SA scores for all nodes)
                 for child in new_children:
                     child.created_at_iteration = iteration
 
@@ -2029,8 +2031,7 @@ class DORAnetMCTS:
                     is_pks_library_match = self._is_in_pks_library(child.smiles or "")
 
                     if is_pks_library_match:
-                        # PKS library matches: always run rollout (even if sink compound)
-                        # This enables RetroTide spawning for PKS verification
+                        # PKS library matches: run rollout for RetroTide verification
                         print(f"[DORAnet] Fragment {child.smiles} is PKS library match - "
                               f"attempting RetroTide (sink={child.is_sink_compound})")
 
@@ -2043,27 +2044,20 @@ class DORAnetMCTS:
 
                             if "retrotide_agent" in result.metadata:
                                 self._store_retrotide_result_from_rollout(child, result)
-
-                            reward = result.reward
                         else:
-                            # RetroTide failed - fall back to sink compound reward if applicable
+                            # RetroTide failed - check if sink compound counts as terminal
                             if child.is_sink_compound:
-                                reward = self.reward_policy.calculate_reward(child, context)
-                                if reward > 0:
-                                    terminals_found += 1
-                            else:
-                                reward = result.reward
+                                terminals_found += 1
 
                         if not isinstance(self.rollout_policy, NoOpRolloutPolicy):
                             rollouts_performed += 1
 
                     elif child.is_sink_compound:
-                        # Pure sink compound (not in PKS library) - use reward policy directly
-                        reward = self.reward_policy.calculate_reward(child, context)
-                        if reward > 0:
-                            terminals_found += 1
+                        # Pure sink compound (not in PKS library) - counts as terminal
+                        terminals_found += 1
+
                     else:
-                        # Non-sink, non-PKS: standard rollout
+                        # Non-sink, non-PKS: run rollout for potential terminal detection
                         result = self.rollout_policy.rollout(child, context)
 
                         if result.terminal:
@@ -2077,7 +2071,9 @@ class DORAnetMCTS:
                         if not isinstance(self.rollout_policy, NoOpRolloutPolicy):
                             rollouts_performed += 1
 
-                        reward = result.reward
+                    # ALWAYS use reward_policy for reward calculation (dense rewards)
+                    # This ensures SA scores are computed for ALL nodes, not just terminals
+                    reward = self.reward_policy.calculate_reward(child, context)
 
                     self.backpropagate(child, reward)
 
