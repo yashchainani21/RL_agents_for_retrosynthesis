@@ -66,9 +66,9 @@ This document summarizes the current strengths of the RL Agents for Retrosynthes
 **Impact**: More accurate node value estimates would improve search efficiency and pathway quality.
 
 #### 2. True Rollout/Simulation Phase
-**Current State**: MCTS performs selection + expansion but no random rollout
+**Current State**: MCTS performs selection + expansion + terminal detection (via `TerminalDetector`) but no random rollout simulation. The previous "rollout" was a misnomer — it was post-expansion terminal detection (e.g., RetroTide verification), now refactored as `TerminalDetector`.
 
-**Recommendation**: Implement lightweight rollout policy:
+**Recommendation**: Implement lightweight rollout simulation:
 - Random reaction selection to leaf nodes
 - Or use a trained policy network for guided rollouts
 - Average rollout outcomes for more robust value estimates
@@ -272,7 +272,7 @@ python scripts/run_DORAnet_single_agent.py --smiles "CCCCCCCCC(=O)O" --name nona
 ### Medium Priority (High Impact, Higher Effort)
 4. **Learned value function** - Requires training data and ML pipeline
 5. **MPI support** - Enables HPC scaling
-6. **True rollout phase** - Fundamental MCTS improvement
+6. **True rollout/simulation phase** - Fundamental MCTS improvement (distinct from terminal detection)
 
 ### Lower Priority (Nice to Have)
 7. **Web interface** - Broader accessibility

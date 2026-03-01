@@ -17,7 +17,11 @@ if str(REPO_ROOT) not in sys.path:
 
 from DORAnet_agent.async_expansion_mcts import AsyncExpansionDORAnetMCTS
 from DORAnet_agent.node import Node
-from DORAnet_agent.policies import PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck
+from DORAnet_agent.policies import (
+    PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck,
+    PKSSimilarityRewardPolicy,
+)
+from DORAnet_agent.policies.terminal_detection import SimilarityGuidedRetroTideDetector
 
 
 class _FakeExecutor:
@@ -280,6 +284,10 @@ def test_pks_policy_terminal_detection_in_async_context(
     """
     Test that when a fragment has high PKS similarity, it receives high reward.
     
+    Uses the new TerminalDetector + RewardPolicy API:
+    - SimilarityGuidedRetroTideDetector for terminal detection
+    - PKSSimilarityRewardPolicy for similarity-based reward computation
+    
     Note: Terminal marking only occurs when the SMILES exactly matches the
     agent's pks_library AND RetroTide succeeds. This test verifies that high
     similarity (1.0 for exact match) results in high reward via backpropagation.
@@ -304,11 +312,16 @@ def test_pks_policy_terminal_detection_in_async_context(
         _FakeExecutor,
     )
 
-    pks_policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(
+    # New API: separate terminal detection from reward computation
+    terminal_detector = SimilarityGuidedRetroTideDetector(
         pks_building_blocks_path=str(pks_building_blocks_path),
-        similarity_threshold=0.9,
+        retrotide_spawn_threshold=0.9,
         mcs_timeout=1.0,
         atom_count_tolerance=0.5,
+    )
+    reward_policy = PKSSimilarityRewardPolicy(
+        pks_building_blocks_path=str(pks_building_blocks_path),
+        similarity_exponent=2.0,
     )
 
     agent = AsyncExpansionDORAnetMCTS(
@@ -319,7 +332,8 @@ def test_pks_policy_terminal_detection_in_async_context(
         use_enzymatic=True,
         use_synthetic=False,
         num_workers=1,
-        rollout_policy=pks_policy,
+        terminal_detector=terminal_detector,
+        reward_policy=reward_policy,
         MW_multiple_to_exclude=4.0,  # PKS building blocks are typically 200-400 MW
     )
 
@@ -331,7 +345,7 @@ def test_pks_policy_terminal_detection_in_async_context(
     assert child.smiles == sample_pks_smiles
     
     # An exact PKS match should have similarity = 1.0
-    # The reward should be high (similarity = 1.0) even without terminal marking
+    # PKSSimilarityRewardPolicy computes reward based on similarity to PKS building blocks
     # (Terminal marking requires pks_library match + RetroTide success)
     assert child.visits >= 1
     assert child.value >= 0.9  # Should have received high similarity reward
@@ -342,7 +356,11 @@ def test_pks_policy_with_multiple_inflight_expansions(
 ):
     """
     Test that PKS policy works correctly when multiple expansions complete
-    and need rollout evaluation (simulating concurrent expansion behavior).
+    and need terminal detection and reward evaluation.
+    
+    Uses the new TerminalDetector + RewardPolicy API:
+    - SimilarityGuidedRetroTideDetector for terminal detection
+    - PKSSimilarityRewardPolicy for similarity-based reward computation
     
     This test verifies:
     1. Multiple expansions are processed correctly
@@ -401,11 +419,16 @@ def test_pks_policy_with_multiple_inflight_expansions(
     root_mol = Chem.MolFromSmiles("CCCCC(=O)O")
     root = Node(fragment=root_mol, parent=None, depth=0, provenance="target")
 
-    pks_policy = PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck(
+    # New API: separate terminal detection from reward computation
+    terminal_detector = SimilarityGuidedRetroTideDetector(
         pks_building_blocks_path=str(pks_building_blocks_path),
-        similarity_threshold=0.9,
+        retrotide_spawn_threshold=0.9,
         mcs_timeout=0.5,
         atom_count_tolerance=0.5,
+    )
+    reward_policy = PKSSimilarityRewardPolicy(
+        pks_building_blocks_path=str(pks_building_blocks_path),
+        similarity_exponent=2.0,
     )
 
     agent = AsyncExpansionDORAnetMCTS(
@@ -417,7 +440,8 @@ def test_pks_policy_with_multiple_inflight_expansions(
         use_enzymatic=True,
         use_synthetic=False,
         num_workers=2,
-        rollout_policy=pks_policy,
+        terminal_detector=terminal_detector,
+        reward_policy=reward_policy,
         MW_multiple_to_exclude=4.0,  # PKS building blocks are typically 200-400 MW
     )
 
@@ -942,7 +966,8 @@ class TestPKSSinkCompoundPriority:
     def test_non_sink_non_pks_uses_standard_rollout(
         self, monkeypatch, sample_molecule
     ):
-        """Non-sink, non-PKS compounds should use standard rollout."""
+        """Non-sink, non-PKS compounds should use standard terminal detection,
+        and reward policy is ALWAYS called for reward computation."""
         test_smiles = "CCCCCC"  # Hexane - neither sink nor PKS
         canonical_smiles = _canonicalize_smiles(test_smiles)
 
@@ -991,12 +1016,13 @@ class TestPKSSinkCompoundPriority:
 
         agent.run()
 
-        # Verify rollout WAS called (standard case)
+        # Verify terminal detection (via rollout shim) WAS called
         assert canonical_smiles in mock_rollout.calls, \
-            "Rollout should be called for non-sink, non-PKS compounds"
-        # Verify reward policy was NOT called
-        assert canonical_smiles not in mock_reward.calls, \
-            "Reward policy should not be called when rollout handles reward"
+            "Terminal detection (rollout shim) should be called for non-sink, non-PKS compounds"
+        # In the new architecture, reward policy is ALWAYS called for reward computation
+        # (terminal detection is separated from reward calculation)
+        assert canonical_smiles in mock_reward.calls, \
+            "Reward policy should always be called for reward computation"
 
 
 # =============================================================================
