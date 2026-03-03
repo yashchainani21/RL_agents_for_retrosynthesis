@@ -56,6 +56,8 @@ class MockNode:
         reaction_name: Optional[str] = None,
         reactants_smiles: Optional[List[str]] = None,
         products_smiles: Optional[List[str]] = None,
+        feasibility_score: Optional[float] = None,
+        enthalpy_of_reaction: Optional[float] = None,
     ):
         self._smiles = smiles
         self.fragment = Chem.MolFromSmiles(smiles) if smiles else None
@@ -72,6 +74,8 @@ class MockNode:
         self.reaction_name = reaction_name
         self.reactants_smiles = reactants_smiles or []
         self.products_smiles = products_smiles or []
+        self.feasibility_score = feasibility_score
+        self.enthalpy_of_reaction = enthalpy_of_reaction
         self.created_at_iteration = 0
         self.expanded_at_iteration = None
         self.selected_at_iterations = []
