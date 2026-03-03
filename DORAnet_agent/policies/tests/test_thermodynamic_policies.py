@@ -1,12 +1,11 @@
 """
-Unit tests for thermodynamic-scaled rollout and reward policies.
+Unit tests for thermodynamic-scaled reward policies.
 
 These tests verify:
 1. Sigmoid transformation function
 2. Single node feasibility scoring
 3. Pathway feasibility aggregation
-4. ThermodynamicScaledRolloutPolicy wrapper
-5. ThermodynamicScaledRewardPolicy wrapper
+4. ThermodynamicScaledRewardPolicy wrapper
 """
 
 import pytest
@@ -18,12 +17,9 @@ from DORAnet_agent.policies.thermodynamic import (
     sigmoid_transform,
     get_node_feasibility_score,
     get_pathway_feasibility,
-    ThermodynamicScaledRolloutPolicy,
     ThermodynamicScaledRewardPolicy,
 )
 from DORAnet_agent.policies import (
-    RolloutResult,
-    NoOpRolloutPolicy,
     SparseTerminalRewardPolicy,
 )
 
@@ -251,185 +247,6 @@ class TestGetPathwayFeasibility:
         assert len(scores) == 1
 
 
-class TestThermodynamicScaledRolloutPolicy:
-    """Tests for rollout policy wrapper."""
-
-    def test_scales_reward(self):
-        """Should scale base reward by pathway feasibility."""
-        # Create a mock base policy that returns fixed reward
-        base_policy = MagicMock()
-        base_policy.rollout.return_value = RolloutResult(reward=1.0, terminal=False)
-        base_policy.name = "MockPolicy"
-
-        scaled_policy = ThermodynamicScaledRolloutPolicy(
-            base_policy=base_policy,
-            feasibility_weight=1.0,
-        )
-
-        # Create node with known feasibility
-        node = MockNode(provenance="enzymatic", feasibility_score=0.5)
-
-        result = scaled_policy.rollout(node, {})
-
-        # With weight=1.0 and pathway_feas=0.5, reward should be 1.0 * 0.5 = 0.5
-        assert result.reward == pytest.approx(0.5, rel=0.01)
-        assert result.metadata["base_reward"] == 1.0
-        assert result.metadata["pathway_feasibility"] == pytest.approx(0.5, rel=0.01)
-
-    def test_zero_weight_returns_unchanged(self):
-        """Weight=0 should return base reward unchanged."""
-        base_policy = MagicMock()
-        base_policy.rollout.return_value = RolloutResult(reward=0.8, terminal=False)
-        base_policy.name = "MockPolicy"
-
-        scaled_policy = ThermodynamicScaledRolloutPolicy(
-            base_policy=base_policy,
-            feasibility_weight=0.0,
-        )
-
-        node = MockNode(provenance="enzymatic", feasibility_score=0.1)
-        result = scaled_policy.rollout(node, {})
-
-        assert result.reward == pytest.approx(0.8, rel=0.01)
-
-    def test_half_weight_blends(self):
-        """Weight=0.5 should blend base reward with feasibility."""
-        base_policy = MagicMock()
-        base_policy.rollout.return_value = RolloutResult(reward=1.0, terminal=False)
-        base_policy.name = "MockPolicy"
-
-        scaled_policy = ThermodynamicScaledRolloutPolicy(
-            base_policy=base_policy,
-            feasibility_weight=0.5,
-        )
-
-        # Node with 0.5 feasibility
-        node = MockNode(provenance="enzymatic", feasibility_score=0.5)
-        result = scaled_policy.rollout(node, {})
-
-        # scaling_factor = 0.5 + 0.5 * 0.5 = 0.75
-        # reward = 1.0 * 0.75 = 0.75
-        assert result.reward == pytest.approx(0.75, rel=0.01)
-        assert result.metadata["feasibility_scaling_factor"] == pytest.approx(0.75, rel=0.01)
-
-    def test_zero_base_reward_unchanged(self):
-        """Zero base reward should remain zero without scaling."""
-        base_policy = MagicMock()
-        base_policy.rollout.return_value = RolloutResult(reward=0.0, terminal=False)
-        base_policy.name = "MockPolicy"
-
-        scaled_policy = ThermodynamicScaledRolloutPolicy(
-            base_policy=base_policy,
-            feasibility_weight=1.0,
-        )
-
-        node = MockNode(provenance="enzymatic", feasibility_score=0.5)
-        result = scaled_policy.rollout(node, {})
-
-        assert result.reward == 0.0
-        # Metadata should not have scaling info since we early-return
-        assert "base_reward" not in result.metadata
-
-    def test_preserves_terminal_status(self):
-        """Should preserve terminal flag from base policy."""
-        base_policy = MagicMock()
-        base_policy.rollout.return_value = RolloutResult(
-            reward=1.0, terminal=True, terminal_type="pks_terminal"
-        )
-        base_policy.name = "MockPolicy"
-
-        scaled_policy = ThermodynamicScaledRolloutPolicy(base_policy=base_policy)
-        node = MockNode(provenance="target")
-        result = scaled_policy.rollout(node, {})
-
-        assert result.terminal is True
-        assert result.terminal_type == "pks_terminal"
-
-    def test_preserves_base_metadata(self):
-        """Should preserve metadata from base policy."""
-        base_policy = MagicMock()
-        base_policy.rollout.return_value = RolloutResult(
-            reward=1.0, terminal=False, metadata={"base_key": "base_value"}
-        )
-        base_policy.name = "MockPolicy"
-
-        scaled_policy = ThermodynamicScaledRolloutPolicy(base_policy=base_policy)
-        node = MockNode(provenance="target")
-        result = scaled_policy.rollout(node, {})
-
-        assert result.metadata["base_key"] == "base_value"
-        assert "pathway_feasibility" in result.metadata
-
-    def test_name_property(self):
-        """Should return descriptive name."""
-        base_policy = NoOpRolloutPolicy()
-        scaled_policy = ThermodynamicScaledRolloutPolicy(
-            base_policy=base_policy,
-            feasibility_weight=0.8,
-        )
-
-        name = scaled_policy.name
-        assert "ThermodynamicScaled" in name
-        assert "NoOp" in name
-        assert "0.8" in name
-
-    def test_repr(self):
-        """Should return informative repr."""
-        base_policy = NoOpRolloutPolicy()
-        scaled_policy = ThermodynamicScaledRolloutPolicy(
-            base_policy=base_policy,
-            feasibility_weight=0.8,
-            sigmoid_k=0.3,
-            sigmoid_threshold=20.0,
-            aggregation="minimum",
-        )
-
-        repr_str = repr(scaled_policy)
-        assert "ThermodynamicScaledRolloutPolicy" in repr_str
-        assert "0.8" in repr_str
-        assert "0.3" in repr_str
-        assert "20.0" in repr_str
-        assert "minimum" in repr_str
-
-    def test_multi_node_pathway_scaling(self):
-        """Should correctly scale using multi-node pathway feasibility."""
-        base_policy = MagicMock()
-        base_policy.rollout.return_value = RolloutResult(reward=1.0, terminal=False)
-        base_policy.name = "MockPolicy"
-
-        scaled_policy = ThermodynamicScaledRolloutPolicy(
-            base_policy=base_policy,
-            feasibility_weight=1.0,
-        )
-
-        # Create a 3-node pathway
-        root = MockNode(provenance="target")
-        child1 = MockNode(provenance="enzymatic", feasibility_score=0.81, parent=root)
-        child2 = MockNode(provenance="enzymatic", feasibility_score=0.81, parent=child1)
-
-        result = scaled_policy.rollout(child2, {})
-
-        # Geometric mean of [target=1.0, child1=0.81, child2=0.81]
-        # = (1.0 * 0.81 * 0.81)^(1/3) = (0.6561)^(1/3) ≈ 0.869
-        expected_feas = (1.0 * 0.81 * 0.81) ** (1.0 / 3.0)
-        assert result.metadata["pathway_feasibility"] == pytest.approx(expected_feas, rel=0.01)
-        assert result.reward == pytest.approx(expected_feas, rel=0.01)
-
-    def test_passes_context_to_base_policy(self):
-        """Should pass context to base policy."""
-        base_policy = MagicMock()
-        base_policy.rollout.return_value = RolloutResult(reward=1.0, terminal=False)
-        base_policy.name = "MockPolicy"
-
-        scaled_policy = ThermodynamicScaledRolloutPolicy(base_policy=base_policy)
-        node = MockNode(provenance="target")
-        context = {"key": "value"}
-
-        scaled_policy.rollout(node, context)
-
-        base_policy.rollout.assert_called_once_with(node, context)
-
-
 class TestThermodynamicScaledRewardPolicy:
     """Tests for reward policy wrapper."""
 
@@ -572,48 +389,3 @@ class TestThermodynamicScaledRewardPolicy:
         base_policy.calculate_reward.assert_called_once_with(node, context)
 
 
-class TestIntegrationBothPolicies:
-    """Integration tests using both rollout and reward policies together."""
-
-    def test_consistent_scaling_across_policies(self):
-        """Both policies should compute the same pathway feasibility."""
-        # Create a multi-node pathway
-        root = MockNode(provenance="target")
-        child1 = MockNode(provenance="enzymatic", feasibility_score=0.8, parent=root)
-        child2 = MockNode(
-            provenance="synthetic",
-            enthalpy_of_reaction=0.0,
-            parent=child1,
-            is_sink_compound=True,
-        )
-
-        # Create base policies
-        base_rollout = MagicMock()
-        base_rollout.rollout.return_value = RolloutResult(reward=1.0, terminal=False)
-        base_rollout.name = "MockRollout"
-
-        base_reward = SparseTerminalRewardPolicy(sink_terminal_reward=1.0)
-
-        # Create scaled policies with same parameters
-        scaled_rollout = ThermodynamicScaledRolloutPolicy(
-            base_policy=base_rollout,
-            feasibility_weight=1.0,
-        )
-        scaled_reward = ThermodynamicScaledRewardPolicy(
-            base_policy=base_reward,
-            feasibility_weight=1.0,
-        )
-
-        # Get results
-        rollout_result = scaled_rollout.rollout(child2, {})
-        reward_result = scaled_reward.calculate_reward(child2, {})
-
-        # Both should use the same pathway feasibility
-        assert rollout_result.metadata["pathway_feasibility"] == pytest.approx(
-            reward_result / 1.0,  # reward_result = base_reward * pathway_feas
-            rel=0.01,
-        )
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

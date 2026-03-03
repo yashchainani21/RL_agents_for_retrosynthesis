@@ -15,7 +15,7 @@ import pickle
 import uuid
 from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from rdkit import Chem
 from rdkit import RDLogger
@@ -28,11 +28,13 @@ from .mcts import (
 )
 from .node import Node
 from .policies import (
-    RolloutPolicy,
+    TerminalDetector,
+    TerminalDetectionResult,
     RewardPolicy,
-    NoOpRolloutPolicy,
-    SpawnRetroTideOnDatabaseCheck,
+    NoOpTerminalDetector,
+    VerifyWithRetroTide,
     SparseTerminalRewardPolicy,
+    SAScore_and_TerminalRewardPolicy,
 )
 
 
@@ -412,11 +414,12 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
     """
     DORAnet MCTS with asynchronous expansion using multiprocessing.
 
-    Expansion is offloaded to worker processes while selection, rollout,
-    reward calculation, and backpropagation happen on the main process.
+    Expansion is offloaded to worker processes while selection, terminal
+    detection (RetroTide verification), reward calculation, and
+    backpropagation happen on the main process.
 
-    Supports the same rollout_policy and reward_policy parameters as
-    DORAnetMCTS. Rollouts are performed on the main process after
+    Supports the same terminal_detector and reward_policy parameters as
+    DORAnetMCTS. Terminal detection is performed on the main process after
     expansion results are integrated (Option B architecture).
     """
 
@@ -426,7 +429,6 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
         target_molecule: Chem.Mol,
         num_workers: Optional[int] = None,
         max_inflight_expansions: Optional[int] = None,
-        reward_fn: Optional[Callable[[Node], float]] = None,  # Deprecated
         **kwargs,
     ) -> None:
         """
@@ -435,20 +437,12 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
             target_molecule: The molecule to fragment.
             num_workers: Number of worker processes. Defaults to CPU count - 1.
             max_inflight_expansions: Max concurrent expansions. Defaults to num_workers.
-            reward_fn: DEPRECATED. Use reward_policy instead via kwargs.
             **kwargs: Additional arguments passed to DORAnetMCTS.__init__().
         """
         super().__init__(root=root, target_molecule=target_molecule, **kwargs)
         self.num_workers = self._get_optimal_workers(num_workers)
         self.max_inflight_expansions = max_inflight_expansions or self.num_workers
         self._pending: Dict[Any, Dict[str, Any]] = {}
-
-        # Handle deprecated reward_fn parameter
-        if reward_fn is not None:
-            print("[DEPRECATED] reward_fn parameter is deprecated. Use reward_policy instead.")
-            self._legacy_reward_fn = reward_fn
-        else:
-            self._legacy_reward_fn = None
 
     def _get_optimal_workers(self, requested_workers: Optional[int]) -> int:
         cpu_count = os.cpu_count() or 4
@@ -578,8 +572,8 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
         """
         Integrate expansion results from a worker process.
 
-        Creates child nodes from fragments, then applies rollout and reward
-        policies on the main process.
+        Creates child nodes from fragments, then applies terminal detection
+        and reward policies on the main process.
 
         Args:
             leaf: The parent node that was expanded.
@@ -587,7 +581,7 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
             iteration: The iteration number when expansion was submitted.
         """
         new_children: List[Node] = []
-        context = self._build_rollout_context()
+        context = self._build_policy_context()
 
         for frag in fragments:
             smiles = frag["smiles"]
@@ -668,41 +662,41 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
         leaf.expanded_at_iteration = iteration
         leaf.is_expansion_pending = False
 
-        # Apply rollout and reward policies to each child (on main process)
-        # Rollout policy: determines terminal status (RetroTide spawning)
+        # Apply terminal detection and reward policies to each child (on main process)
+        # Terminal detector: determines terminal status (RetroTide verification)
         # Reward policy: ALWAYS computes the reward (dense SA scores for all nodes)
         for child in new_children:
             # Check if this node matches PKS library (potential for RetroTide verification)
             is_pks_library_match = self._is_in_pks_library(child.smiles or "")
 
             if is_pks_library_match:
-                # PKS library matches: run rollout for RetroTide verification
+                # PKS library matches: run terminal detection for RetroTide verification
                 print(f"[DORAnet] Fragment {child.smiles} is PKS library match - "
                       f"attempting RetroTide (sink={child.is_sink_compound})")
 
-                result = self.rollout_policy.rollout(child, context)
+                detection = self.terminal_detector.detect(child, context)
 
-                if result.terminal:
+                if detection.terminal:
                     child.is_pks_terminal = True
                     child.expanded = True
 
-                    if "retrotide_agent" in result.metadata:
-                        self._store_retrotide_result_from_rollout(child, result)
+                    if "retrotide_agent" in detection.metadata:
+                        self._store_retrotide_result(child, detection)
 
             elif child.is_sink_compound:
                 # Pure sink compound (not in PKS library) - already marked as terminal
                 pass
 
             else:
-                # Non-sink, non-PKS: run rollout for potential terminal detection
-                result = self.rollout_policy.rollout(child, context)
+                # Non-sink, non-PKS: run terminal detection for potential verification
+                detection = self.terminal_detector.detect(child, context)
 
-                if result.terminal:
+                if detection.terminal:
                     child.is_pks_terminal = True
                     child.expanded = True
 
-                    if "retrotide_agent" in result.metadata:
-                        self._store_retrotide_result_from_rollout(child, result)
+                    if "retrotide_agent" in detection.metadata:
+                        self._store_retrotide_result(child, detection)
 
             # ALWAYS use reward_policy for reward calculation (dense rewards)
             # This ensures SA scores are computed for ALL nodes, not just terminals
@@ -743,8 +737,8 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
         """
         Execute async-expansion MCTS using a multiprocessing pool.
 
-        Expansion is offloaded to worker processes. Rollouts and reward
-        calculations happen on the main process after integration.
+        Expansion is offloaded to worker processes. Terminal detection and
+        reward calculations happen on the main process after integration.
         """
         print(f"[AsyncExpansion] Starting async MCTS with {self.num_workers} workers, "
               f"{self.total_iterations} iterations, max_inflight={self.max_inflight_expansions}")
@@ -791,13 +785,6 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
                     break
 
                 leaf.selected_at_iterations.append(iteration)
-
-                # Handle legacy reward_fn if provided (deprecated)
-                if self._legacy_reward_fn is not None:
-                    reward = self._legacy_reward_fn(leaf)
-                    self.backpropagate(leaf, reward)
-                    # When using legacy reward_fn, skip normal depth check
-                    continue
 
                 if leaf.depth >= self.max_depth:
                     reward = self.calculate_reward(leaf)

@@ -1,8 +1,9 @@
 """
 Base classes for MCTS policies.
 
-This module defines the abstract interfaces that all rollout and reward
-policies must implement.
+This module defines the abstract interfaces for:
+- TerminalDetector: Post-expansion terminal detection (e.g., RetroTide verification)
+- RewardPolicy: Reward computation for nodes
 """
 
 from __future__ import annotations
@@ -17,51 +18,48 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class RolloutResult:
+class TerminalDetectionResult:
     """
-    Result from a rollout policy execution.
+    Result from a terminal detector.
+
+    Unlike RolloutResult, this does NOT carry a reward — reward computation
+    is exclusively the domain of RewardPolicy.
 
     Attributes:
-        reward: The reward value computed by the rollout.
         terminal: Whether the node should be marked as terminal (no further expansion).
-        terminal_type: Type of terminal state (e.g., "pks_terminal", "retrotide_success").
-        metadata: Policy-specific data (e.g., RetroTide results, simulation traces).
+        terminal_type: Type of terminal state (e.g., "pks_terminal").
+        metadata: Detector-specific data (e.g., RetroTide agent, results).
     """
 
-    reward: float
     terminal: bool = False
     terminal_type: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __repr__(self) -> str:
-        term_str = f", terminal={self.terminal_type}" if self.terminal else ""
-        return f"RolloutResult(reward={self.reward:.3f}{term_str})"
+        if self.terminal:
+            return f"TerminalDetectionResult(terminal=True, type={self.terminal_type})"
+        return "TerminalDetectionResult(terminal=False)"
 
 
-class RolloutPolicy(ABC):
+class TerminalDetector(ABC):
     """
-    Abstract base class for rollout policies.
+    Abstract base class for post-expansion terminal detection.
 
-    A rollout policy defines how to simulate from a leaf node to estimate
-    its value. This could be:
-    - No-op (return immediately with no reward)
-    - Random playouts
-    - Heuristic-guided simulation
-    - Model-based prediction
-    - Spawning a sub-agent (e.g., RetroTide)
+    A terminal detector determines whether a newly expanded child node
+    should be marked as terminal. This replaces the old RolloutPolicy
+    abstraction, making explicit that no rollout/simulation is performed.
 
-    The rollout is executed on child nodes after expansion, following
-    classical MCTS:
-        Selection → Expansion → Rollout (on children) → Backpropagation
+    Typical usage: checking if a fragment matches the PKS library and
+    spawning RetroTide to verify that a PKS assembly line can produce it.
     """
 
     @abstractmethod
-    def rollout(self, node: "Node", context: Dict[str, Any]) -> RolloutResult:
+    def detect(self, node: "Node", context: Dict[str, Any]) -> TerminalDetectionResult:
         """
-        Perform a rollout from the given node.
+        Check whether a node should be marked as terminal.
 
         Args:
-            node: The node to perform rollout from (typically a newly expanded child).
+            node: The node to check (typically a newly expanded child).
             context: Dictionary containing MCTS state, which may include:
                 - target_molecule: The synthesis target (RDKit Mol)
                 - pks_library: Set of PKS product SMILES
@@ -70,7 +68,7 @@ class RolloutPolicy(ABC):
                 - agent: Reference to the DORAnetMCTS instance
 
         Returns:
-            RolloutResult containing reward, terminal status, and metadata.
+            TerminalDetectionResult with terminal status and metadata.
         """
         pass
 
@@ -89,10 +87,8 @@ class RewardPolicy(ABC):
     Abstract base class for reward computation policies.
 
     A reward policy defines how to compute the immediate reward for a node
-    based on its properties. This is separate from rollout—rewards can be
-    computed without simulation (e.g., checking if a fragment matches a database).
-
-    Multiple reward policies can be composed using ComposedRewardPolicy.
+    based on its properties. Rewards are computed without simulation
+    (e.g., checking terminal status, computing SA score).
     """
 
     @abstractmethod

@@ -2,14 +2,13 @@
 Monte Carlo Tree Search agent that explores DORAnet retro-biosynthetic
 and retro-chemical transformations.
 
-This implementation supports modular rollout and reward policies:
-- Rollout policies: Define how to simulate from expanded nodes (e.g., RetroTide spawning)
-- Reward policies: Define how to compute rewards for terminal states
+This implementation supports modular terminal detection and reward policies:
+- Terminal detectors: Determine if expanded children are terminal (e.g., RetroTide verification)
+- Reward policies: Define how to compute rewards for nodes
 
-The default behavior uses sparse rewards for sink compounds (building blocks)
-and no rollouts for non-terminal nodes. To enable RetroTide rollouts, either:
-- Set spawn_retrotide=True (backward compatible alias)
-- Pass rollout_policy=SpawnRetroTideOnDatabaseCheck(...)
+The default behavior uses dense SA score rewards for non-terminal nodes and
+full terminal rewards for sink compounds and PKS-verified compounds.
+To enable RetroTide verification, pass terminal_detector=VerifyWithRetroTide(...).
 """
 
 from __future__ import annotations
@@ -34,12 +33,12 @@ import doranet.modules.synthetic as synthetic
 
 from .node import Node
 from .policies import (
-    RolloutPolicy,
+    TerminalDetector,
+    TerminalDetectionResult,
     RewardPolicy,
-    RolloutResult,
-    SpawnRetroTideOnDatabaseCheck,
-    SparseTerminalRewardPolicy,
-    NoOpRolloutPolicy,
+    VerifyWithRetroTide,
+    NoOpTerminalDetector,
+    SAScore_and_TerminalRewardPolicy,
 )
 
 # Optional RetroTide imports - may not be available in all environments
@@ -665,12 +664,9 @@ class DORAnetMCTS:
     """
     MCTS driver for DORAnet retro-fragmentation with modular policies.
 
-    Supports pluggable rollout and reward policies for flexible experimentation:
-    - Rollout policies define how to simulate from expanded nodes
+    Supports pluggable terminal detection and reward policies for flexible experimentation:
+    - Terminal detectors define how to identify terminal nodes (e.g., RetroTide verification)
     - Reward policies define how to compute rewards for nodes
-
-    For backward compatibility, spawn_retrotide=True creates a
-    SpawnRetroTideOnDatabaseCheck rollout policy automatically.
     """
 
     def __init__(
@@ -695,7 +691,6 @@ class DORAnetMCTS:
         use_bio_building_blocksDB: bool = True,
         use_PKS_building_blocksDB: bool = True,
         MW_multiple_to_exclude: float = 1.5,
-        spawn_retrotide: bool = False,
         retrotide_kwargs: Optional[Dict] = None,
         sink_terminal_reward: float = 1.0,
         selection_policy: str = "depth_biased",
@@ -708,8 +703,8 @@ class DORAnetMCTS:
         visualization_output_dir: Optional[str] = None,
         iteration_viz_interval: int = 1,
         fragment_cache_dir: Optional[str] = None,
-        # New policy parameters
-        rollout_policy: Optional[RolloutPolicy] = None,
+        # Terminal detection and reward policies
+        terminal_detector: Optional[TerminalDetector] = None,
         reward_policy: Optional[RewardPolicy] = None,
         # Early stopping parameter
         stop_on_first_pathway: bool = False,
@@ -760,9 +755,6 @@ class DORAnetMCTS:
                 Fragments with MW > target_MW * MW_multiple_to_exclude are filtered out.
                 This prevents unrealistic dimerization products from enzymatic operators.
                 Default is 1.5 (fragments up to 1.5x the target MW are allowed).
-            spawn_retrotide: Whether to spawn RetroTide searches for PKS-matching fragments.
-                This is a backward-compatible alias that creates a SpawnRetroTideOnDatabaseCheck
-                rollout policy. If rollout_policy is explicitly provided, this is ignored.
             retrotide_kwargs: Parameters passed to RetroTide MCTS agents.
             selection_policy: Node selection policy for MCTS. Options:
                 - "UCB1": Standard UCB1 (breadth-first tendency, explores all nodes at each level)
@@ -779,11 +771,12 @@ class DORAnetMCTS:
             auto_open_iteration_viz: If True, automatically open iteration visualizations in browser.
             visualization_output_dir: Directory to save visualizations (default: current directory).
             iteration_viz_interval: Generate iteration visualizations every N iterations (default: 1).
-            rollout_policy: Policy for simulating from expanded nodes to estimate value.
-                If None and spawn_retrotide=True, uses SpawnRetroTideOnDatabaseCheck.
-                If None and spawn_retrotide=False, uses NoOpRolloutPolicy (no rollouts).
+            terminal_detector: Post-expansion terminal detector for PKS verification.
+                If None, uses NoOpTerminalDetector (no terminal detection beyond sink compounds).
+                Pass VerifyWithRetroTide(...) to enable PKS verification.
             reward_policy: Policy for computing rewards for nodes.
-                If None, uses SparseTerminalRewardPolicy with sink_terminal_reward.
+                If None, uses SAScore_and_TerminalRewardPolicy with dense SA score
+                rewards for non-terminals and full rewards for terminals.
             stop_on_first_pathway: If True, stop MCTS as soon as a complete pathway is found.
                 A complete pathway is one where the terminal node and all byproducts at
                 every step are covered (sink compounds, PKS-verified, or excluded fragments).
@@ -834,14 +827,13 @@ class DORAnetMCTS:
 
         self.child_downselection_strategy = child_downselection_strategy
 
-        self.spawn_retrotide = spawn_retrotide and RETROTIDE_AVAILABLE
         self.retrotide_kwargs = retrotide_kwargs or {}
         self.sink_terminal_reward = sink_terminal_reward
         self.MW_multiple_to_exclude = MW_multiple_to_exclude
 
-        # Initialize rollout and reward policies
+        # Initialize terminal detection and reward policies
         # Policy initialization is deferred until after pks_library is loaded (see below)
-        self._rollout_policy_arg = rollout_policy
+        self._terminal_detector_arg = terminal_detector
         self._reward_policy_arg = reward_policy
 
         # Selection policy configuration
@@ -888,9 +880,6 @@ class DORAnetMCTS:
             self.fragment_cache_dir = Path(fragment_cache_dir)
         else:
             self.fragment_cache_dir = Path(self.visualization_output_dir) / ".cache" / "doranet_fragments"
-
-        if spawn_retrotide and not RETROTIDE_AVAILABLE:
-            print("[WARN] RetroTide not available - spawning disabled")
 
         # Tree tracking
         self.nodes: List[Node] = [root]
@@ -1017,44 +1006,34 @@ class DORAnetMCTS:
         if self.chemistry_helpers:
             print(f"[DORAnet] Using {len(self.chemistry_helpers)} chemistry helpers for synthetic network generation")
 
-        # Initialize rollout and reward policies (now that pks_library is loaded)
+        # Initialize reward and terminal detection policies (now that pks_library is loaded)
         self._initialize_policies()
 
     def _initialize_policies(self) -> None:
         """
-        Initialize rollout and reward policies based on constructor arguments.
+        Initialize terminal detector and reward policy based on constructor arguments.
 
         Called at the end of __init__ after all data files are loaded.
-        Handles backward compatibility with spawn_retrotide parameter.
         """
         # Initialize reward policy
         if self._reward_policy_arg is not None:
             self.reward_policy = self._reward_policy_arg
         else:
-            # Default: sparse terminal reward policy
-            self.reward_policy = SparseTerminalRewardPolicy(
+            # Default: dense SA score rewards + terminal rewards
+            self.reward_policy = SAScore_and_TerminalRewardPolicy(
                 sink_terminal_reward=self.sink_terminal_reward,
+                pks_terminal_reward=1.0,
                 pks_library=self.pks_library,
             )
 
-        # Initialize rollout policy
-        if self._rollout_policy_arg is not None:
-            # Explicit rollout policy provided - use it
-            self.rollout_policy = self._rollout_policy_arg
-        elif self.spawn_retrotide:
-            # Backward compatibility: spawn_retrotide=True creates RetroTide rollout policy
-            self.rollout_policy = SpawnRetroTideOnDatabaseCheck(
-                pks_library=self.pks_library,
-                retrotide_kwargs=self.retrotide_kwargs,
-                success_reward=1.0,
-                failure_reward=0.0,
-            )
+        # Initialize terminal detector
+        if self._terminal_detector_arg is not None:
+            self.terminal_detector = self._terminal_detector_arg
         else:
-            # Default: no rollouts (sparse rewards only)
-            self.rollout_policy = NoOpRolloutPolicy()
+            self.terminal_detector = NoOpTerminalDetector()
 
         # Log the policies being used
-        print(f"[DORAnet] Using rollout policy: {self.rollout_policy.name}")
+        print(f"[DORAnet] Using terminal detector: {self.terminal_detector.name}")
         print(f"[DORAnet] Using reward policy: {self.reward_policy.name}")
 
         # Initialize feasibility scorer for enzymatic reactions
@@ -1071,9 +1050,9 @@ class DORAnetMCTS:
         else:
             print("[DORAnet] pathermo not available - synthetic thermodynamic scoring disabled")
 
-    def _build_rollout_context(self) -> Dict[str, Any]:
+    def _build_policy_context(self) -> Dict[str, Any]:
         """
-        Build context dictionary for rollout and reward policies.
+        Build context dictionary for terminal detection and reward policies.
 
         Returns:
             Dictionary containing MCTS state for policy execution.
@@ -1784,8 +1763,9 @@ class DORAnetMCTS:
         (building blocks) are marked as terminal during expansion since
         they are known terminals with known value.
 
-        Rollouts for non-sink children (e.g., PKS matching and RetroTide
-        spawning) are handled separately in run() via the rollout policy.
+        Terminal detection for non-sink children (e.g., PKS matching and
+        RetroTide verification) is handled separately in run() via the
+        terminal detector.
 
         Returns:
             List of newly created child nodes.
@@ -1851,7 +1831,7 @@ class DORAnetMCTS:
             new_children.append(child)
 
             # Check if this fragment is a sink compound (commercially available building block)
-            # This is a cheap check for known terminals - no rollout needed
+            # This is a cheap check for known terminals - no further detection needed
             sink_type = self._get_sink_compound_type(frag_info.smiles)
             if sink_type:
                 child.is_sink_compound = True
@@ -1860,70 +1840,13 @@ class DORAnetMCTS:
                 child.expanded = True
                 type_label = "BIOLOGICAL" if sink_type == "biological" else "CHEMICAL"
                 print(f"[DORAnet] Fragment {frag_info.smiles} is a {type_label} BUILDING BLOCK")
-                # Note: Rollout and reward are handled in run() for consistency
+                # Note: Terminal detection and reward are handled in run() for consistency
             else:
                 # Non-terminal child: add to frontier for potential future selection
                 self._add_to_frontier(child)
 
         node.expanded = True
         return new_children
-
-    def _launch_retrotide_agent(self, target: Chem.Mol, source_node: Node) -> RetroTideResult:
-        """
-        Spawn a RetroTide MCTS search to synthesize the given fragment.
-
-        Args:
-            target: The fragment molecule to synthesize.
-            source_node: The DORAnet node that produced this fragment.
-        """
-        target_smiles = Chem.MolToSmiles(target)
-        print(f"[DORAnet] Spawning RetroTide search for: {target_smiles}")
-
-        source_node.retrotide_attempted = True
-        root = RetroTideNode(PKS_product=None, PKS_design=None, parent=None, depth=0)
-        agent = RetroTideMCTS(
-            root=root,
-            target_molecule=target,
-            **self.retrotide_kwargs,
-        )
-        agent.run()
-
-        # Extract results from the RetroTide agent
-        successful_nodes = getattr(agent, 'successful_nodes', set())
-        simulated_successes = getattr(agent, 'successful_simulated_designs', [])
-        num_successful = len(successful_nodes)
-        num_sim_success = len(simulated_successes)
-
-        # Get best score from successful nodes or from all nodes
-        best_score = 0.0
-        if successful_nodes:
-            best_score = 1.0  # Target was reached
-        else:
-            # Get best score from any node
-            for node in getattr(agent, 'nodes', []):
-                if hasattr(node, 'value') and node.visits > 0:
-                    avg_value = node.value / node.visits
-                    best_score = max(best_score, avg_value)
-
-        # Create result record with full traceability
-        result = RetroTideResult(
-            doranet_node_id=source_node.node_id,
-            doranet_node_smiles=source_node.smiles or "",
-            doranet_node_depth=source_node.depth,
-            doranet_node_provenance=source_node.provenance or "unknown",
-            doranet_reaction_name=source_node.reaction_name,
-            doranet_reaction_smarts=source_node.reaction_smarts,
-            doranet_reactants_smiles=source_node.reactants_smiles or [],
-            doranet_products_smiles=source_node.products_smiles or [],
-            retrotide_target_smiles=target_smiles,
-            retrotide_successful=(num_successful > 0 or num_sim_success > 0),
-            retrotide_num_successful_nodes=num_successful + num_sim_success,
-            retrotide_best_score=best_score,
-            retrotide_total_nodes=len(getattr(agent, 'nodes', [])),
-            retrotide_agent=agent,
-        )
-        self.retrotide_results.append(result)
-        return result
 
     def calculate_reward(self, node: Node) -> float:
         """
@@ -1936,7 +1859,7 @@ class DORAnetMCTS:
             Reward value computed by the reward policy.
         """
         if hasattr(self, 'reward_policy') and self.reward_policy is not None:
-            context = self._build_rollout_context()
+            context = self._build_policy_context()
             return self.reward_policy.calculate_reward(node, context)
 
         # Fallback: original sparse reward logic (for backward compatibility)
@@ -1974,11 +1897,12 @@ class DORAnetMCTS:
 
     def run(self) -> None:
         """
-        Execute the MCTS loop: Selection → Expansion → Rollout → Backpropagation.
+        Execute the MCTS loop: Selection → Expansion → Terminal Detection → Backpropagation.
 
         For each expanded child:
-        - Sink compounds: Use reward policy (known terminal, no rollout needed)
-        - Non-sink compounds: Use rollout policy to simulate and get reward
+        - Sink compounds: Use reward policy (known terminal, no detection needed)
+        - Non-sink compounds: Use terminal detector to check for PKS verification
+        - All children: Use reward policy to compute reward for backpropagation
         """
         print(f"[DORAnet] Starting MCTS with {self.total_iterations} iterations, "
               f"max_depth={self.max_depth}")
@@ -1986,7 +1910,7 @@ class DORAnetMCTS:
             print(f"[DORAnet] Early stopping enabled: will stop on first complete pathway")
 
         # Build context for policies
-        context = self._build_rollout_context()
+        context = self._build_policy_context()
 
         # Track current iteration for visualization
         self.current_iteration = 0
@@ -2019,10 +1943,10 @@ class DORAnetMCTS:
                 new_children = self.expand(leaf)
                 
                 terminals_found = 0
-                rollouts_performed = 0
+                detections_performed = 0
 
                 # Process each child:
-                # - Rollout policy: determines terminal status (RetroTide spawning)
+                # - Terminal detector: determines terminal status (RetroTide verification)
                 # - Reward policy: ALWAYS computes the reward (dense SA scores for all nodes)
                 for child in new_children:
                     child.created_at_iteration = iteration
@@ -2031,45 +1955,45 @@ class DORAnetMCTS:
                     is_pks_library_match = self._is_in_pks_library(child.smiles or "")
 
                     if is_pks_library_match:
-                        # PKS library matches: run rollout for RetroTide verification
+                        # PKS library matches: run terminal detection for RetroTide verification
                         print(f"[DORAnet] Fragment {child.smiles} is PKS library match - "
                               f"attempting RetroTide (sink={child.is_sink_compound})")
 
-                        result = self.rollout_policy.rollout(child, context)
+                        detection = self.terminal_detector.detect(child, context)
 
-                        if result.terminal:
+                        if detection.terminal:
                             child.is_pks_terminal = True
                             child.expanded = True
                             terminals_found += 1
 
-                            if "retrotide_agent" in result.metadata:
-                                self._store_retrotide_result_from_rollout(child, result)
+                            if "retrotide_agent" in detection.metadata:
+                                self._store_retrotide_result(child, detection)
                         else:
                             # RetroTide failed - check if sink compound counts as terminal
                             if child.is_sink_compound:
                                 terminals_found += 1
 
-                        if not isinstance(self.rollout_policy, NoOpRolloutPolicy):
-                            rollouts_performed += 1
+                        if not isinstance(self.terminal_detector, NoOpTerminalDetector):
+                            detections_performed += 1
 
                     elif child.is_sink_compound:
                         # Pure sink compound (not in PKS library) - counts as terminal
                         terminals_found += 1
 
                     else:
-                        # Non-sink, non-PKS: run rollout for potential terminal detection
-                        result = self.rollout_policy.rollout(child, context)
+                        # Non-sink, non-PKS: run terminal detection for potential verification
+                        detection = self.terminal_detector.detect(child, context)
 
-                        if result.terminal:
+                        if detection.terminal:
                             child.is_pks_terminal = True
                             child.expanded = True
                             terminals_found += 1
 
-                            if "retrotide_agent" in result.metadata:
-                                self._store_retrotide_result_from_rollout(child, result)
+                            if "retrotide_agent" in detection.metadata:
+                                self._store_retrotide_result(child, detection)
 
-                        if not isinstance(self.rollout_policy, NoOpRolloutPolicy):
-                            rollouts_performed += 1
+                        if not isinstance(self.terminal_detector, NoOpTerminalDetector):
+                            detections_performed += 1
 
                     # ALWAYS use reward_policy for reward calculation (dense rewards)
                     # This ensures SA scores are computed for ALL nodes, not just terminals
@@ -2092,8 +2016,8 @@ class DORAnetMCTS:
                     f"created {len(new_children)} children",
                     f"{terminals_found} terminals",
                 ]
-                if rollouts_performed > 0:
-                    log_parts.append(f"{rollouts_performed} rollouts")
+                if detections_performed > 0:
+                    log_parts.append(f"{detections_performed} RetroTide checks")
                 print(", ".join(log_parts))
 
             else:
@@ -2134,17 +2058,17 @@ class DORAnetMCTS:
         print(f"[DORAnet] SMILES cache: {cache_info.hits} hits, {cache_info.misses} misses "
               f"({hit_rate:.1f}% hit rate), {cache_info.currsize}/{cache_info.maxsize} cached")
 
-    def _store_retrotide_result_from_rollout(
-        self, node: Node, rollout_result: RolloutResult
+    def _store_retrotide_result(
+        self, node: Node, detection_result: TerminalDetectionResult
     ) -> None:
         """
-        Store RetroTide results from a rollout policy for traceability.
+        Store RetroTide results from a terminal detection for traceability.
 
         Args:
-            node: The node that was rolled out.
-            rollout_result: The result from the rollout policy.
+            node: The node that was checked.
+            detection_result: The result from the terminal detector.
         """
-        metadata = rollout_result.metadata
+        metadata = detection_result.metadata
         result = RetroTideResult(
             doranet_node_id=node.node_id,
             doranet_node_smiles=node.smiles or "",
@@ -2614,7 +2538,8 @@ class DORAnetMCTS:
             f.write(f"Use PKS building blocks: {self.use_PKS_building_blocksDB}\n")
             f.write(f"Max children per expand: {self.max_children_per_expand}\n")
             f.write(f"Child downselection strategy: {self.child_downselection_strategy}\n")
-            f.write(f"Spawn RetroTide: {self.spawn_retrotide}\n")
+            f.write(f"Terminal detector: {self.terminal_detector.name}\n")
+            f.write(f"Reward policy: {self.reward_policy.name}\n")
             f.write(f"Sink compounds library size: {len(self.sink_compounds)}\n")
             f.write(f"Enable frontier fallback: {self.enable_frontier_fallback}\n\n")
 
@@ -3313,9 +3238,9 @@ class DORAnetMCTS:
             f.write(f"Child downselection:       {self.child_downselection_strategy}\n")
             f.write(f"Frontier fallback:         {self.enable_frontier_fallback}\n")
             f.write(f"MW multiple to exclude:    {self.MW_multiple_to_exclude}\n")
-            f.write(f"Rollout policy:            {self.rollout_policy.name if self.rollout_policy else 'None'}\n")
+            f.write(f"Terminal detector:         {self.terminal_detector.name if self.terminal_detector else 'None'}\n")
             f.write(f"Reward policy:             {self.reward_policy.name if self.reward_policy else 'None'}\n")
-            if self.spawn_retrotide and self.retrotide_kwargs:
+            if self.retrotide_kwargs:
                 f.write(f"RetroTide max depth:       {self.retrotide_kwargs.get('max_depth', 'N/A')}\n")
                 f.write(f"RetroTide iterations:      {self.retrotide_kwargs.get('total_iterations', 'N/A')}\n")
             f.write("\n")

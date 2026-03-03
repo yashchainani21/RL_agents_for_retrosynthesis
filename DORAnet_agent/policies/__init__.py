@@ -2,57 +2,67 @@
 Modular policies for DORAnet MCTS.
 
 This module provides abstract base classes and concrete implementations for:
-- Rollout policies: Simulation strategies from leaf nodes (e.g., RetroTide spawning)
-- Reward policies: Reward computation strategies (e.g., sparse, shaped)
+- Terminal detectors: Post-expansion terminal detection (e.g., RetroTide verification)
+- Reward policies: Reward computation strategies (e.g., dense SA score, sparse terminal)
 - Thermodynamic scaling: Wrappers that scale rewards by pathway feasibility
-
-Selection policies remain in mcts.py for now and will be migrated in a future PR.
 """
 
-from .base import RolloutPolicy, RewardPolicy, RolloutResult
-from .rollout import (
-    NoOpRolloutPolicy,
-    SpawnRetroTideOnDatabaseCheck,
-    SAScore_and_SpawnRetroTideOnDatabaseCheck,
-    PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck,
+# Base abstractions
+from .base import TerminalDetector, TerminalDetectionResult, RewardPolicy
+
+# Terminal detection implementations
+from .terminal_detection import (
+    NoOpTerminalDetector,
+    VerifyWithRetroTide,
+    SimilarityGuidedRetroTideDetector,
 )
+
+# Reward policies
 from .reward import (
     SparseTerminalRewardPolicy,
-    SinkCompoundRewardPolicy,
-    PKSLibraryRewardPolicy,
-    ComposedRewardPolicy,
-    PKSSimilarityRewardPolicy,
     SAScore_and_TerminalRewardPolicy,
 )
+
+# Thermodynamic scaling
 from .thermodynamic import (
     sigmoid_transform,
     get_node_feasibility_score,
     get_pathway_feasibility,
-    ThermodynamicScaledRolloutPolicy,
     ThermodynamicScaledRewardPolicy,
+)
+
+# Shared utilities
+from .utils import (
+    canonicalize_smiles,
+    calculate_sa_score,
+    sa_score_to_reward,
+    generate_morgan_fingerprint,
+    calculate_tanimoto_similarity,
+    calculate_mcs_similarity_without_stereo,
 )
 
 __all__ = [
     # Base classes
-    "RolloutPolicy",
+    "TerminalDetector",
+    "TerminalDetectionResult",
     "RewardPolicy",
-    "RolloutResult",
-    # Rollout policies
-    "NoOpRolloutPolicy",
-    "SpawnRetroTideOnDatabaseCheck",
-    "SAScore_and_SpawnRetroTideOnDatabaseCheck",
-    "PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck",
+    # Terminal detectors
+    "NoOpTerminalDetector",
+    "VerifyWithRetroTide",
+    "SimilarityGuidedRetroTideDetector",
     # Reward policies
     "SparseTerminalRewardPolicy",
-    "SinkCompoundRewardPolicy",
-    "PKSLibraryRewardPolicy",
-    "ComposedRewardPolicy",
-    "PKSSimilarityRewardPolicy",
     "SAScore_and_TerminalRewardPolicy",
     # Thermodynamic scaling
     "sigmoid_transform",
     "get_node_feasibility_score",
     "get_pathway_feasibility",
-    "ThermodynamicScaledRolloutPolicy",
     "ThermodynamicScaledRewardPolicy",
+    # Utilities
+    "canonicalize_smiles",
+    "calculate_sa_score",
+    "sa_score_to_reward",
+    "generate_morgan_fingerprint",
+    "calculate_tanimoto_similarity",
+    "calculate_mcs_similarity_without_stereo",
 ]

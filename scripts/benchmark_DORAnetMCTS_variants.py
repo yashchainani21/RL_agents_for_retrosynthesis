@@ -6,11 +6,12 @@ This script compares the performance of:
 - AsyncExpansionDORAnetMCTS (parallel multiprocessing expansion)
 
 Policy System:
-By default, this benchmark uses SAScore_and_SpawnRetroTideOnDatabaseCheck for
-dense reward signals. Alternative policies:
-- spawn_retrotide=True → SpawnRetroTideOnDatabaseCheck (sparse rewards)
-- spawn_retrotide=False → NoOpRolloutPolicy (no rewards, fastest)
-- rollout_policy=SpawnRetroTideOnDatabaseCheck(...) → explicit sparse policy
+By default, this benchmark uses VerifyWithRetroTide for terminal detection
+and SAScore_and_TerminalRewardPolicy for dense reward signals.
+Alternative configurations:
+- terminal_detector=VerifyWithRetroTide() → RetroTide verification (RECOMMENDED)
+- terminal_detector=NoOpTerminalDetector() → no verification (fastest)
+- terminal_detector=SimilarityGuidedRetroTideDetector() → similarity-gated RetroTide
 """
 
 from __future__ import annotations
@@ -28,9 +29,10 @@ if str(REPO_ROOT) not in sys.path:
 
 from DORAnet_agent import DORAnetMCTS, AsyncExpansionDORAnetMCTS, Node
 from DORAnet_agent.policies import (
-    NoOpRolloutPolicy,
-    SpawnRetroTideOnDatabaseCheck,
-    SAScore_and_SpawnRetroTideOnDatabaseCheck,
+    NoOpTerminalDetector,
+    VerifyWithRetroTide,
+    SimilarityGuidedRetroTideDetector,
+    SAScore_and_TerminalRewardPolicy,
     SparseTerminalRewardPolicy,
 )
 
@@ -66,21 +68,21 @@ def _build_common_kwargs(target_molecule: Chem.Mol, total_iterations: int) -> di
         MW_multiple_to_exclude=1.5,
         
         # ---- Policy Configuration ----
-        # Option 1: Dense rewards - SA Score + RetroTide (RECOMMENDED)
-        rollout_policy=SAScore_and_SpawnRetroTideOnDatabaseCheck(
-            success_reward=1.0,
-            sa_max_reward=1.0,
+        # Option 1: VerifyWithRetroTide + SAScore_and_TerminalRewardPolicy (RECOMMENDED)
+        terminal_detector=VerifyWithRetroTide(),
+        reward_policy=SAScore_and_TerminalRewardPolicy(
+            sink_terminal_reward=1.0,
+            pks_terminal_reward=1.0,
         ),
-        reward_policy=SparseTerminalRewardPolicy(sink_terminal_reward=1.0),
         
-        # Option 2: Sparse rewards - SpawnRetroTideOnDatabaseCheck
-        # rollout_policy=SpawnRetroTideOnDatabaseCheck(success_reward=1.0, failure_reward=0.0),
+        # Option 2: Sparse rewards - VerifyWithRetroTide + SparseTerminalRewardPolicy
+        # terminal_detector=VerifyWithRetroTide(),
         # reward_policy=SparseTerminalRewardPolicy(sink_terminal_reward=1.0),
         
-        # Option 3: No rollout (fastest, for pure timing benchmarks)
-        # spawn_retrotide=False,
+        # Option 3: No terminal detection (fastest, for pure timing benchmarks)
+        # terminal_detector=NoOpTerminalDetector(),
         
-        # RetroTide kwargs (used by SA Score and SpawnRetroTide policies)
+        # RetroTide kwargs (used by VerifyWithRetroTide terminal detector)
         retrotide_kwargs={
             "max_depth": 6,
             "total_iterations": 100,
