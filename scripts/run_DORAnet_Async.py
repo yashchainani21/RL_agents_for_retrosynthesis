@@ -16,9 +16,8 @@ The MCTS loop uses two separate policies with distinct responsibilities:
   - SAScore_and_TerminalRewardPolicy: SA score for non-terminals + terminal rewards (RECOMMENDED)
     - Provides dense signals via SA score for ALL nodes
     - Full terminal reward for sink compounds and PKS terminals
+    - Supports custom non_terminal_scorer for alternative non-terminal signals (e.g., PKS classifier)
   - SparseTerminalRewardPolicy: 1.0 for terminals, 0.0 otherwise (sparse)
-  - PKSSimilarityRewardPolicy: PKS Tanimoto similarity as sole reward signal
-  - ComposedRewardPolicy: Combine multiple reward policies with weights
   - ThermodynamicScaledRewardPolicy: Wrapper that scales any base policy by thermodynamic feasibility
 
 KEY ARCHITECTURE POINT:
@@ -48,7 +47,7 @@ Example: Recommended clean setup (terminal detection + reward separation)
     # Optional: wrap with thermodynamic scaling
     reward_policy = ThermodynamicScaledRewardPolicy(
         base_policy=base_reward,
-        feasibility_weight=0.8,
+        feasibility_weight=1.0,
     )
 
     main(
@@ -58,36 +57,6 @@ Example: Recommended clean setup (terminal detection + reward separation)
         reward_policy=reward_policy,
         ...
     )
-
-Example: PKS-focused MCTS configuration
-    # Use PKS similarity as the reward signal (replaces flat 1.0 for sinks)
-    from DORAnet_agent.policies import (
-        PKSSimilarityRewardPolicy,
-        SimilarityGuidedRetroTideDetector,
-    )
-
-    reward_policy = PKSSimilarityRewardPolicy(
-        similarity_exponent=2.0,  # Square the similarity (penalize low PKS similarity)
-    )
-    terminal_detector = SimilarityGuidedRetroTideDetector(
-        retrotide_spawn_threshold=0.9,
-        similarity_reward_exponent=2.0,
-    )
-
-    # Then pass these to main():
-    main(
-        target_smiles="...",
-        molecule_name="...",
-        terminal_detector=terminal_detector,
-        reward_policy=reward_policy,  # <-- PKS similarity rewards
-        ...
-    )
-
-Backward Compatibility:
-- spawn_retrotide=True creates VerifyWithRetroTide automatically
-- Legacy rollout_policy= parameter still accepted (wrapped via shim with deprecation warning)
-- Explicit terminal_detector overrides both rollout_policy and spawn_retrotide
-- reward_fn parameter is deprecated (use reward_policy instead)
 """
 
 from __future__ import annotations
@@ -109,27 +78,14 @@ from typing import Optional
 from DORAnet_agent import AsyncExpansionDORAnetMCTS, Node
 from DORAnet_agent.visualize import create_enhanced_interactive_html, create_pathways_interactive_html
 from DORAnet_agent.policies import (
-    # New abstractions (preferred)
     TerminalDetector,
     RewardPolicy,
     NoOpTerminalDetector,
     VerifyWithRetroTide,
     SimilarityGuidedRetroTideDetector,
     SparseTerminalRewardPolicy,
-    SinkCompoundRewardPolicy,
-    PKSLibraryRewardPolicy,
-    ComposedRewardPolicy,
-    PKSSimilarityRewardPolicy,
     SAScore_and_TerminalRewardPolicy,
-    # Thermodynamic scaling wrappers
     ThermodynamicScaledRewardPolicy,
-    # Legacy (deprecated) — kept for backward compat
-    RolloutPolicy,
-    NoOpRolloutPolicy,
-    SpawnRetroTideOnDatabaseCheck,
-    PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck,
-    SAScore_and_SpawnRetroTideOnDatabaseCheck,
-    ThermodynamicScaledRolloutPolicy,
 )
 
 RDLogger.DisableLog("rdApp.*")
@@ -196,8 +152,6 @@ def main(target_smiles: str,
             Options include:
             - SAScore_and_TerminalRewardPolicy(): Terminal rewards + SA score (RECOMMENDED)
             - SparseTerminalRewardPolicy(): 1.0 for terminals, 0.0 otherwise
-            - SinkCompoundRewardPolicy(): Only rewards sink compounds
-            - ComposedRewardPolicy(): Combine multiple policies with weights
             - ThermodynamicScaledRewardPolicy(base_policy): Wrapper that scales rewards
               by pathway thermodynamic feasibility
             If None, defaults to SAScore_and_TerminalRewardPolicy().
@@ -308,13 +262,10 @@ def main(target_smiles: str,
         terminal_detector=terminal_detector,
         reward_policy=reward_policy,
 
-        # Enable RetroTide spawning for PKS library matches
-        spawn_retrotide=True,
-
-        # RetroTide configuration (used when spawn_retrotide=True or VerifyWithRetroTide)
+        # RetroTide configuration (used by VerifyWithRetroTide terminal detector)
         retrotide_kwargs={
-            "max_depth": 5,
-            "total_iterations": 50,
+            "max_depth": 6,
+            "total_iterations": 100,
             "maxPKSDesignsRetroTide": 500,
         },
         
@@ -409,40 +360,25 @@ if __name__ == "__main__":
     # Reward handles terminal rewards + SA score for non-terminals, scaled by thermodynamic feasibility
     selected_reward_policy = ThermodynamicScaledRewardPolicy(
         base_policy=SAScore_and_TerminalRewardPolicy(sink_terminal_reward=1.0, pks_terminal_reward=1.0),
-        feasibility_weight=0.8,
+        feasibility_weight=1.0,
         sigmoid_k=0.2,
         sigmoid_threshold=15.0,
         use_dora_xgb_for_enzymatic=True,
         aggregation="geometric_mean",
     )
 
-    # Alternative: PKS similarity-gated terminal detection + PKS similarity rewards
-    # selected_terminal_detector = SimilarityGuidedRetroTideDetector()
-    # selected_reward_policy = PKSSimilarityRewardPolicy(similarity_exponent=2.0)
-
     # Alternative: No terminal detection (just expand, no RetroTide)
     # selected_terminal_detector = NoOpTerminalDetector()
-
-    # Alternative: Thermodynamic-scaled reward policy (wrap any base policy)
-    # This scales terminal rewards by pathway thermodynamic feasibility.
-    # selected_reward_policy = ThermodynamicScaledRewardPolicy(
-    #     base_policy=SAScore_and_TerminalRewardPolicy(sink_terminal_reward=1.0, pks_terminal_reward=1.0),
-    #     feasibility_weight=0.8,
-    #     sigmoid_k=0.2,
-    #     sigmoid_threshold=15.0,
-    #     use_dora_xgb_for_enzymatic=True,
-    #     aggregation="geometric_mean",
-    # )
 
     main(
         target_smiles="COC1=CC=C(C=CC2=CC(OC)=CC(O2)=O)C=C1",
         molecule_name="yangonin",
         total_iterations=1000,
-        max_depth=12,
+        max_depth=15,
         max_children_per_expand=1,
         terminal_detector=selected_terminal_detector,
         reward_policy=selected_reward_policy,
-        results_subfolder=None,
+        results_subfolder="removing_rollout",
         MW_multiple_to_exclude=1.5,
         child_downselection_strategy=None,
         use_enzymatic=True,

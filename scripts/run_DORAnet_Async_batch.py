@@ -13,11 +13,9 @@ Policy System:
   - SAScore_and_TerminalRewardPolicy: Terminal rewards + SA score for non-terminals (RECOMMENDED)
     - Provides dense signals via SA score for synthetic accessibility
     - Full terminal reward for sink compounds and PKS terminals
-    - Cleanly separates reward from terminal detection concerns
+    - Supports custom non_terminal_scorer for alternative non-terminal signals
   - SparseTerminalRewardPolicy: 1.0 for sink compounds, 1.0 for PKS matches, 0.0 otherwise
-  - SinkCompoundRewardPolicy: Only rewards sink compounds
-  - ComposedRewardPolicy: Combine multiple reward policies with weights
-  - PKSSimilarityRewardPolicy: PKS Tanimoto similarity as sole reward signal
+  - ThermodynamicScaledRewardPolicy: Wrapper that scales any base policy by thermodynamic feasibility
 
 Example: Recommended clean setup (terminal detection + reward separation)
     from DORAnet_agent.policies import (
@@ -40,14 +38,8 @@ Example: Recommended clean setup (terminal detection + reward separation)
     # Optional: wrap with thermodynamic scaling
     reward_policy = ThermodynamicScaledRewardPolicy(
         base_policy=base_reward,
-        feasibility_weight=0.8,
+        feasibility_weight=1.0,
     )
-
-Backward Compatibility:
-- spawn_retrotide=True creates VerifyWithRetroTide automatically
-- Legacy rollout_policy= parameter still accepted (wrapped via shim with deprecation warning)
-- Explicit terminal_detector overrides both rollout_policy and spawn_retrotide
-- reward_fn parameter is deprecated (use reward_policy instead)
 """
 
 from __future__ import annotations
@@ -70,27 +62,14 @@ from typing import Optional
 from DORAnet_agent import AsyncExpansionDORAnetMCTS, Node
 from DORAnet_agent.visualize import create_enhanced_interactive_html, create_pathways_interactive_html
 from DORAnet_agent.policies import (
-    # New abstractions (preferred)
     TerminalDetector,
     RewardPolicy,
     NoOpTerminalDetector,
     VerifyWithRetroTide,
     SimilarityGuidedRetroTideDetector,
     SparseTerminalRewardPolicy,
-    SinkCompoundRewardPolicy,
-    PKSLibraryRewardPolicy,
-    ComposedRewardPolicy,
-    PKSSimilarityRewardPolicy,
     SAScore_and_TerminalRewardPolicy,
-    # Thermodynamic scaling wrappers
     ThermodynamicScaledRewardPolicy,
-    # Legacy (deprecated) — kept for backward compat
-    RolloutPolicy,
-    NoOpRolloutPolicy,
-    SpawnRetroTideOnDatabaseCheck,
-    PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck,
-    SAScore_and_SpawnRetroTideOnDatabaseCheck,
-    ThermodynamicScaledRolloutPolicy,
 )
 
 RDLogger.DisableLog("rdApp.*")
@@ -153,8 +132,6 @@ def main(
             Options include:
             - SAScore_and_TerminalRewardPolicy(): Terminal rewards + SA score (RECOMMENDED)
             - SparseTerminalRewardPolicy(): 1.0 for terminals, 0.0 otherwise
-            - SinkCompoundRewardPolicy(): Only rewards sink compounds
-            - ComposedRewardPolicy(): Combine multiple policies with weights
             - ThermodynamicScaledRewardPolicy(base_policy): Wrapper that scales rewards
               by pathway thermodynamic feasibility
             If None, defaults to SAScore_and_TerminalRewardPolicy().
@@ -258,13 +235,10 @@ def main(
         terminal_detector=terminal_detector,
         reward_policy=reward_policy,
 
-        # Enable RetroTide spawning for PKS library matches
-        spawn_retrotide=True,
-
-        # RetroTide configuration (used when terminal detector spawns RetroTide)
+        # RetroTide configuration (used by VerifyWithRetroTide terminal detector)
         retrotide_kwargs={
-            "max_depth": 5,
-            "total_iterations": 50,
+            "max_depth": 6,
+            "total_iterations": 100,
             "maxPKSDesignsRetroTide": 500,
         },
         
@@ -397,18 +371,14 @@ if __name__ == "__main__":
     #    pks_terminal_reward=1.0,
     # )
 
-    # Alternative: PKS similarity-gated terminal detection + PKS similarity rewards
-    # selected_terminal_detector = SimilarityGuidedRetroTideDetector()
-    # selected_reward_policy = PKSSimilarityRewardPolicy(similarity_exponent=2.0)
-
     # Alternative: No terminal detection (just expand, no RetroTide)
     # selected_terminal_detector = NoOpTerminalDetector()
 
-    # Alternative: Thermodynamic-scaled reward policy (wrap any base policy)
+    # Thermodynamic-scaled reward policy (wrap any base policy)
     # This scales terminal rewards by pathway thermodynamic feasibility.
     selected_reward_policy = ThermodynamicScaledRewardPolicy(
         base_policy=SAScore_and_TerminalRewardPolicy(sink_terminal_reward=1.0, pks_terminal_reward=1.0),
-        feasibility_weight=0.8,
+        feasibility_weight=1.0,
         sigmoid_k=0.2,
         sigmoid_threshold=15.0,
         use_dora_xgb_for_enzymatic=True,

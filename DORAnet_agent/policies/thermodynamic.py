@@ -1,5 +1,5 @@
 """
-Thermodynamic-scaled rollout and reward policies for DORAnet MCTS.
+Thermodynamic-scaled reward policies for DORAnet MCTS.
 
 This module provides wrapper policies that scale rewards by pathway thermodynamic
 feasibility, allowing MCTS to bias exploration toward thermodynamically feasible
@@ -9,7 +9,7 @@ Key Design Decisions:
     - Soft biasing over hard pruning: Infeasible pathways receive reduced (but non-zero) rewards
     - Unified 0-1 scale: Sigmoid transform for ΔH, DORA-XGB scores used directly
     - Pathway-level assessment: Geometric mean of step feasibilities (length-normalized)
-    - Composable wrappers: Can wrap any existing rollout/reward policy
+    - Composable wrappers: Can wrap any existing reward policy
 
 Sigmoid Transformation:
     score = 1.0 / (1.0 + exp(k * (ΔH - threshold)))
@@ -31,7 +31,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
-from .base import RewardPolicy, RolloutPolicy, RolloutResult
+from .base import RewardPolicy
 
 if TYPE_CHECKING:
     from ..node import Node
@@ -162,117 +162,6 @@ def get_pathway_feasibility(
     return aggregated, scores
 
 
-class ThermodynamicScaledRolloutPolicy(RolloutPolicy):
-    """
-    Wrapper that scales any rollout policy's rewards by pathway thermodynamic feasibility.
-
-    This policy wraps an existing rollout policy and multiplies its returned reward
-    by a pathway feasibility factor computed from thermodynamic information stored
-    on nodes along the path from root to the current node.
-
-    Feasibility Scoring:
-        - Enzymatic reactions: Uses DORA-XGB score (0-1) if available
-        - Synthetic reactions: Uses sigmoid-transformed ΔH from pathermo
-        - Unknown: Defaults to 1.0 (assume feasible)
-
-    Pathway Aggregation:
-        - Default: Geometric mean of step feasibilities (path-length normalized)
-        - Alternative: Product, minimum, or arithmetic mean
-
-    Example:
-        base_policy = SAScore_and_SpawnRetroTideOnDatabaseCheck()
-        scaled_policy = ThermodynamicScaledRolloutPolicy(
-            base_policy=base_policy,
-            feasibility_weight=0.8,
-        )
-        agent = DORAnetMCTS(rollout_policy=scaled_policy, ...)
-    """
-
-    def __init__(
-        self,
-        base_policy: RolloutPolicy,
-        feasibility_weight: float = 1.0,
-        sigmoid_k: float = 0.2,
-        sigmoid_threshold: float = 15.0,
-        use_dora_xgb_for_enzymatic: bool = True,
-        aggregation: str = "geometric_mean",
-    ):
-        """
-        Args:
-            base_policy: The rollout policy to wrap
-            feasibility_weight: How much to weight feasibility (0.0-1.0).
-                0.0 = ignore feasibility (returns base reward unchanged)
-                1.0 = full scaling (reward × pathway_feasibility)
-                0.5 = blend: reward × (0.5 + 0.5 × pathway_feasibility)
-            sigmoid_k: Steepness of sigmoid for ΔH transformation (default 0.2)
-            sigmoid_threshold: Center point of sigmoid in kcal/mol (default 15.0)
-            use_dora_xgb_for_enzymatic: Use DORA-XGB scores for enzymatic reactions
-                instead of thermodynamic scores (default True)
-            aggregation: Method for aggregating pathway scores:
-                "geometric_mean" (default), "product", "minimum", "arithmetic_mean"
-        """
-        self.base_policy = base_policy
-        self.feasibility_weight = feasibility_weight
-        self.sigmoid_k = sigmoid_k
-        self.sigmoid_threshold = sigmoid_threshold
-        self.use_dora_xgb_for_enzymatic = use_dora_xgb_for_enzymatic
-        self.aggregation = aggregation
-
-    def rollout(self, node: "Node", context: Dict[str, Any]) -> RolloutResult:
-        """
-        Execute base policy rollout and scale reward by pathway feasibility.
-        """
-        # Get base rollout result
-        result = self.base_policy.rollout(node, context)
-
-        # If base reward is 0, no point scaling
-        if result.reward == 0.0:
-            return result
-
-        # Compute pathway feasibility
-        pathway_feas, step_scores = get_pathway_feasibility(
-            node=node,
-            sigmoid_k=self.sigmoid_k,
-            sigmoid_threshold=self.sigmoid_threshold,
-            use_dora_xgb_for_enzymatic=self.use_dora_xgb_for_enzymatic,
-            aggregation=self.aggregation,
-        )
-
-        # Apply feasibility weight
-        # weight=0: ignore feasibility → multiplier = 1.0
-        # weight=1: full scaling → multiplier = pathway_feas
-        # weight=0.5: blend → multiplier = 0.5 + 0.5 × pathway_feas
-        scaling_factor = (1.0 - self.feasibility_weight) + self.feasibility_weight * pathway_feas
-        scaled_reward = result.reward * scaling_factor
-
-        # Create new result with scaled reward and augmented metadata
-        return RolloutResult(
-            reward=scaled_reward,
-            terminal=result.terminal,
-            terminal_type=result.terminal_type,
-            metadata={
-                **result.metadata,
-                "base_reward": result.reward,
-                "pathway_feasibility": pathway_feas,
-                "pathway_step_scores": step_scores,
-                "feasibility_scaling_factor": scaling_factor,
-            },
-        )
-
-    @property
-    def name(self) -> str:
-        return (f"ThermodynamicScaled({self.base_policy.name}, "
-                f"weight={self.feasibility_weight})")
-
-    def __repr__(self) -> str:
-        return (f"ThermodynamicScaledRolloutPolicy("
-                f"base_policy={self.base_policy!r}, "
-                f"feasibility_weight={self.feasibility_weight}, "
-                f"sigmoid_k={self.sigmoid_k}, "
-                f"sigmoid_threshold={self.sigmoid_threshold}, "
-                f"aggregation='{self.aggregation}')")
-
-
 class ThermodynamicScaledRewardPolicy(RewardPolicy):
     """
     Wrapper that scales any reward policy's rewards by pathway thermodynamic feasibility.
@@ -281,16 +170,11 @@ class ThermodynamicScaledRewardPolicy(RewardPolicy):
     by a pathway feasibility factor. Used for scaling terminal rewards (sink compounds,
     PKS terminals) based on how thermodynamically feasible the pathway to reach them is.
 
-    Note: This is complementary to ThermodynamicScaledRolloutPolicy. For complete
-    coverage, use both wrappers together:
-        - ThermodynamicScaledRolloutPolicy: Scales dense rewards from rollouts (SA score, etc.)
-        - ThermodynamicScaledRewardPolicy: Scales sparse terminal rewards (sink compounds)
-
     Example:
         base_reward = SparseTerminalRewardPolicy(sink_terminal_reward=1.0)
         scaled_reward = ThermodynamicScaledRewardPolicy(
             base_policy=base_reward,
-            feasibility_weight=0.8,
+            feasibility_weight=1.0,
         )
         agent = DORAnetMCTS(reward_policy=scaled_reward, ...)
     """

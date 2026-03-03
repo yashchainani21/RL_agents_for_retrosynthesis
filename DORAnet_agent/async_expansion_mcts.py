@@ -15,7 +15,7 @@ import pickle
 import uuid
 from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from rdkit import Chem
 from rdkit import RDLogger
@@ -28,17 +28,13 @@ from .mcts import (
 )
 from .node import Node
 from .policies import (
-    # New abstractions
     TerminalDetector,
     TerminalDetectionResult,
     RewardPolicy,
     NoOpTerminalDetector,
     VerifyWithRetroTide,
     SparseTerminalRewardPolicy,
-    # Legacy (deprecated) — kept for backward compat
-    RolloutPolicy,
-    NoOpRolloutPolicy,
-    SpawnRetroTideOnDatabaseCheck,
+    SAScore_and_TerminalRewardPolicy,
 )
 
 
@@ -433,7 +429,6 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
         target_molecule: Chem.Mol,
         num_workers: Optional[int] = None,
         max_inflight_expansions: Optional[int] = None,
-        reward_fn: Optional[Callable[[Node], float]] = None,  # Deprecated
         **kwargs,
     ) -> None:
         """
@@ -442,20 +437,12 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
             target_molecule: The molecule to fragment.
             num_workers: Number of worker processes. Defaults to CPU count - 1.
             max_inflight_expansions: Max concurrent expansions. Defaults to num_workers.
-            reward_fn: DEPRECATED. Use reward_policy instead via kwargs.
             **kwargs: Additional arguments passed to DORAnetMCTS.__init__().
         """
         super().__init__(root=root, target_molecule=target_molecule, **kwargs)
         self.num_workers = self._get_optimal_workers(num_workers)
         self.max_inflight_expansions = max_inflight_expansions or self.num_workers
         self._pending: Dict[Any, Dict[str, Any]] = {}
-
-        # Handle deprecated reward_fn parameter
-        if reward_fn is not None:
-            print("[DEPRECATED] reward_fn parameter is deprecated. Use reward_policy instead.")
-            self._legacy_reward_fn = reward_fn
-        else:
-            self._legacy_reward_fn = None
 
     def _get_optimal_workers(self, requested_workers: Optional[int]) -> int:
         cpu_count = os.cpu_count() or 4
@@ -798,13 +785,6 @@ class AsyncExpansionDORAnetMCTS(DORAnetMCTS):
                     break
 
                 leaf.selected_at_iterations.append(iteration)
-
-                # Handle legacy reward_fn if provided (deprecated)
-                if self._legacy_reward_fn is not None:
-                    reward = self._legacy_reward_fn(leaf)
-                    self.backpropagate(leaf, reward)
-                    # When using legacy reward_fn, skip normal depth check
-                    continue
 
                 if leaf.depth >= self.max_depth:
                     reward = self.calculate_reward(leaf)

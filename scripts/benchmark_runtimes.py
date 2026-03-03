@@ -31,6 +31,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from DORAnet_agent import DORAnetMCTS, AsyncExpansionDORAnetMCTS, Node, clear_smiles_cache
+from DORAnet_agent.policies import NoOpTerminalDetector
 
 # Silence RDKit logs
 RDLogger.DisableLog("rdApp.*")
@@ -267,7 +268,7 @@ def run_doranet_mcts_sequential(
             pks_library_file=config.pks_library_file,
             sink_compounds_files=config.sink_compounds_files,
             prohibited_chemicals_file=config.prohibited_chemicals_file,
-            spawn_retrotide=False,  # Disable for faster benchmarks
+            terminal_detector=NoOpTerminalDetector(),  # Disable RetroTide for faster benchmarks
             enable_visualization=False,
             enable_interactive_viz=False,
             stop_on_first_pathway=True,  # Stop when first pathway found
@@ -363,7 +364,7 @@ def run_doranet_mcts_async(
             sink_compounds_files=config.sink_compounds_files,
             prohibited_chemicals_file=config.prohibited_chemicals_file,
             num_workers=config.num_workers,
-            spawn_retrotide=False,  # Disable for faster benchmarks
+            terminal_detector=NoOpTerminalDetector(),  # Disable RetroTide for faster benchmarks
             enable_visualization=False,
             enable_interactive_viz=False,
             stop_on_first_pathway=True,  # Stop when first pathway found

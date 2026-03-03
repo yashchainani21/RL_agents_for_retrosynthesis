@@ -3,9 +3,9 @@ Integration tests for the policy system with DORAnetMCTS and AsyncExpansionDORAn
 
 These tests verify that the policy system integrates correctly with the MCTS agents,
 including:
-- New terminal_detector API (TerminalDetector)
-- Backward compatibility with the legacy rollout_policy parameter
-- Backward compatibility with the legacy spawn_retrotide parameter
+- terminal_detector API (TerminalDetector)
+- reward_policy API (RewardPolicy)
+- Default policy initialization (SAScore_and_TerminalRewardPolicy + NoOpTerminalDetector)
 """
 
 import pytest
@@ -18,21 +18,13 @@ from DORAnet_agent.node import Node
 from DORAnet_agent.mcts import DORAnetMCTS
 from DORAnet_agent.async_expansion_mcts import AsyncExpansionDORAnetMCTS
 from DORAnet_agent.policies import (
-    # New abstractions
     TerminalDetector,
     TerminalDetectionResult,
     NoOpTerminalDetector,
     VerifyWithRetroTide,
-    # Legacy (still needed for backward compat tests)
-    RolloutPolicy,
     RewardPolicy,
-    RolloutResult,
-    NoOpRolloutPolicy,
-    SpawnRetroTideOnDatabaseCheck,
     SparseTerminalRewardPolicy,
-    SinkCompoundRewardPolicy,
-    PKSLibraryRewardPolicy,
-    ComposedRewardPolicy,
+    SAScore_and_TerminalRewardPolicy,
 )
 
 
@@ -87,23 +79,6 @@ class CountingTerminalDetector(TerminalDetector):
         return TerminalDetectionResult(terminal=False)
 
 
-class CountingRolloutPolicy(RolloutPolicy):
-    """A rollout policy that counts how many times it's called (legacy compat test)."""
-    
-    def __init__(self):
-        self.call_count = 0
-        self.called_nodes: List[Node] = []
-    
-    @property
-    def name(self) -> str:
-        return "Counting"
-    
-    def rollout(self, node: Node, context: dict) -> RolloutResult:
-        self.call_count += 1
-        self.called_nodes.append(node)
-        return RolloutResult(reward=0.5, terminal=False)
-
-
 class FixedRewardPolicy(RewardPolicy):
     """A reward policy that returns a fixed reward."""
     
@@ -127,8 +102,8 @@ class FixedRewardPolicy(RewardPolicy):
 class TestDORAnetMCTSPolicyIntegration:
     """Integration tests for DORAnetMCTS with the policy system."""
     
-    def test_default_policies_are_noop_and_sparse(self, root_node, sample_molecule):
-        """Default instantiation uses NoOpTerminalDetector and SparseTerminalRewardPolicy."""
+    def test_default_policies_are_noop_and_sa_score(self, root_node, sample_molecule):
+        """Default instantiation uses NoOpTerminalDetector and SAScore_and_TerminalRewardPolicy."""
         agent = DORAnetMCTS(
             root=root_node,
             target_molecule=sample_molecule,
@@ -139,28 +114,10 @@ class TestDORAnetMCTSPolicyIntegration:
         )
         
         assert isinstance(agent.terminal_detector, NoOpTerminalDetector)
-        assert isinstance(agent.reward_policy, SparseTerminalRewardPolicy)
-        # Backward compat: rollout_policy still set
-        assert isinstance(agent.rollout_policy, NoOpRolloutPolicy)
+        assert isinstance(agent.reward_policy, SAScore_and_TerminalRewardPolicy)
     
-    def test_spawn_retrotide_creates_verify_detector(self, root_node, sample_molecule):
-        """spawn_retrotide=True creates VerifyWithRetroTide terminal detector."""
-        agent = DORAnetMCTS(
-            root=root_node,
-            target_molecule=sample_molecule,
-            total_iterations=0,
-            max_depth=5,
-            spawn_retrotide=True,
-            use_enzymatic=False,
-            use_synthetic=False,
-        )
-        
-        assert isinstance(agent.terminal_detector, VerifyWithRetroTide)
-        # Backward compat: rollout_policy still set
-        assert isinstance(agent.rollout_policy, SpawnRetroTideOnDatabaseCheck)
-    
-    def test_explicit_terminal_detector_overrides_spawn_retrotide(self, root_node, sample_molecule):
-        """Explicit terminal_detector takes precedence over spawn_retrotide."""
+    def test_explicit_terminal_detector_is_used(self, root_node, sample_molecule):
+        """Explicit terminal_detector is correctly stored and used."""
         custom_detector = CountingTerminalDetector()
         
         agent = DORAnetMCTS(
@@ -168,32 +125,12 @@ class TestDORAnetMCTSPolicyIntegration:
             target_molecule=sample_molecule,
             total_iterations=0,
             max_depth=5,
-            spawn_retrotide=True,  # This should be ignored
             terminal_detector=custom_detector,
             use_enzymatic=False,
             use_synthetic=False,
         )
         
         assert agent.terminal_detector is custom_detector
-    
-    def test_legacy_rollout_policy_wrapped_via_shim(self, root_node, sample_molecule):
-        """Legacy rollout_policy is wrapped via _RolloutPolicyShim for backward compat."""
-        legacy_policy = CountingRolloutPolicy()
-        
-        agent = DORAnetMCTS(
-            root=root_node,
-            target_molecule=sample_molecule,
-            total_iterations=0,
-            max_depth=5,
-            rollout_policy=legacy_policy,
-            use_enzymatic=False,
-            use_synthetic=False,
-        )
-        
-        # The terminal_detector should be a shim wrapping the legacy policy
-        assert agent.terminal_detector is not None
-        # Backward compat: rollout_policy still accessible
-        assert agent.rollout_policy is legacy_policy
     
     def test_custom_policies_are_used(self, root_node, sample_molecule):
         """Custom policies are correctly stored and used."""
@@ -317,22 +254,7 @@ class TestAsyncExpansionMCTSPolicyIntegration:
         )
         
         assert isinstance(agent.terminal_detector, NoOpTerminalDetector)
-        assert isinstance(agent.reward_policy, SparseTerminalRewardPolicy)
-    
-    def test_spawn_retrotide_backward_compatibility(self, root_node, sample_molecule):
-        """spawn_retrotide=True is correctly handled."""
-        agent = AsyncExpansionDORAnetMCTS(
-            root=root_node,
-            target_molecule=sample_molecule,
-            total_iterations=0,
-            max_depth=5,
-            num_workers=1,
-            spawn_retrotide=True,
-            use_enzymatic=False,
-            use_synthetic=False,
-        )
-        
-        assert isinstance(agent.terminal_detector, VerifyWithRetroTide)
+        assert isinstance(agent.reward_policy, SAScore_and_TerminalRewardPolicy)
     
     def test_custom_policies_passed_through(self, root_node, sample_molecule):
         """Custom policies are correctly passed to AsyncExpansionDORAnetMCTS."""
@@ -353,54 +275,6 @@ class TestAsyncExpansionMCTSPolicyIntegration:
         
         assert agent.terminal_detector is terminal_detector
         assert agent.reward_policy is reward_policy
-    
-    def test_legacy_reward_fn_deprecation_warning(self, root_node, sample_molecule, capsys):
-        """Using reward_fn shows deprecation message."""
-        def legacy_reward_fn(node):
-            return 0.5
-        
-        agent = AsyncExpansionDORAnetMCTS(
-            root=root_node,
-            target_molecule=sample_molecule,
-            total_iterations=0,
-            max_depth=5,
-            num_workers=1,
-            reward_fn=legacy_reward_fn,
-            use_enzymatic=False,
-            use_synthetic=False,
-        )
-        
-        captured = capsys.readouterr()
-        assert "DEPRECATED" in captured.out
-        assert "reward_policy" in captured.out
-
-
-# --- Composed Policy Integration Tests ---
-
-class TestComposedPolicyIntegration:
-    """Tests for ComposedRewardPolicy with MCTS agents."""
-    
-    def test_composed_policy_with_mcts(self, root_node, sample_molecule, pks_library):
-        """ComposedRewardPolicy works correctly with DORAnetMCTS."""
-        composed = ComposedRewardPolicy([
-            (SinkCompoundRewardPolicy(reward_value=1.0), 0.5),
-            (PKSLibraryRewardPolicy(pks_library=pks_library), 0.5),
-        ])
-        
-        agent = DORAnetMCTS(
-            root=root_node,
-            target_molecule=sample_molecule,
-            total_iterations=0,
-            max_depth=5,
-            reward_policy=composed,
-            use_enzymatic=False,
-            use_synthetic=False,
-        )
-        
-        assert agent.reward_policy is composed
-        # Non-terminal node should get 0 reward from both policies
-        reward = agent.calculate_reward(root_node)
-        assert reward == 0.0
 
 
 # --- Policy Logging Integration Tests ---
@@ -421,7 +295,7 @@ class TestPolicyLoggingIntegration:
         
         captured = capsys.readouterr()
         assert "NoOp" in captured.out
-        assert "SparseTerminal" in captured.out
+        assert "SAScore" in captured.out
     
     def test_custom_policy_name_logged(self, root_node, sample_molecule, capsys):
         """Custom policy names are logged."""
@@ -498,30 +372,4 @@ class TestTerminalDetectionBehaviorIntegration:
         context = agent._build_policy_context()
         result = agent.terminal_detector.detect(root, context)
         
-        assert result.terminal is False
-
-    def test_legacy_rollout_policy_works_via_shim(self, sample_molecule):
-        """Legacy rollout_policy still works via _RolloutPolicyShim."""
-        rollout_policy = CountingRolloutPolicy()
-        
-        Node.node_counter = 0
-        root_mol = Chem.MolFromSmiles("CCCCC(=O)O")
-        root = Node(fragment=root_mol, parent=None, depth=0, provenance="target")
-        
-        agent = DORAnetMCTS(
-            root=root,
-            target_molecule=sample_molecule,
-            total_iterations=0,
-            max_depth=5,
-            rollout_policy=rollout_policy,
-            use_enzymatic=False,
-            use_synthetic=False,
-        )
-        
-        # The terminal_detector should be a shim wrapping the rollout_policy
-        context = agent._build_policy_context()
-        result = agent.terminal_detector.detect(root, context)
-        
-        # The shim should have delegated to the rollout policy
-        assert rollout_policy.call_count == 1
         assert result.terminal is False

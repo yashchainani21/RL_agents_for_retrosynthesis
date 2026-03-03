@@ -61,9 +61,8 @@ RL_agents_for_retrosynthesis/
 │   └── policies/
 │       ├── base.py                # TerminalDetector, RewardPolicy base classes
 │       ├── terminal_detection.py  # VerifyWithRetroTide, SimilarityGuidedRetroTideDetector
-│       ├── rollout.py             # Legacy rollout policies (deprecated)
-│       ├── reward.py              # Reward policy implementations
-│       ├── thermodynamic.py       # Thermodynamic-scaled wrapper policies
+│       ├── reward.py              # Reward policy implementations (SAScore, Sparse)
+│       ├── thermodynamic.py       # ThermodynamicScaledRewardPolicy wrapper
 │       ├── utils.py               # Shared helpers (SA score, fingerprints, similarity)
 │       └── tests/                 # Policy unit tests
 ├── RetroTide_agent/
@@ -179,8 +178,6 @@ agent.run()
 ## Terminal Detection Policies
 
 Terminal detection policies determine whether a node is terminal after MCTS expansion — specifically, whether RetroTide verification should be attempted for PKS library matches.
-
-> **Note**: In earlier versions, terminal detection was called "rollout" — but it was never a true MCTS rollout. The legacy `RolloutPolicy` API is still available for backward compatibility but deprecated.
 
 ### Terminal Detection Phase: Database Checking Order
 
@@ -299,7 +296,7 @@ reward_policy = ThermodynamicScaledRewardPolicy(
         sink_terminal_reward=1.0,
         pks_terminal_reward=1.0,
     ),
-    feasibility_weight=0.8,
+    feasibility_weight=1.0,
     sigmoid_k=0.2,
     sigmoid_threshold=15.0,
     use_dora_xgb_for_enzymatic=True,
@@ -359,8 +356,6 @@ node.thermodynamic_label   # int 0 or 1 (0 = unfavorable, 1 = favorable)
 
 Wrapper policies that scale rewards by pathway thermodynamic feasibility. These can wrap any base reward policy.
 
-> **Note**: `ThermodynamicScaledRolloutPolicy` is a legacy wrapper for the deprecated `RolloutPolicy` API. For new code, use `ThermodynamicScaledRewardPolicy` with the new `TerminalDetector` API.
-
 ### ThermodynamicScaledRewardPolicy
 
 Scales terminal rewards by pathway thermodynamic feasibility.
@@ -373,7 +368,7 @@ from DORAnet_agent.policies import (
 
 policy = ThermodynamicScaledRewardPolicy(
     base_policy=SparseTerminalRewardPolicy(sink_terminal_reward=1.0),
-    feasibility_weight=0.8,
+    feasibility_weight=1.0,
     sigmoid_k=0.2,
     sigmoid_threshold=15.0,
     use_dora_xgb_for_enzymatic=True,
@@ -407,7 +402,7 @@ terminal_detector = VerifyWithRetroTide()
 # Reward policy with thermodynamic scaling
 reward_policy = ThermodynamicScaledRewardPolicy(
     base_policy=SparseTerminalRewardPolicy(sink_terminal_reward=1.0),
-    feasibility_weight=0.8,
+    feasibility_weight=1.0,
     aggregation="geometric_mean",
 )
 
@@ -745,7 +740,6 @@ Max children per expand:   30
 Selection policy:          UCB1
 Child downselection:       most_thermo_feasible
 MW multiple to exclude:    1.5
-Rollout policy:            SpawnRetroTideOnDatabaseCheck (deprecated)
 Terminal detector:         VerifyWithRetroTide
 Reward policy:             ThermodynamicScaled(SAScore_and_Terminal)
 RetroTide max depth:       5

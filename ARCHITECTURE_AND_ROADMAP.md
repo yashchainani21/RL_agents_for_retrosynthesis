@@ -56,7 +56,7 @@ This document summarizes the current strengths of the RL Agents for Retrosynthes
 ### Algorithm & Search Enhancements
 
 #### 1. Learned Value Function
-**Current State**: Rewards are binary heuristics (PKS match = 1.0, sink = 1.0)
+**Current State**: Rewards use SA-score-based dense scoring (default) with terminal bonuses for PKS matches and sink compounds, scaled by pathway thermodynamic feasibility.
 
 **Recommendation**: Train a neural network to predict synthesis feasibility scores based on:
 - Molecular descriptors (fingerprints, physicochemical properties)

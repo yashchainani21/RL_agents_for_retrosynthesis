@@ -7,7 +7,7 @@ RDLogger.DisableLog('rdApp.*')
 
 from DORAnet_agent.mcts import DORAnetMCTS
 from DORAnet_agent.node import Node
-from DORAnet_agent.policies.reward import PKSSimilarityRewardPolicy
+from DORAnet_agent.policies.reward import SAScore_and_TerminalRewardPolicy, SparseTerminalRewardPolicy
 from DORAnet_agent.policies.terminal_detection import SimilarityGuidedRetroTideDetector
 
 def main():
@@ -15,9 +15,9 @@ def main():
     target = Chem.MolFromSmiles('CCCCC(=O)O')  # pentanoic acid
     root = Node(fragment=target)
 
-    # Test 1: Default SparseTerminalRewardPolicy (sparse rewards)
+    # Test 1: Default SAScore_and_TerminalRewardPolicy (dense rewards via SA score)
     print('\n' + '='*60)
-    print('TEST 1: Default SparseTerminalRewardPolicy')
+    print('TEST 1: Default SAScore_and_TerminalRewardPolicy (dense rewards)')
     print('='*60)
     
     agent1 = DORAnetMCTS(
@@ -35,24 +35,24 @@ def main():
 
     nodes_with_value = sum(1 for n in agent1.nodes if n.value > 0)
     print(f'\nTotal nodes: {len(agent1.nodes)}, Nodes with value > 0: {nodes_with_value}')
-    print('Note: Sparse rewards only give value when sink/PKS terminals found')
+    print('Note: Dense rewards use SA score for all non-terminal nodes + full reward for terminals')
     
-    # Test 2: SimilarityGuidedRetroTideDetector + PKSSimilarityRewardPolicy (dense rewards)
+    # Test 2: SparseTerminalRewardPolicy (sparse rewards — only terminals get value)
     print('\n' + '='*60)
-    print('TEST 2: SimilarityGuidedRetroTideDetector + PKSSimilarityRewardPolicy (dense rewards)')
+    print('TEST 2: SparseTerminalRewardPolicy (sparse rewards)')
     print('='*60)
     
     root2 = Node(fragment=target)
     root2.__class__.node_counter = 0  # Reset counter
     
-    pks_detector = SimilarityGuidedRetroTideDetector()
+    sparse_policy = SparseTerminalRewardPolicy(sink_terminal_reward=1.0)
     
     agent2 = DORAnetMCTS(
         root=root2,
         target_molecule=target,
         max_depth=3,
         total_iterations=5,
-        terminal_detector=pks_detector,
+        reward_policy=sparse_policy,
     )
     agent2.run()
 
@@ -63,7 +63,7 @@ def main():
 
     nodes_with_value2 = sum(1 for n in agent2.nodes if n.value > 0)
     print(f'\nTotal nodes: {len(agent2.nodes)}, Nodes with value > 0: {nodes_with_value2}')
-    print('Note: Dense rewards use PKS similarity and SA score to compute rewards')
+    print('Note: Sparse rewards only give value when sink/PKS terminals found')
 
 if __name__ == '__main__':
     main()
