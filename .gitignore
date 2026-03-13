@@ -28,6 +28,9 @@ archives/
 .cache/
 **/.cache/
 
+# Secrets
+.env
+
 # Claude Code
 .claude/
 CLAUDE.md
