@@ -67,6 +67,16 @@ except ImportError:
     pathermo_Hf = None
     PATHERMO_AVAILABLE = False
 
+# Optional UMA (Universal Model for Atoms) imports for ML-based thermodynamic scoring
+try:
+    from fairchem.core import pretrained_mlip, FAIRChemCalculator
+    from ase import Atoms as ASEAtoms
+    from ase.optimize import BFGS
+    from ase.units import eV, kcal, mol as ase_mol
+    UMA_AVAILABLE = True
+except ImportError:
+    UMA_AVAILABLE = False
+
 # Silence RDKit logs during network builds.
 RDLogger.DisableLog("rdApp.*")
 
@@ -377,6 +387,168 @@ class ThermodynamicScorer:
 
         except Exception as e:
             print(f"[ThermodynamicScorer] Prediction failed: {e}")
+            return None, None
+
+
+class UMAThermodynamicScorer:
+    """Scores reaction thermodynamic feasibility using UMA (Universal Model for Atoms).
+
+    This class computes reaction energy (ΔE) using UMA, an ML interatomic potential
+    trained on the OMol25 dataset, providing near-DFT-quality molecular energies
+    (ωB97M-V/def2-TZVPD level) with broader molecular coverage than pathermo.
+
+    Pipeline: SMILES → RDKit 3D conformer → MMFF pre-optimization → ASE Atoms
+    → UMA BFGS optimization → energy in kcal/mol.
+
+    Same interface as ThermodynamicScorer: score_reaction() returns (energy, label).
+    Same FEASIBILITY_THRESHOLD (15.0 kcal/mol) and label logic.
+    """
+
+    FEASIBILITY_THRESHOLD = 15.0
+
+    def __init__(self, device: str = "cpu", model_name: str = "uma-s-1p2"):
+        self._device = device
+        self._model_name = model_name
+        self._predictor = None
+        self._initialized = False
+        self._energy_cache: Dict[str, float] = {}
+
+    def _ensure_initialized(self):
+        """Lazy initialization of UMA model."""
+        if self._initialized:
+            return
+        self._initialized = True
+        if not UMA_AVAILABLE:
+            print("[UMAThermodynamicScorer] fairchem/ase not available - UMA scoring disabled")
+            return
+        try:
+            self._predictor = pretrained_mlip.get_predict_unit(
+                self._model_name,
+                device=self._device,
+            )
+            print(f"[UMAThermodynamicScorer] UMA model '{self._model_name}' loaded on {self._device}")
+        except Exception as e:
+            print(f"[UMAThermodynamicScorer] Failed to load UMA model: {e}")
+            self._predictor = None
+
+    def _smiles_to_optimized_energy(self, smiles: str) -> Optional[float]:
+        """Compute UMA-optimized energy for a molecule.
+
+        Args:
+            smiles: SMILES string of the molecule.
+
+        Returns:
+            Optimized energy in kcal/mol, or None if computation fails.
+        """
+        if self._predictor is None:
+            return None
+
+        # Check cache
+        if smiles in self._energy_cache:
+            return self._energy_cache[smiles]
+
+        try:
+            import numpy as np
+            from rdkit.Chem import AllChem
+
+            ev_to_kcal_mol = eV / (kcal / ase_mol)
+
+            # Parse SMILES and generate 3D conformer
+            mol = Chem.MolFromSmiles(smiles)
+            if mol is None:
+                return None
+
+            mol = Chem.AddHs(mol)
+
+            params = AllChem.ETKDGv3()
+            params.randomSeed = 42
+            params.numThreads = 0
+            cids = AllChem.EmbedMultipleConfs(mol, numConfs=10, params=params)
+            if len(cids) == 0:
+                return None
+
+            # MMFF pre-optimization, pick lowest energy conformer
+            results = AllChem.MMFFOptimizeMoleculeConfs(mol, numThreads=0)
+            energies = [r[1] for r in results if r[0] == 0]
+            best_conf_id = int(np.argmin(energies)) if energies else 0
+
+            # Convert to ASE Atoms
+            conf = mol.GetConformer(best_conf_id)
+            positions = conf.GetPositions()
+            symbols = [atom.GetSymbol() for atom in mol.GetAtoms()]
+
+            atoms = ASEAtoms(symbols=symbols, positions=positions)
+            atoms.info["charge"] = 0
+            atoms.info["spin"] = 1
+
+            # Attach UMA calculator and optimize
+            atoms.calc = FAIRChemCalculator(self._predictor, task_name="omol")
+            opt = BFGS(atoms, logfile=None)
+            opt.run(fmax=0.05, steps=200)
+
+            energy_kcal = atoms.get_potential_energy() * ev_to_kcal_mol
+
+            # Cache the result
+            self._energy_cache[smiles] = energy_kcal
+            return energy_kcal
+
+        except Exception as e:
+            print(f"[UMAThermodynamicScorer] Energy computation failed for {smiles}: {e}")
+            return None
+
+    def score_reaction(
+        self,
+        reactants_smiles: List[str],
+        products_smiles: List[str],
+        provenance: str,
+    ) -> Tuple[Optional[float], Optional[int]]:
+        """Score a reaction's thermodynamic feasibility using UMA.
+
+        Args:
+            reactants_smiles: List of reactant SMILES (as stored by DORAnet, retro direction)
+            products_smiles: List of product SMILES (as stored by DORAnet, retro direction)
+            provenance: "enzymatic" or "synthetic"
+
+        Returns:
+            (delta_e, label) tuple where:
+            - delta_e: ΔE in kcal/mol, or None if not scored
+            - label: 1 if ΔE < 15 kcal/mol (feasible), 0 otherwise, or None if not scored
+        """
+        if not reactants_smiles or not products_smiles:
+            return None, None
+
+        self._ensure_initialized()
+
+        if self._predictor is None:
+            return None, None
+
+        try:
+            # DORAnet stores reactions in RETRO direction
+            # Forward direction: products_smiles (stored) → reactants_smiles (stored)
+            # ΔE = Σ(E_forward_products) - Σ(E_forward_reactants)
+            #     = Σ(E of reactants_smiles) - Σ(E of products_smiles)
+
+            forward_product_energies = []
+            for smiles in reactants_smiles:
+                e = self._smiles_to_optimized_energy(smiles)
+                if e is None:
+                    return None, None
+                forward_product_energies.append(e)
+
+            forward_reactant_energies = []
+            for smiles in products_smiles:
+                e = self._smiles_to_optimized_energy(smiles)
+                if e is None:
+                    return None, None
+                forward_reactant_energies.append(e)
+
+            delta_e = sum(forward_product_energies) - sum(forward_reactant_energies)
+            label = 1 if delta_e < self.FEASIBILITY_THRESHOLD else 0
+
+            return delta_e, label
+
+        except Exception as e:
+            print(f"[UMAThermodynamicScorer] Prediction failed: {e}")
             return None, None
 
 
@@ -712,6 +884,8 @@ class DORAnetMCTS:
         enable_frontier_fallback: bool = True,
         # Search strategy: "mcts" (default) or "bfs" (exhaustive breadth-first)
         search_strategy: str = "mcts",
+        # Thermodynamic scorer for synthetic reactions: "pathermo" or "uma"
+        synthetic_thermo_scorer: str = "pathermo",
     ) -> None:
         """
         Args:
@@ -799,6 +973,10 @@ class DORAnetMCTS:
                   still serves as a hard ceiling. BFS is useful as a baseline comparison
                   to demonstrate that MCTS finds higher-quality pathways faster.
                   BFS is single-core only (not supported with AsyncExpansionDORAnetMCTS).
+            synthetic_thermo_scorer: Which thermodynamic scorer to use for synthetic reactions.
+                - "pathermo" (default): PAthermo group contribution method (deterministic, limited coverage)
+                - "uma": UMA ML interatomic potential (near-DFT quality, broader coverage).
+                  Falls back to pathermo with a warning if fairchem/ase are not installed.
         """
         # Preprocess target molecule: remove stereochemistry, sanitize, canonicalize
         original_smiles = Chem.MolToSmiles(target_molecule) if target_molecule else "None"
@@ -848,6 +1026,7 @@ class DORAnetMCTS:
         # Policy initialization is deferred until after pks_library is loaded (see below)
         self._terminal_detector_arg = terminal_detector
         self._reward_policy_arg = reward_policy
+        self._synthetic_thermo_scorer_name = synthetic_thermo_scorer
 
         # Search strategy configuration
         valid_strategies = ["mcts", "bfs"]
@@ -1074,11 +1253,33 @@ class DORAnetMCTS:
             print("[DORAnet] DORA-XGB not available - enzymatic feasibility scoring disabled")
 
         # Initialize thermodynamic scorer for synthetic reactions
-        self.thermodynamic_scorer = ThermodynamicScorer()
-        if PATHERMO_AVAILABLE:
-            print("[DORAnet] pathermo available for synthetic thermodynamic scoring")
+        if self._synthetic_thermo_scorer_name == "uma":
+            if UMA_AVAILABLE:
+                self.thermodynamic_scorer = UMAThermodynamicScorer()
+                print("[DORAnet] Using UMA for synthetic thermodynamic scoring")
+            else:
+                import warnings
+                warnings.warn(
+                    "synthetic_thermo_scorer='uma' requested but fairchem/ase not installed. "
+                    "Falling back to pathermo.",
+                    stacklevel=2,
+                )
+                self.thermodynamic_scorer = ThermodynamicScorer()
+                if PATHERMO_AVAILABLE:
+                    print("[DORAnet] Fell back to pathermo for synthetic thermodynamic scoring")
+                else:
+                    print("[DORAnet] pathermo not available - synthetic thermodynamic scoring disabled")
+        elif self._synthetic_thermo_scorer_name == "pathermo":
+            self.thermodynamic_scorer = ThermodynamicScorer()
+            if PATHERMO_AVAILABLE:
+                print("[DORAnet] pathermo available for synthetic thermodynamic scoring")
+            else:
+                print("[DORAnet] pathermo not available - synthetic thermodynamic scoring disabled")
         else:
-            print("[DORAnet] pathermo not available - synthetic thermodynamic scoring disabled")
+            raise ValueError(
+                f"Invalid synthetic_thermo_scorer '{self._synthetic_thermo_scorer_name}'. "
+                f"Must be 'pathermo' or 'uma'."
+            )
 
     def _build_policy_context(self) -> Dict[str, Any]:
         """

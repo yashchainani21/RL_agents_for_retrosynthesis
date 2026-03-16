@@ -1,6 +1,6 @@
-"""Tests for pathermo thermodynamic scoring integration."""
+"""Tests for pathermo and UMA thermodynamic scoring integration."""
 import pytest
-from DORAnet_agent.mcts import ThermodynamicScorer, PATHERMO_AVAILABLE
+from DORAnet_agent.mcts import ThermodynamicScorer, UMAThermodynamicScorer, PATHERMO_AVAILABLE, UMA_AVAILABLE
 
 
 class TestThermodynamicScorer:
@@ -73,6 +73,77 @@ class TestThermodynamicScorer:
             provenance="synthetic"
         )
         assert delta_h is None
+        assert label is None
+
+
+class TestUMAThermodynamicScorer:
+    """Tests for the UMAThermodynamicScorer class."""
+
+    def test_missing_reactants_returns_none(self):
+        """Missing reactants should return None."""
+        scorer = UMAThermodynamicScorer()
+        delta_e, label = scorer.score_reaction(
+            reactants_smiles=[],
+            products_smiles=["CCO"],
+            provenance="synthetic"
+        )
+        assert delta_e is None
+        assert label is None
+
+    def test_missing_products_returns_none(self):
+        """Missing products should return None."""
+        scorer = UMAThermodynamicScorer()
+        delta_e, label = scorer.score_reaction(
+            reactants_smiles=["CCO"],
+            products_smiles=[],
+            provenance="synthetic"
+        )
+        assert delta_e is None
+        assert label is None
+
+    def test_feasibility_threshold_matches_pathermo(self):
+        """UMA scorer should use the same feasibility threshold as pathermo."""
+        uma_scorer = UMAThermodynamicScorer()
+        pathermo_scorer = ThermodynamicScorer()
+        assert uma_scorer.FEASIBILITY_THRESHOLD == pathermo_scorer.FEASIBILITY_THRESHOLD
+
+    @pytest.mark.skipif(not UMA_AVAILABLE, reason="fairchem/ase not installed")
+    def test_synthetic_scoring_returns_valid_values(self):
+        """With UMA available, synthetic reactions should return valid scores."""
+        scorer = UMAThermodynamicScorer()
+        delta_e, label = scorer.score_reaction(
+            reactants_smiles=["CCO", "O"],
+            products_smiles=["CCCO"],
+            provenance="synthetic"
+        )
+        assert delta_e is not None
+        assert isinstance(delta_e, float)
+        assert label in [0, 1]
+
+    @pytest.mark.skipif(not UMA_AVAILABLE, reason="fairchem/ase not installed")
+    def test_energy_caching(self):
+        """Computed energies should be cached for repeated SMILES."""
+        scorer = UMAThermodynamicScorer()
+        # Score a reaction to populate the cache
+        scorer.score_reaction(
+            reactants_smiles=["CCO"],
+            products_smiles=["CC"],
+            provenance="synthetic"
+        )
+        # Both molecules should now be cached
+        assert "CCO" in scorer._energy_cache
+        assert "CC" in scorer._energy_cache
+
+    @pytest.mark.skipif(UMA_AVAILABLE, reason="test only runs when UMA is NOT installed")
+    def test_without_uma_returns_none(self):
+        """Without UMA installed, scoring should return None."""
+        scorer = UMAThermodynamicScorer()
+        delta_e, label = scorer.score_reaction(
+            reactants_smiles=["CCO"],
+            products_smiles=["CC"],
+            provenance="synthetic"
+        )
+        assert delta_e is None
         assert label is None
 
 
