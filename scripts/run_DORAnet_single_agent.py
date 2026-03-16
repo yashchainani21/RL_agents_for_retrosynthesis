@@ -124,7 +124,8 @@ def main(target_smiles: str,
          use_chem_building_blocksDB: bool = True,
          use_bio_building_blocksDB: bool = True,
          use_PKS_building_blocksDB: bool = True,
-         stop_on_first_pathway: bool = False) -> None:
+         stop_on_first_pathway: bool = False,
+         search_strategy: str = "mcts") -> None:
     """
     Run the DORAnet MCTS agent.
 
@@ -170,6 +171,12 @@ def main(target_smiles: str,
             Default True. Set False for ablation studies.
         stop_on_first_pathway: If True, stop MCTS as soon as a complete pathway is found.
             Useful for benchmarking time-to-first-solution. Default False.
+        search_strategy: Search strategy to use. Options:
+            - "mcts" (default): Standard Monte Carlo Tree Search with UCB1 selection.
+            - "bfs": Exhaustive breadth-first search expanding all nodes at each depth level.
+              In BFS mode, total_iterations controls the number of depth levels to expand
+              (e.g., total_iterations=3 expands levels 0, 1, 2). The max_depth parameter
+              still serves as a hard ceiling. BFS is useful as a baseline comparison for MCTS.
     """
     create_interactive_visualization = True
     enable_iteration_viz = False
@@ -269,6 +276,14 @@ def main(target_smiles: str,
 
         # ---- Early Stopping Configuration ----
         stop_on_first_pathway=stop_on_first_pathway,
+
+        # ---- Search Strategy Configuration ----
+        # "mcts" (default): Standard Monte Carlo Tree Search with Select → Expand → Backprop.
+        # "bfs": Exhaustive breadth-first search expanding all nodes at each depth level.
+        # NOTE: In BFS mode, total_iterations controls the number of depth levels to expand,
+        # NOT the number of MCTS iterations. For example, total_iterations=3 with max_depth=4
+        # expands depth levels 0, 1, 2 (3 levels), stopping before reaching max_depth.
+        search_strategy=search_strategy,
     )
 
     print("[Runner] Using sequential DORAnetMCTS")
@@ -329,14 +344,16 @@ def main(target_smiles: str,
     timestamp = __import__('datetime').datetime.now().strftime("%Y%m%d_%H%M%S")
 
     # Use molecule name for filename if provided, otherwise use SMILES
+    # Include search strategy in filename for easy identification
+    strategy_tag = search_strategy  # "mcts" or "bfs"
     if molecule_name:
         # Sanitize molecule name for filename
         safe_name = molecule_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
         safe_name = "".join(c for c in safe_name if c.isalnum() or c in "_-")
-        filename_base = f"{safe_name}_sequential"
+        filename_base = f"{safe_name}_{strategy_tag}_sequential"
     else:
         safe_smiles = target_smiles.replace("/", "_").replace("\\", "_")[:20]
-        filename_base = f"{safe_smiles}_sequential"
+        filename_base = f"{safe_smiles}_{strategy_tag}_sequential"
 
     results_path = results_dir / f"doranet_results_{filename_base}_{timestamp}.txt"
     agent.save_results(str(results_path))
@@ -440,4 +457,8 @@ if __name__ == "__main__":
         use_bio_building_blocksDB=True,
         use_PKS_building_blocksDB=True,
         stop_on_first_pathway=False,
+        # search_strategy="mcts",  # "mcts" (default) or "bfs" (exhaustive breadth-first)
+        # NOTE: In BFS mode, total_iterations controls max depth levels to expand,
+        # NOT the number of MCTS iterations. Example: total_iterations=3 with max_depth=4
+        # expands depth levels 0, 1, 2 (3 levels), stopping before reaching max_depth.
     )

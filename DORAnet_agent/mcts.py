@@ -710,6 +710,8 @@ class DORAnetMCTS:
         stop_on_first_pathway: bool = False,
         # Frontier fallback for deep exploration
         enable_frontier_fallback: bool = True,
+        # Search strategy: "mcts" (default) or "bfs" (exhaustive breadth-first)
+        search_strategy: str = "mcts",
     ) -> None:
         """
         Args:
@@ -786,6 +788,17 @@ class DORAnetMCTS:
                 returns None (i.e., when all children at some level are terminal). This enables
                 deeper exploration by ensuring iterations are not wasted on dead-end branches.
                 Default True for better deep exploration.
+            search_strategy: Search strategy to use for retrosynthetic exploration.
+                - "mcts" (default): Standard Monte Carlo Tree Search with
+                  Select → Expand → Terminal Detect → Reward → Backpropagate loop.
+                  Uses UCB1 or depth-biased selection to balance exploration/exploitation.
+                - "bfs": Exhaustive breadth-first search that expands every non-terminal
+                  node at each depth level before proceeding to the next level.
+                  In BFS mode, total_iterations controls the number of depth levels to
+                  expand (e.g., total_iterations=3 expands depths 0, 1, 2), and max_depth
+                  still serves as a hard ceiling. BFS is useful as a baseline comparison
+                  to demonstrate that MCTS finds higher-quality pathways faster.
+                  BFS is single-core only (not supported with AsyncExpansionDORAnetMCTS).
         """
         # Preprocess target molecule: remove stereochemistry, sanitize, canonicalize
         original_smiles = Chem.MolToSmiles(target_molecule) if target_molecule else "None"
@@ -835,6 +848,23 @@ class DORAnetMCTS:
         # Policy initialization is deferred until after pks_library is loaded (see below)
         self._terminal_detector_arg = terminal_detector
         self._reward_policy_arg = reward_policy
+
+        # Search strategy configuration
+        valid_strategies = ["mcts", "bfs"]
+        if search_strategy not in valid_strategies:
+            raise ValueError(f"Invalid search_strategy '{search_strategy}'. Must be one of: {valid_strategies}")
+        self.search_strategy = search_strategy
+
+        # BFS mode: automatically disable frontier fallback (it's an MCTS concept)
+        if self.search_strategy == "bfs":
+            if enable_frontier_fallback:
+                print("[DORAnet] BFS mode: frontier fallback automatically disabled (MCTS-only concept)")
+            enable_frontier_fallback = False
+            print(f"[DORAnet] Search strategy: bfs (exhaustive breadth-first search)")
+            print(f"[DORAnet] BFS mode: total_iterations={total_iterations} controls max depth "
+                  f"levels to expand (not MCTS iterations)")
+        else:
+            print(f"[DORAnet] Search strategy: mcts (Monte Carlo Tree Search)")
 
         # Selection policy configuration
         valid_policies = ["UCB1", "depth_biased"]
@@ -1897,6 +1927,21 @@ class DORAnetMCTS:
 
     def run(self) -> None:
         """
+        Execute the retrosynthetic search using the configured search strategy.
+
+        Dispatches to:
+        - _run_mcts(): Standard MCTS with Select → Expand → Detect → Backpropagate
+        - _run_bfs(): Exhaustive breadth-first search expanding all nodes at each depth level
+
+        The search strategy is determined by self.search_strategy, set during construction.
+        """
+        if self.search_strategy == "bfs":
+            self._run_bfs()
+        else:
+            self._run_mcts()
+
+    def _run_mcts(self) -> None:
+        """
         Execute the MCTS loop: Selection → Expansion → Terminal Detection → Backpropagation.
 
         For each expanded child:
@@ -2058,6 +2103,200 @@ class DORAnetMCTS:
         print(f"[DORAnet] SMILES cache: {cache_info.hits} hits, {cache_info.misses} misses "
               f"({hit_rate:.1f}% hit rate), {cache_info.currsize}/{cache_info.maxsize} cached")
 
+    def _run_bfs(self) -> None:
+        """
+        Execute exhaustive breadth-first search over the retrosynthetic tree.
+
+        BFS expands every non-terminal node at each depth level before proceeding
+        to the next level. This serves as a baseline comparison for MCTS, which
+        uses intelligent selection to find high-quality pathways faster.
+
+        In BFS mode:
+        - total_iterations controls the number of depth levels to expand
+          (e.g., total_iterations=3 expands depths 0, 1, 2)
+        - max_depth is still the hard ceiling for tree depth
+        - select() is NOT used — all nodes at each level are expanded
+        - backpropagate() IS called for output/metrics compatibility but does not
+          guide the search (there is no selection to influence)
+        - Terminal detection and reward computation are identical to MCTS
+
+        For each expanded child:
+        - Sink compounds: Use reward policy (known terminal, no detection needed)
+        - Non-sink compounds: Use terminal detector to check for PKS verification
+        - All children: Use reward policy to compute reward for backpropagation
+        """
+        # Determine effective max depth levels to expand
+        # total_iterations in BFS = number of depth levels to expand
+        # max_depth is the hard ceiling
+        max_bfs_levels = min(self.total_iterations, self.max_depth)
+
+        print(f"[DORAnet BFS] Starting breadth-first search")
+        print(f"[DORAnet BFS] Expanding up to {max_bfs_levels} depth levels "
+              f"(total_iterations={self.total_iterations}, max_depth={self.max_depth})")
+        if self.stop_on_first_pathway:
+            print(f"[DORAnet BFS] Early stopping enabled: will stop on first complete pathway")
+
+        # Build context for policies (same as MCTS)
+        context = self._build_policy_context()
+
+        # Track start time for early stopping metrics
+        self._run_start_time = time.time()
+
+        # Initialize BFS: start with the root node
+        current_level_nodes: List[Node] = [self.root]
+        total_expansions = 0
+        depth_level = -1  # Will be set by loop; -1 if loop doesn't execute
+
+        for depth_level in range(max_bfs_levels):
+            self.current_iteration = depth_level
+
+            # Collect nodes to expand at this level (non-terminal, non-expanded, within depth)
+            nodes_to_expand = [
+                node for node in current_level_nodes
+                if not node.expanded
+                and not node.is_sink_compound
+                and not node.is_pks_terminal
+                and node.depth < self.max_depth
+            ]
+
+            if not nodes_to_expand:
+                print(f"[DORAnet BFS] Level {depth_level}: no expandable nodes remaining, stopping.")
+                break
+
+            next_level_nodes: List[Node] = []
+            level_children_total = 0
+            level_terminals = 0
+            level_detections = 0
+            early_stop = False
+
+            for node in nodes_to_expand:
+                # Track when this node was selected (for output compatibility)
+                node.selected_at_iterations.append(depth_level)
+                node.expanded_at_iteration = depth_level
+
+                # Expansion: generate fragments (reuses MCTS expand() exactly)
+                new_children = self.expand(node)
+                total_expansions += 1
+                level_children_total += len(new_children)
+
+                # Process each child (same terminal detection + reward logic as MCTS)
+                for child in new_children:
+                    child.created_at_iteration = depth_level
+
+                    # Check if this node matches PKS library
+                    is_pks_library_match = self._is_in_pks_library(child.smiles or "")
+
+                    if is_pks_library_match:
+                        # PKS library match: run terminal detection for RetroTide
+                        print(f"[DORAnet BFS] Fragment {child.smiles} is PKS library match - "
+                              f"attempting RetroTide (sink={child.is_sink_compound})")
+
+                        detection = self.terminal_detector.detect(child, context)
+
+                        if detection.terminal:
+                            child.is_pks_terminal = True
+                            child.expanded = True
+                            level_terminals += 1
+
+                            if "retrotide_agent" in detection.metadata:
+                                self._store_retrotide_result(child, detection)
+                        else:
+                            if child.is_sink_compound:
+                                level_terminals += 1
+
+                        if not isinstance(self.terminal_detector, NoOpTerminalDetector):
+                            level_detections += 1
+
+                    elif child.is_sink_compound:
+                        # Pure sink compound - counts as terminal
+                        level_terminals += 1
+
+                    else:
+                        # Non-sink, non-PKS: run terminal detection
+                        detection = self.terminal_detector.detect(child, context)
+
+                        if detection.terminal:
+                            child.is_pks_terminal = True
+                            child.expanded = True
+                            level_terminals += 1
+
+                            if "retrotide_agent" in detection.metadata:
+                                self._store_retrotide_result(child, detection)
+
+                        if not isinstance(self.terminal_detector, NoOpTerminalDetector):
+                            level_detections += 1
+
+                    # Compute reward (for metrics/output, not for guiding search)
+                    reward = self.reward_policy.calculate_reward(child, context)
+
+                    # Backpropagate for output compatibility (node stats used by
+                    # save_results, get_tree_summary, etc.)
+                    self.backpropagate(child, reward)
+
+                    # Check for early stopping
+                    if self.stop_on_first_pathway and (child.is_sink_compound or child.is_pks_terminal):
+                        if self._check_and_record_first_pathway(child):
+                            early_stop = True
+                            break  # Exit child loop
+
+                    # Add non-terminal children to next level for expansion
+                    if (not child.is_sink_compound
+                            and not child.is_pks_terminal
+                            and child.depth < self.max_depth):
+                        next_level_nodes.append(child)
+
+                if early_stop:
+                    break  # Exit node loop
+
+            # Log level summary
+            log_parts = [
+                f"[DORAnet BFS] Level {depth_level}: expanded {len(nodes_to_expand)} nodes",
+                f"created {level_children_total} children",
+                f"{level_terminals} terminals",
+            ]
+            if level_detections > 0:
+                log_parts.append(f"{level_detections} RetroTide checks")
+            log_parts.append(f"{len(next_level_nodes)} nodes queued for next level")
+            print(", ".join(log_parts))
+
+            # Check for early stopping after this level
+            if self.stop_on_first_pathway and self.first_pathway_found:
+                break
+
+            # Generate iteration visualization if enabled (depth_level as "iteration")
+            if self.enable_iteration_visualizations:
+                if (depth_level + 1) % self.iteration_viz_interval == 0:
+                    self._generate_iteration_visualization(depth_level)
+
+            # Advance to next level
+            if not next_level_nodes:
+                print(f"[DORAnet BFS] No non-terminal children at level {depth_level}, "
+                      f"search exhausted.")
+                break
+
+            current_level_nodes = next_level_nodes
+
+        # Summary statistics (same format as MCTS for easy comparison)
+        sink_count = len(self.get_sink_compounds())
+        pks_terminal_count = len(self.get_pks_terminal_nodes())
+        print(f"[DORAnet BFS] Search complete. Total nodes: {len(self.nodes)}, "
+              f"PKS terminals: {pks_terminal_count}, Sink compounds: {sink_count}, "
+              f"RetroTide results: {len(self.retrotide_results)}")
+        print(f"[DORAnet BFS] Total expansions: {total_expansions}, "
+              f"Depth levels explored: {max(depth_level + 1, 0)}")
+
+        # Print early stopping summary if applicable
+        if self.first_pathway_found:
+            print(f"[DORAnet BFS] Early stopping: First pathway found at level {self.first_pathway_iteration}")
+            if self.first_pathway_time is not None:
+                print(f"[DORAnet BFS] Time to first pathway: {self.first_pathway_time:.2f}s")
+
+        # Log SMILES canonicalization cache statistics
+        cache_info = _canonicalize_smiles.cache_info()
+        hit_rate = cache_info.hits / (cache_info.hits + cache_info.misses) * 100 if (cache_info.hits + cache_info.misses) > 0 else 0
+        print(f"[DORAnet BFS] SMILES cache: {cache_info.hits} hits, {cache_info.misses} misses "
+              f"({hit_rate:.1f}% hit rate), {cache_info.currsize}/{cache_info.maxsize} cached")
+
     def _store_retrotide_result(
         self, node: Node, detection_result: TerminalDetectionResult
     ) -> None:
@@ -2095,7 +2334,7 @@ class DORAnetMCTS:
             include_iteration_info: If True, include detailed iteration diagnostics
                 (created_at, selected_at, expanded_at) for each node.
         """
-        lines = ["DORAnet MCTS Tree Summary:", "=" * 40]
+        lines = [f"DORAnet {self.search_strategy.upper()} Tree Summary:", "=" * 40]
         for node in self.nodes:
             indent = "  " * node.depth
             # Indicate node type: sink compound (with type), PKS terminal, or neither
@@ -2541,7 +2780,12 @@ class DORAnetMCTS:
             f.write(f"Terminal detector: {self.terminal_detector.name}\n")
             f.write(f"Reward policy: {self.reward_policy.name}\n")
             f.write(f"Sink compounds library size: {len(self.sink_compounds)}\n")
-            f.write(f"Enable frontier fallback: {self.enable_frontier_fallback}\n\n")
+            f.write(f"Enable frontier fallback: {self.enable_frontier_fallback}\n")
+            f.write(f"Search strategy: {self.search_strategy}\n")
+            if self.search_strategy == "bfs":
+                f.write(f"Note: In BFS mode, 'iterations' represent depth levels expanded, "
+                        f"not MCTS iterations.\n")
+            f.write("\n")
 
             # DORAnet tree with iteration diagnostics
             f.write("DORANET SEARCH TREE (with iteration diagnostics)\n")
