@@ -70,10 +70,12 @@ def get_node_feasibility_score(
     For enzymatic reactions:
         - Uses DORA-XGB score if available and use_dora_xgb_for_enzymatic=True
         - Falls back to sigmoid-transformed ΔH if DORA-XGB unavailable
+        - Returns 0.5 (neutral/borderline) if neither is available
     For synthetic reactions:
         - Uses sigmoid-transformed ΔH
+        - Returns 0.5 (neutral/borderline) if ΔH unavailable
     For unknown/target nodes:
-        - Returns 1.0 (assume feasible)
+        - Returns 1.0 (not a reaction step, no penalty)
 
     Args:
         node: The node to score
@@ -93,13 +95,13 @@ def get_node_feasibility_score(
         # Fall back to thermodynamic score
         if node.enthalpy_of_reaction is not None:
             return sigmoid_transform(node.enthalpy_of_reaction, sigmoid_k, sigmoid_threshold)
-        return 1.0  # Unknown, assume feasible
+        return 0.5  # Unknown, assign neutral (borderline) score
 
     elif provenance == "synthetic":
         # Use thermodynamic score for synthetic reactions
         if node.enthalpy_of_reaction is not None:
             return sigmoid_transform(node.enthalpy_of_reaction, sigmoid_k, sigmoid_threshold)
-        return 1.0  # Unknown, assume feasible
+        return 0.5  # Unknown, assign neutral (borderline) score
 
     else:
         # Target node or unknown provenance

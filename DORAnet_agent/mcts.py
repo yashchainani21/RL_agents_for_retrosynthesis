@@ -1138,8 +1138,8 @@ class DORAnetMCTS:
             # Use sigmoid-transformed ΔH
             fragment_info.feasibility_score = 1.0 / (1.0 + math.exp(0.2 * (delta_h - 15.0)))
         else:
-            # Unknown, assume feasible
-            fragment_info.feasibility_score = 1.0
+            # Unknown, assign neutral (borderline) score
+            fragment_info.feasibility_score = 0.5
 
         return fragment_info
 

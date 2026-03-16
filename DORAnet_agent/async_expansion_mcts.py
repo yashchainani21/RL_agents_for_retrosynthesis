@@ -143,7 +143,7 @@ def _expand_worker(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
             # Sigmoid transform: score = 1 / (1 + exp(0.2 * (ΔH - 15)))
             feasibility_score = 1.0 / (1.0 + math.exp(0.2 * (delta_h - 15.0)))
         else:
-            feasibility_score = 1.0  # Unknown, assume feasible
+            feasibility_score = 0.5  # Unknown, assign neutral (borderline) score
 
         frag["feasibility_score"] = feasibility_score
         frag["dora_xgb_score"] = dora_score

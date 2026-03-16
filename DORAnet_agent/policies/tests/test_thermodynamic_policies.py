@@ -150,16 +150,16 @@ class TestGetNodeFeasibilityScore:
         assert score == 1.0
 
     def test_missing_values_enzymatic(self):
-        """Missing thermodynamic values for enzymatic should return 1.0."""
+        """Missing thermodynamic values for enzymatic should return 0.5."""
         node = MockNode(provenance="enzymatic")
         score = get_node_feasibility_score(node)
-        assert score == 1.0
+        assert score == 0.5
 
     def test_missing_values_synthetic(self):
-        """Missing thermodynamic values for synthetic should return 1.0."""
+        """Missing thermodynamic values for synthetic should return 0.5."""
         node = MockNode(provenance="synthetic")
         score = get_node_feasibility_score(node)
-        assert score == 1.0
+        assert score == 0.5
 
     def test_custom_sigmoid_parameters(self):
         """Should respect custom sigmoid parameters."""
