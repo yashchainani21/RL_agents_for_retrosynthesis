@@ -44,7 +44,7 @@ This document summarizes the current strengths of the RL Agents for Retrosynthes
 - Comprehensive results files with iteration-level diagnostics
 
 ### 8. Clean Package Structure
-- Pip-installable with `setup.py` and `pyproject.toml`
+- Pip-installable with `pyproject.toml`
 - Modular agent packages: `DORAnet_agent`, `RetroTide_agent`, `utils`
 - Optional dependencies for DORAnet and RetroTide integrations
 - Unit tests for core MCTS functionality

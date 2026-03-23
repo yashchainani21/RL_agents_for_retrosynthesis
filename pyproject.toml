@@ -58,10 +58,24 @@ retrotide = [
     "retrotide",
     "bcs",
 ]
+gnn = [
+    "torch>=1.10.0",
+]
+uma = [
+    "fairchem-core",
+    "ase",
+    "python-dotenv",
+    "huggingface-hub",
+]
 all = [
     "doranet",
     "retrotide",
     "bcs",
+    "torch>=1.10.0",
+    "fairchem-core",
+    "ase",
+    "python-dotenv",
+    "huggingface-hub",
     "pytest>=7.0.0",
     "pytest-cov>=3.0.0",
 ]
