@@ -853,10 +853,8 @@ class DORAnetMCTS:
         max_children_per_expand: Optional[int] = 10,
         child_downselection_strategy: Optional[str] = "first_N",
         excluded_fragments: Optional[Iterable[str]] = None,
-        cofactors_file: Optional[str] = None,
         cofactors_files: Optional[List[str]] = None,
         pks_library_file: Optional[str] = None,
-        sink_compounds_file: Optional[str] = None,
         sink_compounds_files: Optional[List[str]] = None,
         prohibited_chemicals_file: Optional[str] = None,
         use_chem_building_blocksDB: bool = True,
@@ -911,10 +909,8 @@ class DORAnetMCTS:
                 - None: No filtering - keep all fragments (requires max_children_per_expand=None
                   or an integer limit)
             excluded_fragments: SMILES of fragments to ignore (small byproducts).
-            cofactors_file: Path to CSV file with cofactor SMILES to exclude (deprecated, use cofactors_files).
             cofactors_files: List of paths to CSV files with cofactor SMILES to exclude.
             pks_library_file: Path to text file with PKS product SMILES for reward calculation.
-            sink_compounds_file: Path to text file with sink compound SMILES (deprecated, use sink_compounds_files).
             sink_compounds_files: List of paths to text files with sink compound SMILES.
                 Sink compounds are commercially available building blocks that don't need
                 further expansion. Supports both biological and chemical building blocks.
@@ -1125,10 +1121,7 @@ class DORAnetMCTS:
         }
 
         # Add cofactors from CSV files if provided
-        # Support both single file (deprecated) and list of files
         cofactor_files_to_load = []
-        if cofactors_file:
-            cofactor_files_to_load.append(cofactors_file)
         if cofactors_files:
             cofactor_files_to_load.extend(cofactors_files)
 
@@ -1162,8 +1155,6 @@ class DORAnetMCTS:
         self.chemical_sink_compounds: Set[str] = set()
 
         sink_files_to_load = []
-        if sink_compounds_file:
-            sink_files_to_load.append(sink_compounds_file)
         if sink_compounds_files:
             sink_files_to_load.extend(sink_compounds_files)
 
