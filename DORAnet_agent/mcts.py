@@ -2074,35 +2074,11 @@ class DORAnetMCTS:
         """
         Calculate reward for a node using the reward policy.
 
-        This method delegates to the configured reward_policy. If no policy
-        is configured, falls back to the original sparse reward logic.
-
         Returns:
             Reward value computed by the reward policy.
         """
-        if hasattr(self, 'reward_policy') and self.reward_policy is not None:
-            context = self._build_policy_context()
-            return self.reward_policy.calculate_reward(node, context)
-
-        # Fallback: original sparse reward logic (for backward compatibility)
-        if node.is_sink_compound:
-            return self.sink_terminal_reward
-
-        if node.is_pks_terminal:
-            return 1.0
-
-        if not self.pks_library:
-            return 0.0
-
-        smiles = node.smiles
-        if smiles is None:
-            return 0.0
-
-        canonical = _canonicalize_smiles(smiles)
-        if canonical and canonical in self.pks_library:
-            return 1.0
-
-        return 0.0
+        context = self._build_policy_context()
+        return self.reward_policy.calculate_reward(node, context)
 
     def backpropagate(self, node: Node, reward: float) -> None:
         """
