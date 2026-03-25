@@ -831,3 +831,120 @@ class TestSaveSuccessfulPathways:
                 # If marked as sink=No, it should NOT be in successful pathways
                 # This would indicate a bug
                 pytest.fail(f"Byproduct '{smiles}' marked as sink=No in successful pathway")
+
+
+class TestPathwayFeasibilityRanking:
+    """Tests for pathway ranking by net feasibility score."""
+
+    def _create_agent_with_scored_children(self, tmp_path, scores):
+        """Helper: create agent with children having specified feasibility scores."""
+        from DORAnet_agent.mcts import DORAnetMCTS
+        from DORAnet_agent.node import Node
+
+        mol = Chem.MolFromSmiles("CCCCC(=O)O")
+        root = Node(fragment=mol, parent=None, depth=0, provenance="target")
+
+        agent = DORAnetMCTS(
+            root=root,
+            target_molecule=mol,
+            total_iterations=1,
+            max_depth=1,
+            use_enzymatic=False,
+            use_synthetic=False,
+        )
+
+        children = []
+        for i, score in enumerate(scores):
+            child_mol = Chem.MolFromSmiles(f"{'C' * (i + 2)}O")
+            child = Node(fragment=child_mol, parent=root, depth=1, provenance="enzymatic")
+            child.is_sink_compound = True
+            child.sink_compound_type = "chemical"
+            child.feasibility_score = score
+            root.children.append(child)
+            agent.nodes.append(child)
+            children.append(child)
+
+        return agent, children
+
+    def test_pathways_sorted_by_feasibility(self, tmp_path):
+        """Test that finalized pathways are sorted by feasibility score descending."""
+        agent, children = self._create_agent_with_scored_children(
+            tmp_path, scores=[0.3, 0.9, 0.6]
+        )
+
+        output_file = tmp_path / "finalized.txt"
+        agent.save_finalized_pathways(str(output_file))
+        content = output_file.read_text()
+
+        # Extract pathway blocks in order
+        import re
+        scores = re.findall(r"Net Feasibility Score: ([\d.]+)", content)
+        scores = [float(s) for s in scores]
+
+        # Should be sorted descending (root node may also appear as terminal)
+        assert scores == sorted(scores, reverse=True)
+        assert len(scores) >= 3
+
+    def test_ranking_with_no_thermodynamic_data(self, tmp_path):
+        """Test that ranking works when nodes have no feasibility scores (defaults to 0.5)."""
+        from DORAnet_agent.mcts import DORAnetMCTS
+        from DORAnet_agent.node import Node
+
+        mol = Chem.MolFromSmiles("CCCCC(=O)O")
+        root = Node(fragment=mol, parent=None, depth=0, provenance="target")
+
+        agent = DORAnetMCTS(
+            root=root,
+            target_molecule=mol,
+            total_iterations=1,
+            max_depth=1,
+            use_enzymatic=False,
+            use_synthetic=False,
+        )
+
+        # Create child with no feasibility data
+        child_mol = Chem.MolFromSmiles("CCO")
+        child = Node(fragment=child_mol, parent=root, depth=1, provenance="enzymatic")
+        child.is_sink_compound = True
+        child.sink_compound_type = "chemical"
+        # Leave feasibility_score as None (default)
+        root.children.append(child)
+        agent.nodes.append(child)
+
+        output_file = tmp_path / "finalized.txt"
+        agent.save_finalized_pathways(str(output_file))
+        content = output_file.read_text()
+
+        # Should not crash, and should contain a feasibility score
+        assert "Net Feasibility Score:" in content
+
+    def test_write_pathway_block_backward_compatible(self, tmp_path):
+        """Test that _write_pathway_block without feasibility_score omits the score line."""
+        from DORAnet_agent.mcts import DORAnetMCTS
+        from DORAnet_agent.node import Node
+
+        mol = Chem.MolFromSmiles("CCCCC(=O)O")
+        root = Node(fragment=mol, parent=None, depth=0, provenance="target")
+
+        agent = DORAnetMCTS(
+            root=root,
+            target_molecule=mol,
+            total_iterations=1,
+            max_depth=1,
+            use_enzymatic=False,
+            use_synthetic=False,
+        )
+
+        child_mol = Chem.MolFromSmiles("CCO")
+        child = Node(fragment=child_mol, parent=root, depth=1, provenance="enzymatic")
+        child.is_sink_compound = True
+        root.children.append(child)
+        agent.nodes.append(child)
+
+        output_file = tmp_path / "test_block.txt"
+        with open(output_file, "w") as f:
+            agent._write_pathway_block(f, 1, child)
+
+        content = output_file.read_text()
+        assert "Net Feasibility Score:" not in content
+        assert "PATHWAY #1:" in content

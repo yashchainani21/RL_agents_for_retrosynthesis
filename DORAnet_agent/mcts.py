@@ -39,6 +39,7 @@ from .policies import (
     VerifyWithRetroTide,
     NoOpTerminalDetector,
     SAScore_and_TerminalRewardPolicy,
+    get_pathway_feasibility,
 )
 
 # Optional RetroTide imports - may not be available in all environments
@@ -3391,12 +3392,16 @@ class DORAnetMCTS:
             f.write(f"Frontier fallback:         {self.enable_frontier_fallback}\n")
             f.write("\n")
 
-            f.write(f"Total pathways: {len(terminal_nodes)}\n\n")
+            # Rank pathways by net feasibility score (geometric mean, descending)
+            ranked = self._rank_pathways_by_feasibility(terminal_nodes)
+
+            f.write(f"Total pathways: {len(ranked)}\n")
+            f.write(f"Ranked by: Net Feasibility Score (geometric mean, descending)\n\n")
             if total_runtime_seconds is not None:
                 f.write(f"Total runtime (seconds): {total_runtime_seconds:.2f}\n\n")
 
-            for i, node in enumerate(terminal_nodes):
-                self._write_pathway_block(f, i + 1, node)
+            for i, (score, node) in enumerate(ranked):
+                self._write_pathway_block(f, i + 1, node, feasibility_score=score)
 
         print(f"[DORAnet] Finalized pathways saved to: {path}")
 
@@ -3608,8 +3613,12 @@ class DORAnetMCTS:
             if all_covered:
                 successful_nodes.append(node)
 
-        # Get pathway type counts and pathway numbers
-        pathway_counts, pathway_numbers, design_counts = self._get_pathway_type_counts(successful_nodes)
+        # Rank pathways by net feasibility score (geometric mean, descending)
+        ranked = self._rank_pathways_by_feasibility(successful_nodes)
+        sorted_nodes = [node for _, node in ranked]
+
+        # Get pathway type counts using sorted order so pathway numbers match
+        pathway_counts, pathway_numbers, design_counts = self._get_pathway_type_counts(sorted_nodes)
 
         def format_pathway_list(nums: List[int]) -> str:
             """Format pathway numbers as comma-separated list with # prefix."""
@@ -3657,7 +3666,8 @@ class DORAnetMCTS:
                 f.write(f"RetroTide iterations:      {self.retrotide_kwargs.get('total_iterations', 'N/A')}\n")
             f.write("\n")
 
-            f.write(f"Total pathways: {len(successful_nodes)}\n\n")
+            f.write(f"Total pathways: {len(successful_nodes)}\n")
+            f.write(f"Ranked by: Net Feasibility Score (geometric mean, descending)\n\n")
 
             # Write pathway type breakdown
             f.write("PATHWAY TYPE BREAKDOWN\n")
@@ -3710,8 +3720,8 @@ class DORAnetMCTS:
 
             f.write("\n" + "=" * 70 + "\n\n")
 
-            for i, node in enumerate(successful_nodes):
-                self._write_pathway_block(f, i + 1, node)
+            for i, (score, node) in enumerate(ranked):
+                self._write_pathway_block(f, i + 1, node, feasibility_score=score)
 
         print(f"[DORAnet] Successful pathways saved to: {path}")
 
@@ -3896,7 +3906,30 @@ class DORAnetMCTS:
 
         return total_exact, total_simulated
 
-    def _write_pathway_block(self, f, index: int, node: Node, include_pks_byproducts: bool = True) -> None:
+    def _rank_pathways_by_feasibility(self, nodes: List[Node]) -> List[Tuple[float, Node]]:
+        """
+        Compute pathway feasibility scores and sort nodes by score (descending).
+
+        Uses the geometric mean of per-step feasibility scores (DORA-XGB for
+        enzymatic, sigmoid-transformed ΔH for synthetic) to rank pathways.
+
+        Args:
+            nodes: List of terminal nodes to score.
+
+        Returns:
+            List of (aggregated_score, node) tuples, sorted descending.
+        """
+        scored = []
+        for node in nodes:
+            try:
+                agg_score, _ = get_pathway_feasibility(node)
+            except Exception:
+                agg_score = 0.5  # graceful degradation
+            scored.append((agg_score, node))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return scored
+
+    def _write_pathway_block(self, f, index: int, node: Node, include_pks_byproducts: bool = True, feasibility_score: Optional[float] = None) -> None:
         """Write a single pathway block with reaction and RetroTide details.
         
         Args:
@@ -3904,11 +3937,14 @@ class DORAnetMCTS:
             index: Pathway index number
             node: Terminal node of the pathway
             include_pks_byproducts: Whether to include PKS designs for byproducts
+            feasibility_score: Optional net feasibility score to display in header
         """
         f.write(f"PATHWAY #{index}: Node {node.node_id}\n")
         f.write("-" * 40 + "\n")
         f.write(f"Terminal Fragment: {node.smiles}\n")
         f.write(f"Depth: {node.depth}, Provenance: {node.provenance}\n")
+        if feasibility_score is not None:
+            f.write(f"Net Feasibility Score: {feasibility_score:.4f}\n")
         f.write("\nReaction Pathway:\n")
         f.write(self.format_reaction_pathway(node) + "\n\n")
 
