@@ -4,7 +4,7 @@ from rdkit import Chem
 from rdkit.Chem import AllChem, rdmolops
 from typing import Optional, List, Tuple, Set
 import bcs
-from retrotide import retrotide, structureDB
+from retrotide import retrotide
 from RetroTide_agent.node import Node
 
 class MCTS:
@@ -285,7 +285,7 @@ class MCTS:
 
                 # If no valid child was found, terminate search
                 if best_node is None:
-                    print("🚨 Terminating MCTS: No valid child node found (no subgraph match).")
+                    print("WARNING: Terminating MCTS: No valid child node found (no subgraph match).")
                     return None  # Indicate termination
 
                 node = best_node
@@ -412,7 +412,6 @@ class MCTS:
             # Step 2: Expansion - Expand only if unexpanded
             if not leaf.children:  # Expand only if this node has not been expanded before
                 self.expand(leaf)
-                leaf.expand = True # update expand attribute to True for this selected leaf node
                 print(f"Expanded leaf node: {len(leaf.children)} new children")
 
             # Step 3: Simulation - Evaluate leaf node and get reward
@@ -437,7 +436,6 @@ class MCTS:
                                     f'Depth: {node.depth}, '
                                     f'Visits: {node.visits}, '
                                     f'Selection score: {node.selection_score}, '
-                                    f'Expand: {node.expand}, '
                                     f'value: {node.value}, '
                                     f'product: {PKS_product}\n')
 
