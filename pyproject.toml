@@ -81,8 +81,8 @@ all = [
 ]
 
 [project.scripts]
-doranet-mcts = "scripts.run_DORAnet_single_agent:main"
-retrotide-mcts = "scripts.run_RetroTide_single_agent:main"
+doranet-mcts = "DORAnet_agent.cli:main"
+retrotide-mcts = "RetroTide_agent.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/yashchainani/RL_agents_for_retrosynthesis"
