@@ -61,6 +61,10 @@ retrotide = [
 gnn = [
     "torch>=1.10.0",
 ]
+thermo = [
+    "pathermo @ git+https://github.com/dmdqy/pathermo.git",
+    "xgboost==1.6.2",
+]
 uma = [
     "fairchem-core",
     "ase",
@@ -72,6 +76,8 @@ all = [
     "retrotide",
     "bcs",
     "torch>=1.10.0",
+    "pathermo @ git+https://github.com/dmdqy/pathermo.git",
+    "xgboost==1.6.2",
     "fairchem-core",
     "ase",
     "python-dotenv",
