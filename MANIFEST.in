@@ -1,0 +1,24 @@
+## Include data files needed at runtime
+recursive-include data/raw *.csv *.tsv
+recursive-include data/processed *.txt
+
+## Exclude large/proprietary files
+exclude data/processed/chemical_building_blocks.txt
+exclude data/processed/expanded_PKS_SMILES_V3.fingerprints.pkl
+exclude data/raw/Building_Blocks_US.sdf
+
+## Include documentation
+include README.md
+include LICENSE
+include pyproject.toml
+
+## Exclude development/non-package files
+prune tests
+prune notebooks
+prune scripts
+prune archives
+prune .cache
+prune .claude
+prune figures
+prune models
+prune results
