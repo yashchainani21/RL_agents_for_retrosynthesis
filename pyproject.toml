@@ -55,7 +55,7 @@ doranet = [
     "doranet",
 ]
 retrotide = [
-    "retrotide",
+    "retrotide @ git+https://github.com/JBEI/RetroTide.git",
     "bcs",
 ]
 gnn = [
@@ -74,7 +74,7 @@ uma = [
 ]
 all = [
     "doranet",
-    "retrotide",
+    "retrotide @ git+https://github.com/JBEI/RetroTide.git",
     "bcs",
     "torch>=1.10.0",
     "pathermo @ git+https://github.com/dmdqy/pathermo.git",
