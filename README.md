@@ -24,30 +24,52 @@ This hierarchical architecture leverages the complementary strengths:
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/yashchainani21/RL_agents_for_retrosynthesis.git
 cd RL_agents_for_retrosynthesis
 
 # Create conda environment
-conda create -n retrosynthesis python=3.9
+conda create -n retrosynthesis python=3.11
 conda activate retrosynthesis
 
-# Install in development mode
+# Install in development mode (core only)
 pip install -e .
+
+# Install with optional dependency groups
+pip install -e ".[retrotide]"    # RetroTide PKS verification
+pip install -e ".[thermo]"      # Pathermo + DORA-XGB + XGBoost
+pip install -e ".[gnn]"         # GNN polyketide scorer (PyTorch)
+pip install -e ".[uma]"         # UMA thermodynamic scoring
+pip install -e ".[dev]"         # pytest + coverage
+pip install -e ".[all]"         # Everything
+```
+
+### Console Scripts
+
+After installation, two CLI entry points are available:
+
+```bash
+# DORAnet retrosynthetic search
+doranet-mcts "CCCCC(=O)O" --name pentanoic_acid --iterations 100
+
+# RetroTide forward PKS synthesis
+retrotide-mcts "O=C1C=CCC(C=Cc2ccccc2)O1" --iterations 150
 ```
 
 ### Dependencies
 
 Core dependencies (see `pyproject.toml` for full list):
-- `doranet` - Reaction network expansion (enzymatic + synthetic transformations)
 - `rdkit>=2022.03.1` - Cheminformatics toolkit
+- `numpy`, `pandas`, `matplotlib` - Numerical computing and plotting
 - `networkx>=2.6.0` - Graph operations
 - `plotly>=5.0.0` - Interactive visualizations
 
-Optional:
-- `retrotide` - PKS synthesis verification (for RetroTide spawning)
+Optional (installable via dependency groups above):
+- `doranet` - Reaction network expansion (enzymatic + synthetic transformations)
+- `retrotide` - PKS synthesis verification ([JBEI/RetroTide](https://github.com/JBEI/RetroTide))
 - `bcs` - Biosynthetic cluster scoring
-- `DORA_XGB` - Enzymatic reaction feasibility prediction (DORA-XGB model)
-- `pathermo` - Thermodynamic property estimation (group contribution method for ΔH)
+- `DORA-XGB` - Enzymatic reaction feasibility prediction
+- `pathermo` - Thermodynamic property estimation ([dmdqy/pathermo](https://github.com/dmdqy/pathermo))
+- `xgboost==1.6.2` - Required by DORA-XGB
 
 ## Directory Structure
 
@@ -58,16 +80,18 @@ RL_agents_for_retrosynthesis/
 │   ├── async_expansion_mcts.py    # AsyncExpansionDORAnetMCTS (parallel)
 │   ├── node.py                    # Tree node with MCTS statistics
 │   ├── visualize.py               # Interactive HTML visualization
+│   ├── cli.py                     # doranet-mcts console script entry point
 │   └── policies/
 │       ├── base.py                # TerminalDetector, RewardPolicy base classes
 │       ├── terminal_detection.py  # VerifyWithRetroTide, SimilarityGuidedRetroTideDetector
 │       ├── reward.py              # Reward policy implementations (SAScore, Sparse)
 │       ├── thermodynamic.py       # ThermodynamicScaledRewardPolicy wrapper
-│       ├── utils.py               # Shared helpers (SA score, fingerprints, similarity)
-│       └── tests/                 # Policy unit tests
+│       ├── gnn_pks_scorer.py      # GNN polyketide classifier (optional, requires torch)
+│       └── utils.py               # Shared helpers (SA score, fingerprints, similarity)
 ├── RetroTide_agent/
 │   ├── mcts.py                    # Forward PKS synthesis MCTS
-│   └── node.py                    # PKS design state node
+│   ├── node.py                    # PKS design state node
+│   └── cli.py                     # retrotide-mcts console script entry point
 ├── scripts/
 │   ├── run_DORAnet_single_agent.py   # Sequential MCTS runner
 │   ├── run_DORAnet_Async.py          # Async MCTS runner (recommended)
@@ -75,22 +99,26 @@ RL_agents_for_retrosynthesis/
 │   ├── run_RetroTide_single_agent.py # Standalone RetroTide runner
 │   └── benchmark_runtimes.py         # Runtime benchmarking script
 ├── tests/
-│   ├── test_async_expansion_mcts.py
-│   ├── test_categorize_pathway.py      # Pathway categorization tests
-│   ├── test_policies.py
-│   └── fixtures/
+│   ├── test_policies.py              # Reward policy and PKS database tests
+│   ├── test_policies_integration.py  # Policy system integration tests
+│   ├── test_terminal_detection.py    # Terminal detection unit tests
+│   ├── test_thermodynamic_policy.py  # Thermodynamic scoring unit tests
+│   ├── test_thermodynamic_scoring.py # Pathermo/UMA scorer tests
+│   ├── test_utils.py                 # Policy utility function tests
+│   ├── test_async_expansion_mcts.py  # Async MCTS tests
+│   ├── test_bfs.py                   # BFS search strategy tests
+│   ├── test_visualize.py             # Visualization tests
+│   └── test_categorize_pathway.py    # Pathway categorization tests
 ├── data/
-│   ├── building_blocks/
-│   │   ├── biological_building_blocks.txt    # 334 metabolites
-│   │   ├── chemical_building_blocks.txt      # 278,779 commercial compounds
-│   │   ├── expanded_pks_building_blocks.txt  # 106,496 PKS products
-│   │   ├── pks_building_blocks.txt           # 13,312 original PKS
-│   │   ├── prohibited_building_blocks.txt    # 652 hazardous (excluded)
-│   │   └── cofactors/
-│   └── processed/                 # Alternative location for building blocks
+│   ├── raw/                       # Source data (cofactors, rules, PKS designs)
+│   └── processed/                 # Building block libraries
+│       ├── biological_building_blocks.txt    # 334 metabolites
+│       ├── chemical_building_blocks.txt      # 278,779 commercial compounds
+│       ├── expanded_PKS_SMILES_V3.txt        # 106,496 PKS products
+│       └── prohibited_chemical_SMILES.txt    # 652 hazardous (excluded)
 ├── results/                       # Output directory for runs
 ├── ARCHITECTURE_AND_ROADMAP.md
-├── CLAUDE.md                      # AI assistant guidance
+├── MANIFEST.in
 └── pyproject.toml
 ```
 
@@ -104,8 +132,9 @@ Multiprocessing MCTS that parallelizes DORAnet expansion while keeping tree oper
 from rdkit import Chem
 from DORAnet_agent import AsyncExpansionDORAnetMCTS, Node
 from DORAnet_agent.policies import (
-    PKS_sim_score_and_SpawnRetroTideOnDatabaseCheck,
-    SparseTerminalRewardPolicy,
+    VerifyWithRetroTide,
+    SAScore_and_TerminalRewardPolicy,
+    ThermodynamicScaledRewardPolicy,
 )
 
 # Create target molecule
@@ -127,17 +156,20 @@ agent = AsyncExpansionDORAnetMCTS(
 
     # Building block files
     sink_compounds_files=[
-        "data/building_blocks/biological_building_blocks.txt",
-        "data/building_blocks/chemical_building_blocks.txt",
+        "data/processed/biological_building_blocks.txt",
+        "data/processed/chemical_building_blocks.txt",
     ],
-    pks_library_file="data/building_blocks/expanded_pks_building_blocks.txt",
-    prohibited_chemicals_file="data/building_blocks/prohibited_building_blocks.txt",
+    pks_library_file="data/processed/expanded_PKS_SMILES_V3.txt",
+    prohibited_chemicals_file="data/processed/prohibited_chemical_SMILES.txt",
 
     # Policy configuration
     terminal_detector=VerifyWithRetroTide(),
-    reward_policy=SAScore_and_TerminalRewardPolicy(
-        sink_terminal_reward=1.0,
-        pks_terminal_reward=1.0,
+    reward_policy=ThermodynamicScaledRewardPolicy(
+        base_policy=SAScore_and_TerminalRewardPolicy(
+            sink_terminal_reward=1.0,
+            pks_terminal_reward=1.0,
+        ),
+        feasibility_weight=1.0,
     ),
 
     # Selection and downselection configuration
@@ -226,7 +258,8 @@ Extends `VerifyWithRetroTide` with Tanimoto/MCS similarity gating. Only spawns R
 from DORAnet_agent.policies import SimilarityGuidedRetroTideDetector
 detector = SimilarityGuidedRetroTideDetector(
     retrotide_spawn_threshold=0.9,
-    similarity_reward_exponent=2.0,
+    similarity_method="tanimoto",  # or "mcs"
+    similarity_threshold=0.9,
 )
 ```
 
@@ -256,24 +289,17 @@ reward_policy = SAScore_and_TerminalRewardPolicy(
 )
 ```
 
-### Other Reward Policies
+### SparseTerminalRewardPolicy
+
+Assigns 1.0 for terminal nodes (sink compounds, PKS matches), 0.0 otherwise. Useful as a baseline or when dense signals are not needed.
 
 ```python
-from DORAnet_agent.policies import (
-    SparseTerminalRewardPolicy,
-    SinkCompoundRewardPolicy,
-    PKSLibraryRewardPolicy,
-    ComposedRewardPolicy,
+from DORAnet_agent.policies import SparseTerminalRewardPolicy
+
+reward_policy = SparseTerminalRewardPolicy(
+    sink_terminal_reward=1.0,
+    pks_terminal_reward=1.0,
 )
-
-# Sparse: 1.0 for sink compounds/PKS terminals, 0.0 otherwise
-reward_policy = SparseTerminalRewardPolicy(sink_terminal_reward=1.0)
-
-# Composed: combine multiple policies with weights
-reward_policy = ComposedRewardPolicy([
-    (SinkCompoundRewardPolicy(reward_value=1.0), 0.5),
-    (PKSLibraryRewardPolicy(), 0.5),
-])
 ```
 
 ## Recommended Policy Configuration
@@ -416,6 +442,22 @@ agent = AsyncExpansionDORAnetMCTS(
 ```
 
 ## Usage
+
+### Console Scripts (Recommended)
+
+After `pip install -e .`, use the CLI entry points for quick runs:
+
+```bash
+# DORAnet retrosynthetic search
+doranet-mcts "CCCCC(=O)O" --name pentanoic_acid --iterations 100 --max-depth 3
+
+# RetroTide forward PKS synthesis
+retrotide-mcts "O=C1C=CCC(C=Cc2ccccc2)O1" --iterations 150
+
+# See all options
+doranet-mcts --help
+retrotide-mcts --help
+```
 
 ### Running the Scripts
 
@@ -912,7 +954,7 @@ Target Molecule (SMILES)
 **DORAnet Agent (Retrosynthetic)**:
 - **State**: Molecular fragment (RDKit Mol + canonical SMILES)
 - **Action**: DORAnet expansion (enzymatic or synthetic mode)
-- **Reward**: Sparse—1.0 for terminals (sink compounds, PKS matches), 0.0 otherwise
+- **Reward**: Dense SA-score reward for all nodes + terminal bonus (default: `SAScore_and_TerminalRewardPolicy`), scaled by pathway thermodynamic feasibility
 - **Selection**: Depth-biased UCB1 (default) or standard UCB1
 
 **RetroTide Agent (Forward PKS Synthesis)**:
@@ -1011,10 +1053,10 @@ MIT License - see [LICENSE](LICENSE) for details.
 If you use this work, please cite:
 
 ```bibtex
-@software{rl_agents_retrosynthesis,
-  title={RL Agents for Retrosynthesis},
+@software{tridentsynthrl,
+  title={TridentSynthRL: Multi-Agent Reinforcement Learning for Retrosynthesis},
   author={Chainani, Yash},
-  year={2024},
-  url={https://github.com/...}
+  year={2026},
+  url={https://github.com/yashchainani21/RL_agents_for_retrosynthesis}
 }
 ```

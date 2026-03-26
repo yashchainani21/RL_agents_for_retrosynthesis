@@ -131,7 +131,8 @@ def main(target_smiles: str,
          stop_on_first_pathway: bool = False,
          selection_policy: str = "depth_biased",
          depth_bonus_coefficient: float = 10.0,
-         enable_frontier_fallback: bool = True) -> None:
+         enable_frontier_fallback: bool = True,
+         search_strategy: str = "mcts") -> None:
     """
     Run the async DORAnet MCTS agent with multiprocessing expansion.
 
@@ -187,7 +188,17 @@ def main(target_smiles: str,
             nodes and fall back to selecting from this frontier when standard tree traversal
             returns None (hits an all-terminal branch). This enables deeper exploration by
             ensuring iterations are not wasted. Default True.
+        search_strategy: Search strategy to use. Must be "mcts" for the async runner.
+            BFS mode is not supported with AsyncExpansionDORAnetMCTS because BFS is
+            single-core only. Use run_DORAnet_single_agent.py for BFS experiments.
     """
+    # ---- Validate search strategy ----
+    if search_strategy != "mcts":
+        raise ValueError(
+            f"search_strategy='{search_strategy}' is not supported with AsyncExpansionDORAnetMCTS. "
+            f"BFS mode is single-core only. Use run_DORAnet_single_agent.py for BFS, "
+            f"or use search_strategy='mcts' for async."
+        )
     # ---- Runner configuration ----
     create_interactive_visualization = True
     enable_iteration_viz = True
@@ -357,9 +368,23 @@ if __name__ == "__main__":
     # Terminal detector handles PKS matching + RetroTide verification only
     selected_terminal_detector = VerifyWithRetroTide()
 
-    # Reward handles terminal rewards + SA score for non-terminals, scaled by thermodynamic feasibility
+    # ---- Non-terminal scoring ----
+    # Toggle: "sa_score" (default) or "gnn_pks" (GNN polyketide classifier)
+    non_terminal_scoring = "sa_score"
+
+    non_terminal_scorer = None  # None = SA score (default)
+    if non_terminal_scoring == "gnn_pks":
+        from DORAnet_agent.policies import GNNPolyketideScorer
+        non_terminal_scorer = GNNPolyketideScorer(
+            checkpoint_path="models/gnn_pks_classifier/best_model.pt",
+        )
+
+    # Reward handles terminal rewards + non-terminal scoring, scaled by thermodynamic feasibility
     selected_reward_policy = ThermodynamicScaledRewardPolicy(
-        base_policy=SAScore_and_TerminalRewardPolicy(sink_terminal_reward=1.0, pks_terminal_reward=1.0),
+        base_policy=SAScore_and_TerminalRewardPolicy(
+            sink_terminal_reward=1.0, pks_terminal_reward=1.0,
+            non_terminal_scorer=non_terminal_scorer,
+        ),
         feasibility_weight=1.0,
         sigmoid_k=0.2,
         sigmoid_threshold=15.0,
@@ -371,22 +396,26 @@ if __name__ == "__main__":
     # selected_terminal_detector = NoOpTerminalDetector()
 
     main(
-        target_smiles="COC1=CC=C(C=CC2=CC(OC)=CC(O2)=O)C=C1",
-        molecule_name="yangonin",
-        total_iterations=1000,
-        max_depth=15,
-        max_children_per_expand=1,
+        target_smiles="C1=CC=C2C(=C1)C(=CN2)C[C@@H](C(=O)O)N",
+        molecule_name="tryptophan",
+        total_iterations=2000,
+        max_depth=11,
+        max_children_per_expand=20,
         terminal_detector=selected_terminal_detector,
         reward_policy=selected_reward_policy,
-        results_subfolder="removing_rollout",
-        MW_multiple_to_exclude=1.5,
-        child_downselection_strategy=None,
+        results_subfolder="tryptophan_biosynthesis",
+        MW_multiple_to_exclude=2.5,
+        child_downselection_strategy="most_thermo_feasible",
         use_enzymatic=True,
-        use_synthetic=True,
-        use_chem_building_blocksDB=True,
+        use_synthetic=False,
+        use_chem_building_blocksDB=False,
         use_bio_building_blocksDB=True,
-        use_PKS_building_blocksDB=True,
+        use_PKS_building_blocksDB=False,
         stop_on_first_pathway=False,
-        selection_policy="UCB1",  # Using standard UCB1 instead of depth_biased
-        enable_frontier_fallback=False,  # Enable frontier fallback for deep exploration
+        selection_policy="depth_biased",
+        enable_frontier_fallback=True,  # Enable frontier fallback for deep exploration
+        # search_strategy="mcts",  # Only "mcts" is supported for async runner.
+        # For BFS baseline experiments, use run_DORAnet_single_agent.py with search_strategy="bfs".
+        # NOTE: In BFS mode, total_iterations controls max depth levels to expand,
+        # NOT the number of MCTS iterations.
     )

@@ -24,8 +24,9 @@ from rdkit.Chem import Descriptors
 from .mcts import (
     DORAnetMCTS,
     RetroTideResult,
-    _canonicalize_smiles,
 )
+from .policies.utils import canonicalize_smiles as _canonicalize_smiles
+from .policies.thermodynamic import sigmoid_transform
 from .node import Node
 from .policies import (
     TerminalDetector,
@@ -141,7 +142,7 @@ def _expand_worker(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
             feasibility_score = dora_score
         elif delta_h is not None:
             # Sigmoid transform: score = 1 / (1 + exp(0.2 * (ΔH - 15)))
-            feasibility_score = 1.0 / (1.0 + math.exp(0.2 * (delta_h - 15.0)))
+            feasibility_score = sigmoid_transform(delta_h)
         else:
             feasibility_score = 0.5  # Unknown, assign neutral (borderline) score
 

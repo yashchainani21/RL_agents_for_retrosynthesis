@@ -252,7 +252,7 @@ class SAScore_and_TerminalRewardPolicy(RewardPolicy):
 
     @property
     def name(self) -> str:
-        scorer_name = "custom" if self._non_terminal_scorer is not None else "SAScore"
+        scorer_name = getattr(self._non_terminal_scorer, 'name', 'custom') if self._non_terminal_scorer else "SAScore"
         return f"{scorer_name}+Terminal(sink={self.sink_terminal_reward}, pks={self.pks_terminal_reward})"
 
     def __repr__(self) -> str:

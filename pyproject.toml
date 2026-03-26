@@ -3,7 +3,7 @@ requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "rl_retrosynthesis"
+name = "TridentSynthRL"
 version = "0.1.0"
 description = "Multi-agent reinforcement learning system for retrosynthesis pathway design using MCTS"
 readme = "README.md"
@@ -55,11 +55,16 @@ doranet = [
     "doranet",
 ]
 retrotide = [
-    "retrotide",
+    "retrotide @ git+https://github.com/JBEI/RetroTide.git",
     "bcs",
 ]
 gnn = [
     "torch>=1.10.0",
+]
+thermo = [
+    "pathermo @ git+https://github.com/dmdqy/pathermo.git",
+    "xgboost==1.6.2",
+    "DORA-XGB",
 ]
 uma = [
     "fairchem-core",
@@ -69,9 +74,12 @@ uma = [
 ]
 all = [
     "doranet",
-    "retrotide",
+    "retrotide @ git+https://github.com/JBEI/RetroTide.git",
     "bcs",
     "torch>=1.10.0",
+    "pathermo @ git+https://github.com/dmdqy/pathermo.git",
+    "xgboost==1.6.2",
+    "DORA-XGB",
     "fairchem-core",
     "ase",
     "python-dotenv",
@@ -81,8 +89,8 @@ all = [
 ]
 
 [project.scripts]
-doranet-mcts = "scripts.run_DORAnet_single_agent:main"
-retrotide-mcts = "scripts.run_RetroTide_single_agent:main"
+doranet-mcts = "DORAnet_agent.cli:main"
+retrotide-mcts = "RetroTide_agent.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/yashchainani/RL_agents_for_retrosynthesis"

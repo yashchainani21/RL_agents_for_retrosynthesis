@@ -37,6 +37,84 @@ if TYPE_CHECKING:
     from ..node import Node
 
 
+def _run_retrotide(
+    node: "Node",
+    target_molecule: Chem.Mol,
+    retrotide_kwargs: Dict[str, Any],
+    caller_name: str = "RetroTide",
+) -> Dict[str, Any]:
+    """
+    Run RetroTide MCTS to attempt PKS synthesis of a fragment.
+
+    This is a shared helper used by both VerifyWithRetroTide and
+    SimilarityGuidedRetroTideDetector to avoid duplicating the
+    RetroTide spawning and result extraction logic.
+
+    Args:
+        node: The node containing the fragment to synthesize.
+        target_molecule: The original target molecule (for RetroTide's bag of graphs).
+        retrotide_kwargs: Parameters for RetroTide MCTS.
+        caller_name: Name of the calling detector (for log messages).
+
+    Returns:
+        Dictionary with RetroTide results:
+            - successful: bool
+            - num_successful_nodes: int
+            - best_score: float
+            - total_nodes: int
+            - agent: RetroTideMCTS instance (for further inspection)
+            - target_smiles: str
+    """
+    from RetroTide_agent.mcts import MCTS as RetroTideMCTS
+    from RetroTide_agent.node import Node as RetroTideNode
+
+    # Get the fragment molecule
+    fragment_mol = node.fragment
+    if fragment_mol is None:
+        return {
+            "successful": False,
+            "num_successful_nodes": 0,
+            "best_score": 0.0,
+            "total_nodes": 0,
+        }
+
+    fragment_smiles = Chem.MolToSmiles(fragment_mol)
+    print(f"[{caller_name}] Spawning RetroTide for: {fragment_smiles}")
+
+    # Create RetroTide root and run MCTS
+    root = RetroTideNode(PKS_product=None, PKS_design=None, parent=None, depth=0)
+    agent = RetroTideMCTS(
+        root=root,
+        target_molecule=fragment_mol,
+        **retrotide_kwargs,
+    )
+    agent.run()
+
+    # Extract results
+    successful_nodes = getattr(agent, "successful_nodes", set())
+    simulated_successes = getattr(agent, "successful_simulated_designs", [])
+    num_successful = len(successful_nodes) + len(simulated_successes)
+
+    # Get best score
+    best_score = 0.0
+    if successful_nodes or simulated_successes:
+        best_score = 1.0
+    else:
+        for n in getattr(agent, "nodes", []):
+            if hasattr(n, "value") and n.visits > 0:
+                avg_value = n.value / n.visits
+                best_score = max(best_score, avg_value)
+
+    return {
+        "successful": num_successful > 0,
+        "num_successful_nodes": num_successful,
+        "best_score": best_score,
+        "total_nodes": len(getattr(agent, "nodes", [])),
+        "agent": agent,
+        "target_smiles": fragment_smiles,
+    }
+
+
 class NoOpTerminalDetector(TerminalDetector):
     """
     No-op terminal detector that never marks nodes as terminal.
@@ -123,78 +201,6 @@ class VerifyWithRetroTide(TerminalDetector):
         canonical = canonicalize_smiles(smiles)
         return canonical is not None and canonical in pks_library
 
-    def _run_retrotide(
-        self,
-        node: "Node",
-        target_molecule: Chem.Mol,
-        retrotide_kwargs: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """
-        Run RetroTide MCTS to attempt PKS synthesis.
-
-        Args:
-            node: The node containing the fragment to synthesize.
-            target_molecule: The original target molecule (for RetroTide's bag of graphs).
-            retrotide_kwargs: Parameters for RetroTide MCTS.
-
-        Returns:
-            Dictionary with RetroTide results:
-                - successful: bool
-                - num_successful_nodes: int
-                - best_score: float
-                - total_nodes: int
-                - agent: RetroTideMCTS instance (for further inspection)
-                - target_smiles: str
-        """
-        from RetroTide_agent.mcts import MCTS as RetroTideMCTS
-        from RetroTide_agent.node import Node as RetroTideNode
-
-        # Get the fragment molecule
-        fragment_mol = node.fragment
-        if fragment_mol is None:
-            return {
-                "successful": False,
-                "num_successful_nodes": 0,
-                "best_score": 0.0,
-                "total_nodes": 0,
-            }
-
-        fragment_smiles = Chem.MolToSmiles(fragment_mol)
-        print(f"[VerifyWithRetroTide] Spawning RetroTide for: {fragment_smiles}")
-
-        # Create RetroTide root and run MCTS
-        root = RetroTideNode(PKS_product=None, PKS_design=None, parent=None, depth=0)
-        agent = RetroTideMCTS(
-            root=root,
-            target_molecule=fragment_mol,
-            **retrotide_kwargs,
-        )
-        agent.run()
-
-        # Extract results
-        successful_nodes = getattr(agent, "successful_nodes", set())
-        simulated_successes = getattr(agent, "successful_simulated_designs", [])
-        num_successful = len(successful_nodes) + len(simulated_successes)
-
-        # Get best score
-        best_score = 0.0
-        if successful_nodes or simulated_successes:
-            best_score = 1.0
-        else:
-            for n in getattr(agent, "nodes", []):
-                if hasattr(n, "value") and n.visits > 0:
-                    avg_value = n.value / n.visits
-                    best_score = max(best_score, avg_value)
-
-        return {
-            "successful": num_successful > 0,
-            "num_successful_nodes": num_successful,
-            "best_score": best_score,
-            "total_nodes": len(getattr(agent, "nodes", [])),
-            "agent": agent,
-            "target_smiles": fragment_smiles,
-        }
-
     def detect(self, node: "Node", context: Dict[str, Any]) -> TerminalDetectionResult:
         """
         Check if node matches PKS library and verify with RetroTide.
@@ -242,7 +248,7 @@ class VerifyWithRetroTide(TerminalDetector):
         retrotide_kwargs = self._get_retrotide_kwargs(context)
 
         # Run RetroTide
-        result = self._run_retrotide(node, target_molecule, retrotide_kwargs)
+        result = _run_retrotide(node, target_molecule, retrotide_kwargs, caller_name="VerifyWithRetroTide")
 
         if result["successful"]:
             print(f"[VerifyWithRetroTide] SUCCESS! Found {result['num_successful_nodes']} valid PKS designs")
@@ -642,58 +648,6 @@ class SimilarityGuidedRetroTideDetector(TerminalDetector):
         metadata["best_similarity"] = best_similarity
         return best_similarity, metadata
 
-    def _run_retrotide(
-        self,
-        node: "Node",
-        target_molecule: Chem.Mol,
-        retrotide_kwargs: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """Run RetroTide MCTS to attempt PKS synthesis."""
-        from RetroTide_agent.mcts import MCTS as RetroTideMCTS
-        from RetroTide_agent.node import Node as RetroTideNode
-
-        fragment_mol = node.fragment
-        if fragment_mol is None:
-            return {
-                "successful": False,
-                "num_successful_nodes": 0,
-                "best_score": 0.0,
-                "total_nodes": 0,
-            }
-
-        fragment_smiles = Chem.MolToSmiles(fragment_mol)
-        print(f"[SimilarityGuidedRetroTide] Spawning RetroTide for: {fragment_smiles}")
-
-        root = RetroTideNode(PKS_product=None, PKS_design=None, parent=None, depth=0)
-        agent = RetroTideMCTS(
-            root=root,
-            target_molecule=fragment_mol,
-            **retrotide_kwargs,
-        )
-        agent.run()
-
-        successful_nodes = getattr(agent, "successful_nodes", set())
-        simulated_successes = getattr(agent, "successful_simulated_designs", [])
-        num_successful = len(successful_nodes) + len(simulated_successes)
-
-        best_score = 0.0
-        if successful_nodes or simulated_successes:
-            best_score = 1.0
-        else:
-            for n in getattr(agent, "nodes", []):
-                if hasattr(n, "value") and n.visits > 0:
-                    avg_value = n.value / n.visits
-                    best_score = max(best_score, avg_value)
-
-        return {
-            "successful": num_successful > 0,
-            "num_successful_nodes": num_successful,
-            "best_score": best_score,
-            "total_nodes": len(getattr(agent, "nodes", [])),
-            "agent": agent,
-            "target_smiles": fragment_smiles,
-        }
-
     # --- Main detection logic ---
 
     def detect(self, node: "Node", context: Dict[str, Any]) -> TerminalDetectionResult:
@@ -767,7 +721,7 @@ class SimilarityGuidedRetroTideDetector(TerminalDetector):
             return TerminalDetectionResult(terminal=False)
 
         retrotide_kwargs = self._get_retrotide_kwargs(context)
-        result = self._run_retrotide(node, target_molecule, retrotide_kwargs)
+        result = _run_retrotide(node, target_molecule, retrotide_kwargs, caller_name="SimilarityGuidedRetroTide")
 
         if result["successful"]:
             print(f"[SimilarityGuidedRetroTide] SUCCESS! Found {result['num_successful_nodes']} "

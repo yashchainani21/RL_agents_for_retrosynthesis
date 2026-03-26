@@ -112,6 +112,7 @@ def main(
     use_PKS_building_blocksDB: bool = True,
     stop_on_first_pathway: bool = False,
     enable_frontier_fallback: bool = True,
+    search_strategy: str = "mcts",
 ) -> None:
     """
     Run the async DORAnet MCTS agent for batch processing.
@@ -159,7 +160,18 @@ def main(
             nodes and fall back to selecting from this frontier when standard tree traversal
             returns None (hits an all-terminal branch). This enables deeper exploration by
             ensuring iterations are not wasted. Default True.
+        search_strategy: Search strategy to use. Must be "mcts" for the async batch runner.
+            BFS mode is not supported with AsyncExpansionDORAnetMCTS because BFS is
+            single-core only. Use run_DORAnet_single_agent.py for BFS experiments.
     """
+    # ---- Validate search strategy ----
+    if search_strategy != "mcts":
+        raise ValueError(
+            f"search_strategy='{search_strategy}' is not supported with AsyncExpansionDORAnetMCTS. "
+            f"BFS mode is single-core only. Use run_DORAnet_single_agent.py for BFS, "
+            f"or use search_strategy='mcts' for async."
+        )
+
     # ---- Runner configuration ----
     create_interactive_visualization = True
     enable_iteration_viz = False
@@ -374,10 +386,24 @@ if __name__ == "__main__":
     # Alternative: No terminal detection (just expand, no RetroTide)
     # selected_terminal_detector = NoOpTerminalDetector()
 
+    # ---- Non-terminal scoring ----
+    # Toggle: "sa_score" (default) or "gnn_pks" (GNN polyketide classifier)
+    non_terminal_scoring = "sa_score"
+
+    non_terminal_scorer = None  # None = SA score (default)
+    if non_terminal_scoring == "gnn_pks":
+        from DORAnet_agent.policies import GNNPolyketideScorer
+        non_terminal_scorer = GNNPolyketideScorer(
+            checkpoint_path="models/gnn_pks_classifier/best_model.pt",
+        )
+
     # Thermodynamic-scaled reward policy (wrap any base policy)
     # This scales terminal rewards by pathway thermodynamic feasibility.
     selected_reward_policy = ThermodynamicScaledRewardPolicy(
-        base_policy=SAScore_and_TerminalRewardPolicy(sink_terminal_reward=1.0, pks_terminal_reward=1.0),
+        base_policy=SAScore_and_TerminalRewardPolicy(
+            sink_terminal_reward=1.0, pks_terminal_reward=1.0,
+            non_terminal_scorer=non_terminal_scorer,
+        ),
         feasibility_weight=1.0,
         sigmoid_k=0.2,
         sigmoid_threshold=15.0,
@@ -400,4 +426,8 @@ if __name__ == "__main__":
         use_PKS_building_blocksDB=True,
         stop_on_first_pathway=args.stop_on_first_pathway,
         enable_frontier_fallback=not args.no_frontier_fallback,
+        # search_strategy="mcts",  # Only "mcts" is supported for async batch runner.
+        # For BFS baseline experiments, use run_DORAnet_single_agent.py with search_strategy="bfs".
+        # NOTE: In BFS mode, total_iterations controls max depth levels to expand,
+        # NOT the number of MCTS iterations.
     )

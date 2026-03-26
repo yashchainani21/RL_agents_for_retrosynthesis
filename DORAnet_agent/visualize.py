@@ -19,6 +19,8 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.colors import to_rgba
 
+from .policies.thermodynamic import sigmoid_transform
+
 if TYPE_CHECKING:
     from .mcts import DORAnetMCTS
     from .node import Node
@@ -710,7 +712,7 @@ def create_enhanced_interactive_html(
                     dora_xgb_val = "N/A"
                     if child_node.enthalpy_of_reaction is not None:
                         dh = child_node.enthalpy_of_reaction
-                        scaled = 1.0 / (1.0 + math.exp(0.2 * (dh - 15.0)))
+                        scaled = sigmoid_transform(dh)
                         delta_h_val = f"{dh:.2f} kcal/mol"
                         thermo_scaled_val = f"{scaled:.3f}"
                     else:
@@ -1193,7 +1195,7 @@ def create_pathways_interactive_html(
                         dora_xgb_val = "N/A"
                         if child_node.enthalpy_of_reaction is not None:
                             dh = child_node.enthalpy_of_reaction
-                            scaled = 1.0 / (1.0 + math.exp(0.2 * (dh - 15.0)))
+                            scaled = sigmoid_transform(dh)
                             delta_h_val = f"{dh:.2f} kcal/mol"
                             thermo_scaled_val = f"{scaled:.3f}"
                         else:

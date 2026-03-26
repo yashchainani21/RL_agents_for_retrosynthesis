@@ -20,7 +20,6 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
@@ -40,6 +39,8 @@ from .policies import (
     NoOpTerminalDetector,
     SAScore_and_TerminalRewardPolicy,
     get_pathway_feasibility,
+    canonicalize_smiles as _canonicalize_smiles,
+    sigmoid_transform,
 )
 
 # Optional RetroTide imports - may not be available in all environments
@@ -107,19 +108,6 @@ class RetroTideResult:
 
     # Optional: the actual RetroTide agent (for deeper inspection)
     retrotide_agent: Any = field(default=None, repr=False)
-
-
-@lru_cache(maxsize=50000)
-def _canonicalize_smiles(smiles: str) -> Optional[str]:
-    """Convert SMILES to canonical form, returning None on failure.
-
-    Results are cached using LRU cache to avoid redundant RDKit calls
-    for the same SMILES strings during the search.
-    """
-    mol = Chem.MolFromSmiles(smiles)
-    if mol is None:
-        return None
-    return Chem.MolToSmiles(mol)
 
 
 def clear_smiles_cache() -> None:
@@ -1359,7 +1347,7 @@ class DORAnetMCTS:
             fragment_info.feasibility_score = fragment_info.dora_xgb_score
         elif delta_h is not None:
             # Use sigmoid-transformed ΔH
-            fragment_info.feasibility_score = 1.0 / (1.0 + math.exp(0.2 * (delta_h - 15.0)))
+            fragment_info.feasibility_score = sigmoid_transform(delta_h)
         else:
             # Unknown, assign neutral (borderline) score
             fragment_info.feasibility_score = 0.5
