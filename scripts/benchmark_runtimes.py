@@ -425,6 +425,19 @@ def run_doranet_mcts_async(
                 smiles = Chem.MolToSmiles(node.fragment, canonical=True)
                 unique_smiles_set.add(smiles)
 
+        # Extract pathway metrics
+        pathway_found = agent.first_pathway_found
+        pathway_time_seconds = agent.first_pathway_time
+        pathway_iteration = agent.first_pathway_iteration
+        pathway_terminal_smiles = None
+        pathway_terminal_depth = None
+        if agent.first_pathway_node is not None:
+            if agent.first_pathway_node.fragment is not None:
+                pathway_terminal_smiles = Chem.MolToSmiles(
+                    agent.first_pathway_node.fragment, canonical=True
+                )
+            pathway_terminal_depth = agent.first_pathway_node.depth
+
         return RuntimeBenchmarkResult(
             molecule_name=molecule_name,
             molecule_smiles=target_smiles,
@@ -435,11 +448,16 @@ def run_doranet_mcts_async(
             runtime_seconds=runtime,
             total_nodes=len(agent.nodes),
             unique_smiles=len(unique_smiles_set),
-            iterations_completed=config.total_iterations,
+            iterations_completed=agent.current_iteration + 1,
             terminal_nodes=terminal_nodes,
             sink_compounds=len(sink_compounds),
             pks_matches=len(pks_matches),
             num_workers=agent.num_workers,
+            pathway_found=pathway_found,
+            pathway_time_seconds=pathway_time_seconds,
+            pathway_iteration=pathway_iteration,
+            pathway_terminal_smiles=pathway_terminal_smiles,
+            pathway_terminal_depth=pathway_terminal_depth,
         )
 
     except Exception as e:
@@ -451,6 +469,7 @@ def run_doranet_mcts_async(
             use_enzymatic=config.use_enzymatic,
             use_synthetic=config.use_synthetic,
             runtime_seconds=0.0,
+            pathway_found=False,
             error=str(e),
         )
 

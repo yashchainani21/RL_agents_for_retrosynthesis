@@ -24,6 +24,10 @@ data/processed/prohibited_chemical_SMILES.txt
 results/
 archives/
 
+# Coverage
+.coverage
+htmlcov/
+
 # Cache directories
 .cache/
 **/.cache/

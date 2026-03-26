@@ -430,10 +430,24 @@ if __name__ == "__main__":
     # Terminal detector handles PKS matching + RetroTide verification only
     selected_terminal_detector = VerifyWithRetroTide()
 
+    # ---- Non-terminal scoring ----
+    # Toggle: "sa_score" (default) or "gnn_pks" (GNN polyketide classifier)
+    non_terminal_scoring = "sa_score"
+
+    non_terminal_scorer = None  # None = SA score (default)
+    if non_terminal_scoring == "gnn_pks":
+        from DORAnet_agent.policies import GNNPolyketideScorer
+        non_terminal_scorer = GNNPolyketideScorer(
+            checkpoint_path="models/gnn_pks_classifier/best_model.pt",
+        )
+
     # Thermodynamic-scaled reward policy (wrap any base policy)
     # This scales terminal rewards by pathway thermodynamic feasibility.
     selected_reward_policy = ThermodynamicScaledRewardPolicy(
-        base_policy=SAScore_and_TerminalRewardPolicy(sink_terminal_reward=1.0, pks_terminal_reward=1.0),
+        base_policy=SAScore_and_TerminalRewardPolicy(
+            sink_terminal_reward=1.0, pks_terminal_reward=1.0,
+            non_terminal_scorer=non_terminal_scorer,
+        ),
         feasibility_weight=1.0,
         sigmoid_k=0.2,
         sigmoid_threshold=15.0,

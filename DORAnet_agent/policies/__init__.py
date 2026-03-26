@@ -31,6 +31,12 @@ from .thermodynamic import (
     ThermodynamicScaledRewardPolicy,
 )
 
+# GNN polyketide scorer (optional, requires torch)
+try:
+    from .gnn_pks_scorer import GNNPolyketideScorer
+except ImportError:
+    pass
+
 # Shared utilities
 from .utils import (
     canonicalize_smiles,
@@ -53,6 +59,8 @@ __all__ = [
     # Reward policies
     "SparseTerminalRewardPolicy",
     "SAScore_and_TerminalRewardPolicy",
+    # GNN scorer
+    "GNNPolyketideScorer",
     # Thermodynamic scaling
     "sigmoid_transform",
     "get_node_feasibility_score",
