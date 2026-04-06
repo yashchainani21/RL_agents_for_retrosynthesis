@@ -972,7 +972,6 @@ class DORAnetMCTS:
 
         # Update root node's fragment to use the preprocessed molecule
         root.fragment = preprocessed_mol
-        root._smiles = canonical_smiles  # Update cached SMILES if present
 
         self.root = root
         self.target_molecule = preprocessed_mol
@@ -2017,24 +2016,31 @@ class DORAnetMCTS:
                 products_smiles=frag_info.products_smiles,
             )
 
-            # Score feasibility for enzymatic reactions using DORA-XGB
-            if provenance == "enzymatic":
-                score, label = self.feasibility_scorer.score_reaction(
+            # Check if scores were pre-computed during downselection
+            if frag_info.feasibility_score is not None:
+                # Use pre-computed scores (avoids redundant DORA-XGB/pathermo calls)
+                child.feasibility_score = frag_info.feasibility_score
+                child.feasibility_label = frag_info.dora_xgb_label
+                child.enthalpy_of_reaction = frag_info.enthalpy_of_reaction
+                child.thermodynamic_label = frag_info.thermodynamic_label
+            else:
+                # Compute scores (for strategies that don't pre-compute)
+                if provenance == "enzymatic":
+                    score, label = self.feasibility_scorer.score_reaction(
+                        reactants_smiles=frag_info.reactants_smiles,
+                        products_smiles=frag_info.products_smiles,
+                        provenance=provenance
+                    )
+                    child.feasibility_score = score
+                    child.feasibility_label = label
+
+                delta_h, thermo_label = self.thermodynamic_scorer.score_reaction(
                     reactants_smiles=frag_info.reactants_smiles,
                     products_smiles=frag_info.products_smiles,
                     provenance=provenance
                 )
-                child.feasibility_score = score
-                child.feasibility_label = label
-
-            # Score thermodynamic feasibility using pathermo (both enzymatic and synthetic)
-            delta_h, thermo_label = self.thermodynamic_scorer.score_reaction(
-                reactants_smiles=frag_info.reactants_smiles,
-                products_smiles=frag_info.products_smiles,
-                provenance=provenance
-            )
-            child.enthalpy_of_reaction = delta_h
-            child.thermodynamic_label = thermo_label
+                child.enthalpy_of_reaction = delta_h
+                child.thermodynamic_label = thermo_label
 
             node.add_child(child)
             self.nodes.append(child)

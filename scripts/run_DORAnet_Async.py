@@ -183,7 +183,7 @@ def main(target_smiles: str,
             - "depth_biased": Depth-biased UCB1 (depth-first tendency, reaches max_depth faster)
             Default is "depth_biased".
         depth_bonus_coefficient: Coefficient for depth bonus in depth_biased selection.
-            Higher values encourage deeper exploration. Default 4.0. Ignored if selection_policy="UCB1".
+            Higher values encourage deeper exploration. Default 10.0. Ignored if selection_policy="UCB1".
         enable_frontier_fallback: If True, maintain a frontier of unexpanded non-terminal
             nodes and fall back to selecting from this frontier when standard tree traversal
             returns None (hits an all-terminal branch). This enables deeper exploration by
