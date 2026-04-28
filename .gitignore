@@ -38,3 +38,7 @@ htmlcov/
 # Claude Code
 .claude/
 CLAUDE.md
+
+# Manuscript / presentation drafts (kept out of git)
+*.docx
+*.pptx
